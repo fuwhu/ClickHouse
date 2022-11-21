@@ -91,6 +91,8 @@ private:
         const Field & value_field,
         RPNElement & out,
         const ASTPtr & parent);
+
+    bool expectElementTypeOnIndex(const ASTPtr & node, const TypeIndex & expect_type);
 };
 
 }

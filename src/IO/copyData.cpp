@@ -15,12 +15,15 @@ namespace ErrorCodes
 namespace
 {
 
-void copyDataImpl(ReadBuffer & from, WriteBuffer & to, bool check_bytes, size_t bytes, const std::atomic<int> * is_cancelled, ThrottlerPtr throttler)
+void copyDataImpl(ReadBuffer & from, WriteBuffer & to, bool check_bytes, size_t bytes, const std::atomic<int> * is_cancelled, ThrottlerPtr throttler, const std::atomic<bool> * additional_cancel_flag = nullptr)
 {
     /// If read to the end of the buffer, eof() either fills the buffer with new data and moves the cursor to the beginning, or returns false.
     while (bytes > 0 && !from.eof())
     {
         if (is_cancelled && *is_cancelled)
+            return;
+
+        if (additional_cancel_flag && *additional_cancel_flag)
             return;
 
         /// buffer() - a piece of data available for reading; position() - the cursor of the place to which you have already read.
@@ -96,9 +99,9 @@ void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, const std::atomi
     copyDataImpl(from, to, false, std::numeric_limits<size_t>::max(), &is_cancelled, throttler);
 }
 
-void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, size_t bytes, const std::atomic<int> & is_cancelled, ThrottlerPtr throttler)
+void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, size_t bytes, const std::atomic<int> & is_cancelled, ThrottlerPtr throttler, const std::atomic<bool> * additional_cancel_flag)
 {
-    copyDataImpl(from, to, true, bytes, &is_cancelled, throttler);
+    copyDataImpl(from, to, true, bytes, &is_cancelled, throttler, additional_cancel_flag);
 }
 
 }

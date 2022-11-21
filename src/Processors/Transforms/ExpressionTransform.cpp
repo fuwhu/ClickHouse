@@ -1,5 +1,7 @@
 #include <Processors/Transforms/ExpressionTransform.h>
 #include <Interpreters/ExpressionActions.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
+
 namespace DB
 {
 
@@ -9,10 +11,18 @@ Block ExpressionTransform::transformHeader(Block header, const ActionsDAG & expr
 }
 
 
-ExpressionTransform::ExpressionTransform(const Block & header_, ExpressionActionsPtr expression_)
+ExpressionTransform::ExpressionTransform(
+    const Block & header_, ExpressionActionsPtr expression_, bool is_skip_indices_expression_, StorageMetadataPtr metadata_snapshot_)
     : ISimpleTransform(header_, transformHeader(header_, expression_->getActionsDAG()), false)
     , expression(std::move(expression_))
+    , is_skip_indices_expression(is_skip_indices_expression_)
+    , metadata_snapshot(metadata_snapshot_)
 {
+    auto & mutable_header = const_cast<Block &>(header_);
+    if (is_skip_indices_expression && metadata_snapshot->hasImplicitColumn())
+    {
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_header, metadata_snapshot);
+    }
 }
 
 void ExpressionTransform::transform(Chunk & chunk)

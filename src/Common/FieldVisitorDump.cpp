@@ -95,6 +95,22 @@ String FieldVisitorDump::operator() (const Map & x) const
     return wb.str();
 }
 
+String FieldVisitorDump::operator() (const MapV2 & x) const
+{
+    WriteBufferFromOwnString wb;
+
+    wb << "MapV2_(";
+    for (auto it = x.begin(); it != x.end(); ++it)
+    {
+        if (it != x.begin())
+            wb << ", ";
+        wb << applyVisitor(*this, *it);
+    }
+    wb << ')';
+
+    return wb.str();
+}
+
 String FieldVisitorDump::operator() (const Object & x) const
 {
     WriteBufferFromOwnString wb;

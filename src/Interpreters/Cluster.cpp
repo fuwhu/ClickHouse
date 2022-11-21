@@ -33,6 +33,8 @@ namespace
 
 /// Default shard weight.
 constexpr UInt32 default_weight = 1;
+/// Default replica status
+constexpr bool default_is_enable = true;
 
 inline bool isLocalImpl(const Cluster::Address & address, const Poco::Net::SocketAddress & resolved_address, UInt16 clickhouse_port)
 {
@@ -108,6 +110,7 @@ Cluster::Address::Address(
     priority = config.getInt(config_prefix + ".priority", 1);
     const char * port_type = secure == Protocol::Secure::Enable ? "tcp_port_secure" : "tcp_port";
     is_local = isLocal(config.getInt(port_type, 0));
+    is_enable = config.getBool(config_prefix + ".is_enable", true);
 
     /// By default compression is disabled if address looks like localhost.
     /// NOTE: it's still enabled when interacting with servers on different port, but we don't want to complicate the logic.
@@ -451,24 +454,29 @@ Cluster::Cluster(const Poco::Util::AbstractConfiguration & config,
 
                 if (startsWith(replica_key, "replica"))
                 {
-                    replica_addresses.emplace_back(config,
-                        partial_prefix + replica_key,
-                        cluster_name,
-                        secret,
-                        current_shard_num,
-                        current_replica_num);
-                    ++current_replica_num;
-
-                    if (internal_replication)
+                    bool is_enable = config.getBool(partial_prefix + replica_key + ".is_enable", default_is_enable);
+                    if (is_enable)
                     {
-                        auto dir_name = replica_addresses.back().toFullString(/* use_compact_format= */ false);
-                        if (!replica_addresses.back().is_local)
-                            concatInsertPath(insert_paths.prefer_localhost_replica, dir_name);
-                        concatInsertPath(insert_paths.no_prefer_localhost_replica, dir_name);
+                        replica_addresses.emplace_back(
+                            config, partial_prefix + replica_key, cluster_name, secret, current_shard_num, current_replica_num);
+                        ++current_replica_num;
+
+                        if (internal_replication)
+                        {
+                            auto dir_name = replica_addresses.back().toFullString(/* use_compact_format= */ false);
+                            if (!replica_addresses.back().is_local)
+                                concatInsertPath(insert_paths.prefer_localhost_replica, dir_name);
+                            concatInsertPath(insert_paths.no_prefer_localhost_replica, dir_name);
+                        }
                     }
                 }
                 else
                     throw Exception("Unknown element in config: " + replica_key, ErrorCodes::UNKNOWN_ELEMENT_IN_CONFIG);
+            }
+
+            if (replica_addresses.empty())
+            {
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "There is no any enabled replica for shard {}", current_shard_num);
             }
 
             Addresses shard_local_addresses;
@@ -493,7 +501,8 @@ Cluster::Cluster(const Poco::Util::AbstractConfiguration & config,
 
             ConnectionPoolWithFailoverPtr shard_pool = std::make_shared<ConnectionPoolWithFailover>(
                         all_replicas_pools, settings.load_balancing,
-                        settings.distributed_replica_error_half_life.totalSeconds(), settings.distributed_replica_error_cap);
+                        settings.distributed_replica_error_half_life.totalSeconds(), settings.distributed_replica_error_cap,
+                        settings.distributed_replica_remote_error_half_life.totalSeconds());
 
             if (weight)
                 slot_to_shard.insert(std::end(slot_to_shard), weight, shards_info.size());
@@ -570,7 +579,8 @@ Cluster::Cluster(
 
         ConnectionPoolWithFailoverPtr shard_pool = std::make_shared<ConnectionPoolWithFailover>(
                 all_replicas, settings.load_balancing,
-                settings.distributed_replica_error_half_life.totalSeconds(), settings.distributed_replica_error_cap);
+                settings.distributed_replica_error_half_life.totalSeconds(), settings.distributed_replica_error_cap,
+                settings.distributed_replica_remote_error_half_life.totalSeconds());
 
         slot_to_shard.insert(std::end(slot_to_shard), default_weight, shards_info.size());
         shards_info.push_back({

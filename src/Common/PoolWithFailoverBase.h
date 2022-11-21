@@ -55,12 +55,14 @@ public:
 
     PoolWithFailoverBase(
             NestedPools nested_pools_,
-            time_t decrease_error_period_,
-            size_t max_error_cap_,
+            time_t decrease_connection_error_period_,
+            size_t max_connection_error_cap_,
+            time_t decrease_remote_error_period_,
             Poco::Logger * log_)
         : nested_pools(std::move(nested_pools_))
-        , decrease_error_period(decrease_error_period_)
-        , max_error_cap(max_error_cap_)
+        , decrease_connection_error_period(decrease_connection_error_period_)
+        , max_connection_error_cap(max_connection_error_cap_)
+        , decrease_remote_error_period(decrease_remote_error_period_)
         , shared_pool_states(nested_pools.size())
         , log(log_)
     {
@@ -103,8 +105,9 @@ public:
         NestedPool * pool{};
         const PoolState * state{};
         size_t index = 0;
-        size_t error_count = 0;
+        size_t connection_error_count = 0;
         size_t slowdown_count = 0;
+        size_t remote_error_count = 0;
     };
 
     /// This functor must be provided by a client. It must perform a single try that takes a connection
@@ -124,7 +127,8 @@ public:
             size_t max_ignored_errors,
             bool fallback_to_stale_replicas,
             const TryGetEntryFunc & try_get_entry,
-            const GetPriorityFunc & get_priority = GetPriorityFunc());
+            const GetPriorityFunc & get_priority = GetPriorityFunc(),
+            std::shared_ptr<int> index = nullptr);
 
 protected:
 
@@ -135,7 +139,9 @@ protected:
     /// This function returns a copy of pool states to avoid race conditions when modifying shared pool states.
     PoolStates updatePoolStates(size_t max_ignored_errors);
 
-    void updateErrorCounts(PoolStates & states, time_t & last_decrease_time) const;
+    void updateErrorCounts(PoolStates & states, time_t & last_decrease_time, time_t & last_remote_decrease_time) const;
+
+    void addRemoteErrorCounts(std::shared_ptr<int> index);
 
     std::vector<ShuffledPool> getShuffledPools(size_t max_ignored_errors, const GetPriorityFunc & get_priority);
 
@@ -144,21 +150,37 @@ protected:
     auto getPoolExtendedStates() const
     {
         std::lock_guard lock(pool_states_mutex);
-        return std::make_tuple(shared_pool_states, nested_pools, last_error_decrease_time);
+        return std::make_tuple(shared_pool_states, nested_pools, last_error_decrease_time, last_remote_error_decrease_time);
     }
 
     NestedPools nested_pools;
 
-    const time_t decrease_error_period;
-    const size_t max_error_cap;
+    const time_t decrease_connection_error_period;
+    const size_t max_connection_error_cap;
+    const time_t decrease_remote_error_period;
 
     mutable std::mutex pool_states_mutex;
     PoolStates shared_pool_states;
     /// The time when error counts were last decreased.
     time_t last_error_decrease_time = 0;
+    /// The time when remote error counts were last decreased.
+    time_t last_remote_error_decrease_time = 0;
 
     Poco::Logger * log;
 };
+
+template<typename TNestedPool>
+void PoolWithFailoverBase<TNestedPool>::addRemoteErrorCounts(std::shared_ptr<int> index)
+{
+    if(*index == -1)
+    {
+        LOG_WARNING(log, "Error of distributed query with setting max_parallel_replicas");
+        return;
+    }
+    LOG_WARNING(log, "There is an error in remote and we will plus one to the remote exception count");
+    std::lock_guard lock(pool_states_mutex);    
+    shared_pool_states[*index].remote_error_count++;
+}
 
 
 template <typename TNestedPool>
@@ -196,7 +218,8 @@ inline void PoolWithFailoverBase<TNestedPool>::updateSharedErrorCounts(std::vect
     for (const ShuffledPool & pool: shuffled_pools)
     {
         auto & pool_state = shared_pool_states[pool.index];
-        pool_state.error_count = std::min<UInt64>(max_error_cap, pool_state.error_count + pool.error_count);
+        pool_state.connection_error_count = std::min<UInt64>(max_connection_error_cap, pool_state.connection_error_count + pool.connection_error_count);
+        pool_state.remote_error_count += pool.remote_error_count;
         pool_state.slowdown_count += pool.slowdown_count;
     }
 }
@@ -224,7 +247,8 @@ PoolWithFailoverBase<TNestedPool>::getMany(
         size_t max_ignored_errors,
         bool fallback_to_stale_replicas,
         const TryGetEntryFunc & try_get_entry,
-        const GetPriorityFunc & get_priority)
+        const GetPriorityFunc & get_priority,
+        std::shared_ptr<int> index)
 {
     std::vector<ShuffledPool> shuffled_pools = getShuffledPools(max_ignored_errors, get_priority);
 
@@ -256,7 +280,7 @@ PoolWithFailoverBase<TNestedPool>::getMany(
 
             ShuffledPool & shuffled_pool = shuffled_pools[i];
             TryResult & result = try_results[i];
-            if (max_tries && (shuffled_pool.error_count >= max_tries || !result.entry.isNull()))
+            if (max_tries && (shuffled_pool.connection_error_count >= max_tries || !result.entry.isNull()))
                 continue;
 
             std::string fail_message;
@@ -272,17 +296,22 @@ PoolWithFailoverBase<TNestedPool>::getMany(
                 {
                     ++usable_count;
                     if (result.is_up_to_date)
+                    {
                         ++up_to_date_count;
+                        // get the index of replica in shard
+                        if(index)
+                            *index = shuffled_pool.index;
+                    }
                 }
             }
             else
             {
-                LOG_WARNING(log, "Connection failed at try №{}, reason: {}", (shuffled_pool.error_count + 1), fail_message);
+                LOG_WARNING(log, "Connection failed at try №{}, reason: {}", (shuffled_pool.connection_error_count + 1), fail_message);
                 ProfileEvents::increment(ProfileEvents::DistributedConnectionFailTry);
 
-                shuffled_pool.error_count = std::min(max_error_cap, shuffled_pool.error_count + 1);
+                shuffled_pool.connection_error_count = std::min(max_connection_error_cap, shuffled_pool.connection_error_count + 1);
 
-                if (shuffled_pool.error_count >= max_tries)
+                if (shuffled_pool.connection_error_count >= max_tries)
                 {
                     ++failed_pools_count;
                     ProfileEvents::increment(ProfileEvents::DistributedConnectionFailAtAll);
@@ -336,7 +365,7 @@ PoolWithFailoverBase<TNestedPool>::getMany(
 template <typename TNestedPool>
 struct PoolWithFailoverBase<TNestedPool>::PoolState
 {
-    UInt64 error_count = 0;
+    UInt64 connection_error_count = 0;
     /// The number of slowdowns that led to changing replica in HedgedRequestsFactory
     UInt64 slowdown_count = 0;
     /// Priority from the <remote_server> configuration.
@@ -345,6 +374,9 @@ struct PoolWithFailoverBase<TNestedPool>::PoolState
     Int64 priority = 0;
     UInt32 random = 0;
 
+    // error for remote exception
+    UInt64 remote_error_count = 0;
+
     void randomize()
     {
         random = rng();
@@ -352,8 +384,8 @@ struct PoolWithFailoverBase<TNestedPool>::PoolState
 
     static bool compare(const PoolState & lhs, const PoolState & rhs)
     {
-        return std::forward_as_tuple(lhs.error_count, lhs.slowdown_count, lhs.config_priority, lhs.priority, lhs.random)
-             < std::forward_as_tuple(rhs.error_count, rhs.slowdown_count, rhs.config_priority, rhs.priority, rhs.random);
+        return std::forward_as_tuple(lhs.remote_error_count, lhs.connection_error_count, lhs.slowdown_count, lhs.config_priority, lhs.priority, lhs.random)
+             < std::forward_as_tuple(rhs.remote_error_count, rhs.connection_error_count, rhs.slowdown_count, rhs.config_priority, rhs.priority, rhs.random);
     }
 
 private:
@@ -373,43 +405,52 @@ PoolWithFailoverBase<TNestedPool>::updatePoolStates(size_t max_ignored_errors)
         for (auto & state : shared_pool_states)
             state.randomize();
 
-        updateErrorCounts(shared_pool_states, last_error_decrease_time);
+        updateErrorCounts(shared_pool_states, last_error_decrease_time, last_remote_error_decrease_time);
         result.assign(shared_pool_states.begin(), shared_pool_states.end());
     }
 
     /// distributed_replica_max_ignored_errors
     for (auto & state : result)
-        state.error_count = std::max<UInt64>(0, state.error_count - max_ignored_errors);
+        state.connection_error_count = std::max<UInt64>(0, state.connection_error_count - max_ignored_errors);
 
     return result;
 }
 
 template <typename TNestedPool>
-void PoolWithFailoverBase<TNestedPool>::updateErrorCounts(PoolWithFailoverBase<TNestedPool>::PoolStates & states, time_t & last_decrease_time) const
+void PoolWithFailoverBase<TNestedPool>::updateErrorCounts(PoolWithFailoverBase<TNestedPool>::PoolStates & states, time_t & last_decrease_time, time_t & last_remote_decrease_time) const
 {
     time_t current_time = time(nullptr);
 
     if (last_decrease_time) //-V1051
     {
         time_t delta = current_time - last_decrease_time;
+        time_t delta_remote = current_time - last_remote_decrease_time;
 
         if (delta >= 0)
         {
             const UInt64 max_bits = sizeof(UInt64) * CHAR_BIT;
             size_t shift_amount = max_bits;
-            /// Divide error counts by 2 every decrease_error_period seconds.
-            if (decrease_error_period)
-                shift_amount = delta / decrease_error_period;
+            size_t shift_amount_for_remote = max_bits;
+            
+            /// Divide error counts by 2 every decrease_connection_error_period seconds.
+            if (decrease_connection_error_period)
+                shift_amount = delta / decrease_connection_error_period;
+            /// Same with above
+            if (decrease_remote_error_period)
+                shift_amount_for_remote = delta_remote / decrease_remote_error_period;
+
             /// Update time but don't do it more often than once a period.
             /// Else if the function is called often enough, error count will never decrease.
             if (shift_amount)
                 last_decrease_time = current_time;
+            if (shift_amount_for_remote)
+                last_remote_decrease_time = current_time;
 
             if (shift_amount >= max_bits)
             {
                 for (auto & state : states)
                 {
-                    state.error_count = 0;
+                    state.connection_error_count = 0;
                     state.slowdown_count = 0;
                 }
             }
@@ -417,12 +458,27 @@ void PoolWithFailoverBase<TNestedPool>::updateErrorCounts(PoolWithFailoverBase<T
             {
                 for (auto & state : states)
                 {
-                    state.error_count >>= shift_amount;
+                    state.connection_error_count >>= shift_amount;
                     state.slowdown_count >>= shift_amount;
                 }
             }
+
+            if (shift_amount_for_remote >= max_bits)
+            {
+                for (auto & state : states)
+                    state.remote_error_count = 0;
+            }
+            else if (shift_amount_for_remote)
+            {
+                for (auto & state : states)
+                    state.remote_error_count >>= shift_amount_for_remote;
+            }
+
         }
     }
     else
+    {
         last_decrease_time = current_time;
+        last_remote_decrease_time = current_time;
+    }
 }

@@ -3,6 +3,7 @@
 #include <Core/Field.h>
 #include <Common/Exception.h>
 #include <Columns/IColumn.h>
+#include <Columns/ColumnArray.h>
 #include <Common/typeid_cast.h>
 #include <Common/assert_cast.h>
 #include <Common/PODArray.h>
@@ -16,6 +17,7 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
 }
 
+static constexpr size_t max_array_size_as_field = 1000000;
 
 /** ColumnConst contains another column with single element,
   *  but looks like a column with arbitrary amount of same elements.
@@ -283,7 +285,21 @@ public:
     const IColumn & getDataColumn() const { return *data; }
     const ColumnPtr & getDataColumnPtr() const { return data; }
 
-    Field getField() const { return getDataColumn()[0]; }
+    Field getField() const
+    {
+        const auto & col = getDataColumn();
+        const auto * array_col = typeid_cast<const ColumnArray *>(&col);
+
+        if (array_col)
+        {
+            auto size = array_col->getOffsets()[0];
+            if (size > max_array_size_as_field)
+            {
+                return Array{};
+            }
+        }
+        return col[0];
+    }
 
     /// The constant value. It is valid even if the size of the column is 0.
     template <typename T>

@@ -8,6 +8,7 @@
 #include <Common/escapeForFileName.h>
 #include <Common/typeid_cast.h>
 #include <Common/ThreadPool.h>
+#include <Storages/MergeTree/DataPartsReceive.h>
 #include <Interpreters/InterpreterAlterQuery.h>
 #include <Interpreters/PartLog.h>
 #include <Interpreters/MutationsInterpreter.h>
@@ -121,6 +122,16 @@ void StorageMergeTree::startup()
     try
     {
         background_operations_assignee.start();
+
+        if (getContext()->getSettingsRef().enable_data_parts_receive_service
+            && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
+        {
+            InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive>(*this);
+            std::atomic_exchange(&data_parts_receive_endpoint, data_parts_receive_ptr);
+            getContext()->getInterserverIOHandler().addEndpoint(
+                data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()), data_parts_receive_ptr);
+        }
+
         startBackgroundMovesIfNeeded();
     }
     catch (...)
@@ -166,6 +177,14 @@ void StorageMergeTree::shutdown()
 
     background_operations_assignee.finish();
     background_moves_assignee.finish();
+
+    auto data_parts_receive_ptr = std::atomic_exchange(&data_parts_receive_endpoint, InterserverIOEndpointPtr{});
+    if (data_parts_receive_ptr)
+    {
+        getContext()->getInterserverIOHandler().removeEndpointIfExists(data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()));
+        data_parts_receive_ptr->blocker.cancelForever();
+        std::unique_lock lock(data_parts_receive_ptr->rwlock);
+    }
 
     try
     {

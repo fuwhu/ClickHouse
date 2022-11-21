@@ -101,6 +101,7 @@ public:
         String default_database;
         /// The locality is determined at the initialization, and is not changed even if DNS is changed
         bool is_local = false;
+        bool is_enable = true;
         bool user_specified = false;
 
         Protocol::Compression compression = Protocol::Compression::Enable;

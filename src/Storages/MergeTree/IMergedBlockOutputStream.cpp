@@ -72,6 +72,27 @@ NameSet IMergedBlockOutputStream::removeEmptyColumnsFromPart(
         };
 
         data_part->getSerialization(*column_with_type)->enumerateStreams(callback);
+        
+        if (isMapV2(column_with_type->type))
+        {
+            auto map_with_implicit = data_part->getImplicitColumsMap().find(column_with_type->name);
+            for (const auto & implicit_column : map_with_implicit->second)
+            {
+                ISerialization::StreamCallback implicit_callback = [&](const ISerialization::SubstreamPath & substream_path)
+                {
+                    String stream_name = ISerialization::getFileNameForStream(implicit_column, substream_path);
+                    /// Delete files if they are no longer shared with another column.
+                    if (--stream_counts[stream_name] == 0)
+                    {
+                        remove_files.emplace(stream_name + ".bin");
+                        remove_files.emplace(stream_name + mrk_extension);
+                    }
+                };
+
+                auto implicit_serialization = data_part->getSerialization(implicit_column);
+                implicit_serialization->enumerateStreams(implicit_callback);
+            }
+        }
         serialization_infos.erase(column_name);
     }
 
@@ -102,6 +123,22 @@ NameSet IMergedBlockOutputStream::removeEmptyColumnsFromPart(
 
         if (remove_it != columns.end())
             columns.erase(remove_it);
+
+        std::map<String, NamesAndTypesList> & map_implict
+            = const_cast<std::map<String, NamesAndTypesList> &>(data_part->getImplicitColumsMap());
+        if (map_implict.contains(empty_column_name))
+        {
+            const auto & implicit_columns = map_implict.find(empty_column_name)->second;
+            for (const auto & implicit_column : implicit_columns)
+            {
+                auto implicit_find_func = [&implicit_column](const auto & pair) -> bool { return pair.name == implicit_column.name; };
+
+                auto remove_implicit_column = std::find_if(columns.begin(), columns.end(), implicit_find_func);
+                if (remove_implicit_column != columns.end())
+                    columns.erase(remove_implicit_column);
+            }
+            std::erase_if(map_implict, [&empty_column_name](const auto & item) { return item.first == empty_column_name; });
+        }
     }
     return remove_files;
 }

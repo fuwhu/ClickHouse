@@ -447,6 +447,11 @@ SerializationPtr IMergeTreeDataPart::getSerialization(const NameAndTypePair & co
         : IDataType::getSerialization(column, *it->second);
 }
 
+void IMergeTreeDataPart::setImplicitColumns(const std::map<String, NamesAndTypesList> & implicit_columns_maps_)
+{
+    implicit_columns_maps = implicit_columns_maps_;
+}
+
 void IMergeTreeDataPart::removeIfNeeded()
 {
     if (!is_temp && state != State::DeleteOnDestroy)
@@ -566,6 +571,17 @@ String IMergeTreeDataPart::getColumnNameWithMinimumCompressedSize(
         options.withSubcolumns();
 
     auto storage_columns = storage_snapshot->getColumns(options);
+
+    /// put in all implicit columns
+    const auto & implicit_columns = getImplicitColumsMap();
+    for (const auto & [implicit_map_name, implicit_map_col_list] : implicit_columns)
+    {
+        for (const auto & [col_name, col_type] : implicit_map_col_list)
+        {
+            storage_columns.emplace_back(col_name, col_type);
+        }
+    }
+
     MergeTreeData::AlterConversions alter_conversions;
     if (!parent_part)
         alter_conversions = storage.getAlterConversionsForPart(shared_from_this());
@@ -1087,6 +1103,27 @@ void IMergeTreeDataPart::loadColumns(bool require)
             if (aggregate_function_data_type && aggregate_function_data_type->isVersioned())
                 aggregate_function_data_type->setVersion(0, /* if_empty */true);
         }
+    }
+
+    if (metadata_snapshot->hasImplicitColumn())
+    {
+        std::map<String, NamesAndTypesList> implicit_columns_map;
+
+        for (const auto & map_name : metadata_snapshot->getImplicitMapNames())
+        {
+            NamesAndTypesList implicit_columns;
+
+            for (const auto & column : loaded_columns)
+            {
+                String column_name = column.name;
+                if (column_name.starts_with(map_name + IMPLICIT_DELIMITER))
+                    implicit_columns.emplace_back(column);
+            }
+
+            implicit_columns_map.insert(std::make_pair(map_name, implicit_columns));
+        }
+
+        setImplicitColumns(implicit_columns_map);
     }
 
     SerializationInfo::Settings settings =

@@ -1,6 +1,7 @@
 #include <DataTypes/FieldToDataType.h>
 #include <DataTypes/DataTypeTuple.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeObject.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypesDecimal.h>
@@ -146,6 +147,24 @@ DataTypePtr FieldToDataType::operator() (const Map & map) const
     return std::make_shared<DataTypeMap>(
         getLeastSupertype(key_types, allow_convertion_to_string),
         getLeastSupertype(value_types, allow_convertion_to_string));
+}
+
+DataTypePtr FieldToDataType::operator() (const MapV2 & map) const
+{
+    DataTypes key_types;
+    DataTypes value_types;
+    key_types.reserve(map.size());
+    value_types.reserve(map.size());
+
+    for (const auto & elem : map)
+    {
+        const auto & tuple = elem.safeGet<const Tuple &>();
+        assert(tuple.size() == 2);
+        key_types.push_back(applyVisitor(FieldToDataType(), tuple[0]));
+        value_types.push_back(applyVisitor(FieldToDataType(), tuple[1]));
+    }
+
+    return std::make_shared<DataTypeMapV2>(getLeastSupertype(key_types), getLeastSupertype(value_types));
 }
 
 DataTypePtr FieldToDataType::operator() (const Object &) const

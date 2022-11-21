@@ -20,6 +20,7 @@
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeTuple.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypeNothing.h>
 #include <DataTypes/DataTypeUUID.h>
@@ -37,6 +38,7 @@
 #include <Columns/ColumnNullable.h>
 #include <Columns/ColumnTuple.h>
 #include <Columns/ColumnMap.h>
+#include <Columns/ColumnMapV2.h>
 #include <Columns/ColumnObject.h>
 #include <Columns/ColumnsCommon.h>
 #include <Columns/ColumnStringHelpers.h>
@@ -3130,6 +3132,142 @@ private:
         }
     }
 
+    /// The case of: tuple([key1, key2, ..., key_n], [value1, value2, ..., value_n])
+    WrapperType createTupleToMapV2Wrapper(const DataTypes & from_kv_types, const DataTypes & to_kv_types) const
+    {
+        return [element_wrappers = getElementWrappers(from_kv_types, to_kv_types), from_kv_types, to_kv_types]
+                (ColumnsWithTypeAndName & arguments, const DataTypePtr &, const ColumnNullable * nullable_source, size_t /*input_rows_count*/) -> ColumnPtr
+        {
+            const auto * col = arguments.front().column.get();
+            const auto & column_tuple = assert_cast<const ColumnTuple &>(*col);
+
+            Columns offsets(2);
+            Columns converted_columns(2);
+            for (size_t i = 0; i < 2; ++i)
+            {
+                const auto & column_array = assert_cast<const ColumnArray &>(column_tuple.getColumn(i));
+                ColumnsWithTypeAndName element = {{column_array.getDataPtr(), from_kv_types[i], ""}};
+                converted_columns[i] = element_wrappers[i](element, to_kv_types[i], nullable_source, (element[0].column)->size());
+                offsets[i] = column_array.getOffsetsPtr();
+            }
+
+            const auto & keys_offsets = assert_cast<const ColumnArray::ColumnOffsets &>(*offsets[0]).getData();
+            const auto & values_offsets = assert_cast<const ColumnArray::ColumnOffsets &>(*offsets[1]).getData();
+            if (keys_offsets != values_offsets)
+                throw Exception(ErrorCodes::TYPE_MISMATCH,
+                                "CAST AS Map can only be performed from tuple of arrays with equal sizes.");
+
+            return ColumnMapV2::create(converted_columns[0], converted_columns[1], offsets[0]);
+        };
+    }
+
+    WrapperType createMapV2ToMapV2Wrapper(const DataTypes & from_kv_types, const DataTypes & to_kv_types) const
+    {
+        return [element_wrappers = getElementWrappers(from_kv_types, to_kv_types), from_kv_types, to_kv_types]
+                (ColumnsWithTypeAndName & arguments, const DataTypePtr &, const ColumnNullable * nullable_source, size_t /*input_rows_count*/) -> ColumnPtr
+        {
+            const auto * col = arguments.front().column.get();
+            const auto & column_map = typeid_cast<const ColumnMapV2 &>(*col);
+            const auto & nested_data = column_map.getNestedData();
+
+            Columns converted_columns(2);
+            for (size_t i = 0; i < 2; ++i)
+            {
+                ColumnsWithTypeAndName element = {{nested_data.getColumnPtr(i), from_kv_types[i], ""}};
+                converted_columns[i] = element_wrappers[i](element, to_kv_types[i], nullable_source, (element[0].column)->size());
+            }
+
+            return ColumnMapV2::create(converted_columns[0], converted_columns[1], column_map.getNestedColumn().getOffsetsPtr());
+        };
+    }
+
+    WrapperType createMapToMapV2Wrapper(const DataTypes & from_kv_types, const DataTypes & to_kv_types) const
+    {
+        return [element_wrappers = getElementWrappers(from_kv_types, to_kv_types), from_kv_types, to_kv_types]
+                (ColumnsWithTypeAndName & arguments, const DataTypePtr &, const ColumnNullable * nullable_source, size_t /*input_rows_count*/) -> ColumnPtr
+        {
+            const auto * col = arguments.front().column.get();
+            const auto & column_map = typeid_cast<const ColumnMap &>(*col);
+            const auto & nested_data = column_map.getNestedData();
+
+            Columns converted_columns(2);
+            for (size_t i = 0; i < 2; ++i)
+            {
+                ColumnsWithTypeAndName element = {{nested_data.getColumnPtr(i), from_kv_types[i], ""}};
+                converted_columns[i] = element_wrappers[i](element, to_kv_types[i], nullable_source, (element[0].column)->size());
+            }
+            return ColumnMapV2::create(converted_columns[0], converted_columns[1], column_map.getNestedColumn().getOffsetsPtr());
+        };
+    }
+
+    /// The case of: [(key1, value1), (key2, value2), ...]
+    WrapperType createArrayToMapV2Wrapper(const DataTypes & from_kv_types, const DataTypes & to_kv_types) const
+    {
+        return [element_wrappers = getElementWrappers(from_kv_types, to_kv_types), from_kv_types, to_kv_types]
+                (ColumnsWithTypeAndName & arguments, const DataTypePtr &, const ColumnNullable * nullable_source, size_t /*input_rows_count*/) -> ColumnPtr
+        {
+            const auto * col = arguments.front().column.get();
+            const auto & column_array = typeid_cast<const ColumnArray &>(*col);
+            const auto & nested_data = typeid_cast<const ColumnTuple &>(column_array.getData());
+
+            Columns converted_columns(2);
+            for (size_t i = 0; i < 2; ++i)
+            {
+                ColumnsWithTypeAndName element = {{nested_data.getColumnPtr(i), from_kv_types[i], ""}};
+                converted_columns[i] = element_wrappers[i](element, to_kv_types[i], nullable_source, (element[0].column)->size());
+            }
+
+            return ColumnMapV2::create(converted_columns[0], converted_columns[1], column_array.getOffsetsPtr());
+        };
+    }
+
+    WrapperType createMapV2Wrapper(const DataTypePtr & from_type_untyped, const DataTypeMapV2 * to_type) const
+    {
+        if (const auto * from_tuple = checkAndGetDataType<DataTypeTuple>(from_type_untyped.get()))
+        {
+            if (from_tuple->getElements().size() != 2)
+                throw Exception{"CAST AS MapV2 from tuple requeires 2 elements.\n"
+                                "Left type: " + from_tuple->getName() + ", right type: " + to_type->getName(), ErrorCodes::TYPE_MISMATCH};
+
+            DataTypes from_kv_types;
+            const auto & to_kv_types = to_type->getKeyValueTypes();
+
+            for (const auto & elem : from_tuple->getElements())
+            {
+                const auto * type_array = checkAndGetDataType<DataTypeArray>(elem.get());
+                if (!type_array)
+                    throw Exception(ErrorCodes::TYPE_MISMATCH,
+                                    "CAST AS MapV2 can only be performed from tuples of array. Got: {}", from_tuple->getName());
+
+                from_kv_types.push_back(type_array->getNestedType());
+            }
+
+            return createTupleToMapV2Wrapper(from_kv_types, to_kv_types);
+        }
+        else if (const auto * from_array = typeid_cast<const DataTypeArray *>(from_type_untyped.get()))
+        {
+            const auto * nested_tuple = typeid_cast<const DataTypeTuple *>(from_array->getNestedType().get());
+            if (!nested_tuple || nested_tuple->getElements().size() != 2)
+                throw Exception{"CAST AS MapV2 from array requeires nested tuple of 2 elements.\n"
+                                "Left type: " + from_array->getName() + ", right type: " + to_type->getName(), ErrorCodes::TYPE_MISMATCH};
+
+            return createArrayToMapV2Wrapper(nested_tuple->getElements(), to_type->getKeyValueTypes());
+        }
+        else if (const auto * from_type = checkAndGetDataType<DataTypeMap>(from_type_untyped.get()))
+        {
+            return createMapToMapV2Wrapper(from_type->getKeyValueTypes(), to_type->getKeyValueTypes());
+        }
+        else if (const auto * from_map_type = checkAndGetDataType<DataTypeMapV2>(from_type_untyped.get()))
+        {
+            return createMapV2ToMapV2Wrapper(from_map_type->getKeyValueTypes(), to_type->getKeyValueTypes());
+        }
+        else
+        {
+            throw Exception{"Unsupported types to CAST AS MapV2\n"
+                            "Left type: " + from_type_untyped->getName() + ", right type: " + to_type->getName(), ErrorCodes::TYPE_MISMATCH};
+        }
+    }
+
     WrapperType createObjectWrapper(const DataTypePtr & from_type, const DataTypeObject * to_type) const
     {
         if (const auto * from_tuple = checkAndGetDataType<DataTypeTuple>(from_type.get()))
@@ -3656,6 +3794,8 @@ private:
                 return createTupleWrapper(from_type, checkAndGetDataType<DataTypeTuple>(to_type.get()));
             case TypeIndex::Map:
                 return createMapWrapper(from_type, checkAndGetDataType<DataTypeMap>(to_type.get()));
+            case TypeIndex::MapV2:
+                return createMapV2Wrapper(from_type, checkAndGetDataType<DataTypeMapV2>(to_type.get()));
             case TypeIndex::Object:
                 return createObjectWrapper(from_type, checkAndGetDataType<DataTypeObject>(to_type.get()));
             case TypeIndex::AggregateFunction:

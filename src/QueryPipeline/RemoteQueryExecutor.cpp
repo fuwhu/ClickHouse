@@ -114,6 +114,7 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     , parallel_reading_coordinator(extension_ ? extension_->parallel_reading_coordinator : nullptr)
     , pool(pool_)
 {
+    connection_pool = pool;
     create_connections = [this, throttler, extension_]()->std::shared_ptr<IConnections>
     {
         const Settings & current_settings = context->getSettingsRef();
@@ -136,7 +137,12 @@ RemoteQueryExecutor::RemoteQueryExecutor(
         std::vector<IConnectionPool::Entry> connection_entries;
         if (main_table)
         {
-            auto try_results = pool->getManyChecked(timeouts, &current_settings, pool_mode, main_table.getQualifiedName());
+            std::vector<ConnectionPoolWithFailover::TryResult> try_results;
+            // if user use the setting max_parallel_replicas and it's greater than 1, we won't count the remote error
+            if(current_settings.max_parallel_replicas > 1)
+                try_results = pool->getManyChecked(timeouts, &current_settings, pool_mode, main_table.getQualifiedName());
+            else
+                try_results = pool->getManyChecked(timeouts, &current_settings, pool_mode, main_table.getQualifiedName(), connected_index);
             connection_entries.reserve(try_results.size());
             for (auto & try_result : try_results)
                 connection_entries.emplace_back(std::move(try_result.entry));
@@ -306,29 +312,38 @@ std::variant<Block, int> RemoteQueryExecutor::read(std::unique_ptr<ReadContext> 
 
     do
     {
-        if (!read_context->resumeRoutine())
-            return Block();
-
-        if (read_context->is_read_in_progress.load(std::memory_order_relaxed))
+        try
         {
-            read_context->setTimer();
-            return read_context->epoll.getFileDescriptor();
-        }
-        else
-        {
-            /// We need to check that query was not cancelled again,
-            /// to avoid the race between cancel() thread and read() thread.
-            /// (since cancel() thread will steal the fiber and may update the packet).
-            if (was_cancelled)
+            if (!read_context->resumeRoutine())
                 return Block();
 
-            if (auto data = processPacket(std::move(read_context->packet)))
-                return std::move(*data);
-            else if (got_duplicated_part_uuids)
-                return restartQueryWithoutDuplicatedUUIDs(&read_context);
+            if (read_context->is_read_in_progress.load(std::memory_order_relaxed))
+            {
+                read_context->setTimer();
+                return read_context->epoll.getFileDescriptor();
+            }
+            else
+            {
+                /// We need to check that query was not cancelled again,
+                /// to avoid the race between cancel() thread and read() thread.
+                /// (since cancel() thread will steal the fiber and may update the packet).
+                if (was_cancelled)
+                    return Block();
+
+                if (auto data = processPacket(std::move(read_context->packet)))
+                    return std::move(*data);
+                else if (got_duplicated_part_uuids)
+                    return restartQueryWithoutDuplicatedUUIDs(&read_context);
+            }
         }
-    }
-    while (true);
+        catch (Exception & e)
+        {
+            if (e.isRemoteException() && *connected_index != -1)
+                connection_pool->addRemoteError(connected_index);
+
+            throw;
+        }
+    } while (true);
 #else
     return read();
 #endif

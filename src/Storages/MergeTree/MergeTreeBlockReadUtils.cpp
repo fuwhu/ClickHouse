@@ -83,6 +83,12 @@ bool injectRequiredColumnsRecursively(
 
 }
 
+std::pair<bool, size_t> checkImplicitColumn(const String & column_name)
+{
+    size_t pos = column_name.find(IMPLICIT_DELIMITER);
+    return std::make_pair(pos != std::string::npos, pos);
+}
+
 NameSet injectRequiredColumns(
     const MergeTreeData & storage,
     const StorageSnapshotPtr & storage_snapshot,
@@ -105,8 +111,19 @@ NameSet injectRequiredColumns(
     for (size_t i = 0; i < columns.size(); ++i)
     {
         /// We are going to fetch only physical columns
-        if (!storage_snapshot->tryGetColumn(options, columns[i]))
-            throw Exception(ErrorCodes::NO_SUCH_COLUMN_IN_TABLE, "There is no physical column or subcolumn {} in table", columns[i]);
+        std::string column_name = columns[i];
+        if (!storage_snapshot->tryGetColumn(options, column_name))
+        {
+            const auto [is_implicit, pos] = checkImplicitColumn(column_name) ;
+            if (is_implicit)
+            {
+                const auto & implicit_map_name = column_name.substr(0, pos);
+                if (!storage_snapshot->tryGetColumn(options, implicit_map_name))
+                    throw Exception("There is no physical column or subcolumn " + columns[i] + " in table.", ErrorCodes::NO_SUCH_COLUMN_IN_TABLE);
+            }
+            else
+                throw Exception("There is no physical column or subcolumn " + columns[i] + " in table.", ErrorCodes::NO_SUCH_COLUMN_IN_TABLE);
+        }
 
         have_at_least_one_physical_column |= injectRequiredColumnsRecursively(
             columns[i], storage_snapshot, alter_conversions,

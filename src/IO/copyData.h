@@ -29,6 +29,6 @@ void copyData(ReadBuffer & from, WriteBuffer & to, size_t bytes, std::function<v
 
 /// Same as above but also use throttler to limit maximum speed
 void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, const std::atomic<int> & is_cancelled, ThrottlerPtr throttler);
-void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, size_t bytes, const std::atomic<int> & is_cancelled, ThrottlerPtr throttler);
+void copyDataWithThrottler(ReadBuffer & from, WriteBuffer & to, size_t bytes, const std::atomic<int> & is_cancelled, ThrottlerPtr throttler, const std::atomic<bool> * additional_cancel_flag = nullptr);
 
 }

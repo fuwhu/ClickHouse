@@ -251,8 +251,8 @@ private:
     {
         size_t pos = message.find('\n');
 
-        LOG_FATAL(log, "(version {}{}, {}) (from thread {}) {}",
-            VERSION_STRING, VERSION_OFFICIAL, daemon.build_id_info, thread_num, message.substr(0, pos));
+        LOG_FATAL(log, "(version {} ({}), {}) (from thread {}) {}",
+            VERSION_STRING, BILI_VERSION_STRING, daemon.build_id_info, thread_num, message.substr(0, pos));
 
         /// Print trace from std::terminate exception line-by-line to make it easy for grep.
         while (pos != std::string_view::npos)
@@ -300,14 +300,14 @@ private:
 
         if (query_id.empty())
         {
-            LOG_FATAL(log, "(version {}{}, {}) (from thread {}) (no query) Received signal {} ({})",
-                VERSION_STRING, VERSION_OFFICIAL, daemon.build_id_info,
+            LOG_FATAL(log, "(version {} ({}), {}) (from thread {}) (no query) Received signal {} ({})",
+                VERSION_STRING, BILI_VERSION_STRING, daemon.build_id_info,
                 thread_num, strsignal(sig), sig);
         }
         else
         {
-            LOG_FATAL(log, "(version {}{}, {}) (from thread {}) (query_id: {}) (query: {}) Received signal {} ({})",
-                VERSION_STRING, VERSION_OFFICIAL, daemon.build_id_info,
+            LOG_FATAL(log, "(version {} ({}), {}) (from thread {}) (query_id: {}) (query: {}) Received signal {} ({})",
+                VERSION_STRING, BILI_VERSION_STRING, daemon.build_id_info,
                 thread_num, query_id, query, strsignal(sig), sig);
         }
 

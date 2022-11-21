@@ -170,6 +170,11 @@ private:
     const ConnectionPoolWithFailoverPtr pool;
     std::shared_ptr<IConnections> connections;
 
+    // Get the shard connection pool
+    mutable ConnectionPoolWithFailoverPtr connection_pool;
+    // Get the index of replica
+    std::shared_ptr<int> connected_index = std::make_shared<int>(-1);
+
     /// Streams for reading from temporary tables and following sending of data
     /// to remote servers for GLOBAL-subqueries
     std::vector<ExternalTablesData> external_tables_data;

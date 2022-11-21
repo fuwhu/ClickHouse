@@ -1,4 +1,5 @@
 #include <Storages/MergeTree/IMergeTreeDataPartWriter.h>
+#include <Columns/ColumnMapV2.h>
 
 namespace DB
 {
@@ -58,6 +59,17 @@ Columns IMergeTreeDataPartWriter::releaseIndexColumns()
     return Columns(
         std::make_move_iterator(index_columns.begin()),
         std::make_move_iterator(index_columns.end()));
+}
+
+void IMergeTreeDataPartWriter::ensureImplicitColumnsConstructed(const Block & block)
+{
+    for (const auto & column : block.getColumns())
+        if (column->getDataType() == TypeIndex::MapV2)
+        {
+            const auto * col_map_v2 = dynamic_cast<const ColumnMapV2 *>(column.get());
+            if (col_map_v2->getColumns().empty())
+                col_map_v2->constructImplicitColumns();
+        }
 }
 
 IMergeTreeDataPartWriter::~IMergeTreeDataPartWriter() = default;

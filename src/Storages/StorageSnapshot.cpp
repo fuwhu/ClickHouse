@@ -2,8 +2,10 @@
 #include <Storages/IStorage.h>
 #include <DataTypes/ObjectUtils.h>
 #include <DataTypes/NestedUtils.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <sparsehash/dense_hash_map>
 #include <sparsehash/dense_hash_set>
+#include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
 
 namespace DB
 {
@@ -77,6 +79,21 @@ std::optional<NameAndTypePair> StorageSnapshot::tryGetColumn(const GetColumnsOpt
             return NameAndTypePair(column_name, it->second);
     }
 
+    if (getMetadataForQuery()->hasImplicitColumn())
+    {
+        const auto [is_implicit, pos] = checkImplicitColumn(column_name);
+        if (is_implicit)
+        {
+            const auto & implicit_map_name = column_name.substr(0, pos);
+            auto map_col = columns.tryGetColumn(options, implicit_map_name);
+            if (map_col)
+            {
+                const auto * map_type = typeid_cast<const DataTypeMapV2 *>(map_col->type.get());
+                return NameAndTypePair(column_name, map_type->getValueType());
+            }
+        }
+    }
+
     return {};
 }
 
@@ -116,8 +133,33 @@ Block StorageSnapshot::getSampleBlockForColumns(const Names & column_names) cons
         }
         else
         {
-            throw Exception(ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
-                "Column {} not found in table {}", backQuote(name), storage.getStorageID().getNameForLogs());
+            auto [is_implicit, delimiter_pos] = checkImplicitColumn(name);
+            if (is_implicit)
+            {
+                const auto & mapv2_column_name = name.substr(0, delimiter_pos);
+                auto mapv2_col = columns.tryGetColumnOrSubcolumn(GetColumnsOptions::All, mapv2_column_name);
+
+                if (mapv2_col)
+                {
+                    if (const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(mapv2_col->type.get()))
+                    {
+                        const auto & implicit_col_type = mapv2_type->getValueType();
+                        res.insert({implicit_col_type->createColumn(), implicit_col_type, name});
+                    }
+                }
+                else
+                    throw Exception(
+                        ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                        "Implicit column {} found for non-exist mapV2 column {}",
+                        backQuote(name),
+                        backQuote(mapv2_column_name));
+            }
+            else
+                throw Exception(
+                    ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                    "Column {} not found in table {}",
+                    backQuote(name),
+                    storage.getStorageID().getNameForLogs());
         }
     }
 

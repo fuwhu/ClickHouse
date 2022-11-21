@@ -80,6 +80,8 @@ StorageSystemParts::StorageSystemParts(const StorageID & table_id_)
         {"rows_where_ttl_info.min",                     std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>())},
         {"rows_where_ttl_info.max",                     std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>())},
 
+        {"implicit_columns",                            std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
+
         {"projections",                                 std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
     }
     )
@@ -264,6 +266,16 @@ void StorageSystemParts::processNextStorage(
         add_ttl_info_map(part->ttl_infos.recompression_ttl);
         add_ttl_info_map(part->ttl_infos.group_by_ttl);
         add_ttl_info_map(part->ttl_infos.rows_where_ttl);
+
+        if (columns_mask[src_index++])
+        {
+            Array implicit_columns;
+            implicit_columns.reserve(part->getImplicitColumsMap().size());
+            for (const auto & [map_name, implicit_cols] : part->getImplicitColumsMap())
+                for (auto col_type : implicit_cols)
+                    implicit_columns.emplace_back(col_type.name);
+            columns[res_index++]->insert(implicit_columns);
+        }
 
         Array projections;
         for (const auto & [name, _] : part->getProjectionParts())

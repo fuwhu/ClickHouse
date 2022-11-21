@@ -27,9 +27,10 @@ namespace ErrorCodes
 ConnectionPoolWithFailover::ConnectionPoolWithFailover(
         ConnectionPoolPtrs nested_pools_,
         LoadBalancing load_balancing,
-        time_t decrease_error_period_,
-        size_t max_error_cap_)
-    : Base(std::move(nested_pools_), decrease_error_period_, max_error_cap_, &Poco::Logger::get("ConnectionPoolWithFailover"))
+        time_t decrease_connection_error_period_,
+        size_t max_connection_error_cap_,
+        time_t decrease_remote_error_period_)
+    : Base(std::move(nested_pools_), decrease_connection_error_period_, max_connection_error_cap_, decrease_remote_error_period_, &Poco::Logger::get("ConnectionPoolWithFailover"))
     , default_load_balancing(load_balancing)
 {
     const std::string & local_hostname = getFQDNOrHostName();
@@ -101,7 +102,7 @@ Int64 ConnectionPoolWithFailover::getPriority() const
 
 ConnectionPoolWithFailover::Status ConnectionPoolWithFailover::getStatus() const
 {
-    const auto [states, pools, error_decrease_time] = getPoolExtendedStates();
+    const auto [states, pools, error_decrease_time, remote_error_decrease_time] = getPoolExtendedStates();
     // NOTE: to avoid data races do not touch any data of ConnectionPoolWithFailover or PoolWithFailoverBase in the code below.
 
     assert(states.size() == pools.size());
@@ -109,20 +110,25 @@ ConnectionPoolWithFailover::Status ConnectionPoolWithFailover::getStatus() const
     ConnectionPoolWithFailover::Status result;
     result.reserve(states.size());
     const time_t since_last_error_decrease = time(nullptr) - error_decrease_time;
+    const time_t since_last_remote_error_decrease_time = time(nullptr) - remote_error_decrease_time;
     /// Update error_count and slowdown_count in states to return actual information.
     auto updated_states = states;
     auto updated_error_decrease_time = error_decrease_time;
-    Base::updateErrorCounts(updated_states, updated_error_decrease_time);
+    auto updated_remote_error_decrease_time = remote_error_decrease_time;
+    Base::updateErrorCounts(updated_states, updated_error_decrease_time, updated_remote_error_decrease_time);
     for (size_t i = 0; i < states.size(); ++i)
     {
-        const auto rounds_to_zero_errors = states[i].error_count ? bitScanReverse(states[i].error_count) + 1 : 0;
+        const auto rounds_to_zero_errors = states[i].connection_error_count ? bitScanReverse(states[i].connection_error_count) + 1 : 0;
         const auto rounds_to_zero_slowdowns = states[i].slowdown_count ? bitScanReverse(states[i].slowdown_count) + 1 : 0;
-        const auto seconds_to_zero_errors = std::max(static_cast<time_t>(0), std::max(rounds_to_zero_errors, rounds_to_zero_slowdowns) * decrease_error_period - since_last_error_decrease);
+        const auto rounds_to_zero_remote_error_count = states[i].remote_error_count ? bitScanReverse(states[i].remote_error_count) + 1 : 0;
+        const auto seconds_to_zero_errors = std::max(static_cast<time_t>(0), std::max(std::max(rounds_to_zero_errors, rounds_to_zero_slowdowns) * decrease_connection_error_period - since_last_error_decrease,
+        rounds_to_zero_remote_error_count * decrease_remote_error_period - since_last_remote_error_decrease_time));
 
         result.emplace_back(NestedPoolStatus{
             pools[i],
-            updated_states[i].error_count,
+            updated_states[i].connection_error_count,
             updated_states[i].slowdown_count,
+            updated_states[i].remote_error_count,
             std::chrono::seconds{seconds_to_zero_errors}
         });
     }
@@ -164,14 +170,15 @@ std::vector<ConnectionPoolWithFailover::TryResult> ConnectionPoolWithFailover::g
 std::vector<ConnectionPoolWithFailover::TryResult> ConnectionPoolWithFailover::getManyChecked(
     const ConnectionTimeouts & timeouts,
     const Settings * settings, PoolMode pool_mode,
-    const QualifiedTableName & table_to_check)
+    const QualifiedTableName & table_to_check,
+    std::shared_ptr<int> index)
 {
     TryGetEntryFunc try_get_entry = [&](NestedPool & pool, std::string & fail_message)
     {
         return tryGetEntry(pool, timeouts, fail_message, settings, &table_to_check);
     };
 
-    return getManyImpl(settings, pool_mode, try_get_entry);
+    return getManyImpl(settings, pool_mode, try_get_entry, index);
 }
 
 ConnectionPoolWithFailover::Base::GetPriorityFunc ConnectionPoolWithFailover::makeGetPriorityFunc(const Settings * settings)
@@ -214,7 +221,8 @@ ConnectionPoolWithFailover::Base::GetPriorityFunc ConnectionPoolWithFailover::ma
 std::vector<ConnectionPoolWithFailover::TryResult> ConnectionPoolWithFailover::getManyImpl(
         const Settings * settings,
         PoolMode pool_mode,
-        const TryGetEntryFunc & try_get_entry)
+        const TryGetEntryFunc & try_get_entry,
+        std::shared_ptr<int> index)
 {
     if (nested_pools.empty())
         throw DB::Exception(DB::ErrorCodes::ALL_CONNECTION_TRIES_FAILED, "Cannot get connection from ConnectionPoolWithFailover cause nested pools are empty");
@@ -243,7 +251,8 @@ std::vector<ConnectionPoolWithFailover::TryResult> ConnectionPoolWithFailover::g
 
     return Base::getMany(min_entries, max_entries, max_tries,
         max_ignored_errors, fallback_to_stale_replicas,
-        try_get_entry, get_priority);
+        try_get_entry, get_priority, index);
+
 }
 
 ConnectionPoolWithFailover::TryResult

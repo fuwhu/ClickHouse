@@ -39,7 +39,7 @@ namespace ErrorCodes
   *  SELECT range(10000000)
   * will take less than 500ms on your machine.
   */
-static constexpr size_t max_array_size_as_field = 1000000;
+// static constexpr size_t max_array_size_as_field = 1000000;
 
 
 ColumnArray::ColumnArray(MutableColumnPtr && nested_column, MutableColumnPtr && offsets_column)
@@ -133,7 +133,7 @@ void ColumnArray::get(size_t n, Field & res) const
 {
     size_t offset = offsetAt(n);
     size_t size = sizeAt(n);
-
+    
     if (size > max_array_size_as_field)
         throw Exception(ErrorCodes::TOO_LARGE_ARRAY_SIZE, "Array of size {} is too large to be manipulated as single field, maximum size {}",
             size, max_array_size_as_field);

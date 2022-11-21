@@ -18,6 +18,7 @@ struct PartLogElement
         REMOVE_PART = 4,
         MUTATE_PART = 5,
         MOVE_PART = 6,
+        RECEIVE_PART = 7,
     };
 
     String query_id;
@@ -51,6 +52,9 @@ struct PartLogElement
     /// Was the operation successful?
     UInt16 error = 0;
     String exception;
+
+    /// About implicit columns.
+    UInt16 implicit_column_count = 0;
 
     static std::string name() { return "PartLog"; }
 

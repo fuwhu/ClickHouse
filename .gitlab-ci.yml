@@ -1,0 +1,188 @@
+# 定义 stages
+stages:
+  - lint
+  - code_scan
+  - build
+  - functional_tests
+  - integration_tests
+  - upload
+
+# 定义参数
+variables:
+  # build文件夹
+  BUILD_PATH: build
+  # 需要发送的安全依赖文件，java语言则对应为pom.xml，python语言则为requirements.txt，nodejs语言则为package.json,go语言则为go.sum，php语言则为composer.lock
+  # 注意java项目管理如使用gradle，发送依赖文件为父节点下包含依赖版本的thirdparty.gradle文件
+  # 依赖文件在项目根目录则填写依赖文件名称即可，若项目不在根目录，则需要加上相对路径
+  DEPEND_FILE: CMakeLists.txt
+  # 该仓库开发语言类型。 选项： java,python,nodejs,go,php,gradle
+  LANGUAGE: c++
+  FS_HOST: 'http://jssz-inner-boss.bilibili.co'
+  ACCESS_KEY_ID: '7df5c4dc25027e7e'
+  SECRET_ACCESS_KEY: 'b1366ca38d65975a1f7f37628fce511b'
+  BUCKET: datacenter-alter
+  LOCAL_CK_PATH: /mnt/storage13/ck_package_ci_22/clickhouse
+
+include:
+  - project: 'xuneng/datacenter-ci-script'
+    ref: master
+    file: 'security/lint_depend_scan.yml'
+
+# 代码检查
+code_scan:
+  stage: code_scan
+  resource_group: devide
+  only:
+    - dev-22
+  script:
+    - echo "code_scan begin"
+    - ./utils/check-style/check-duplicate-includes.sh
+    - ./utils/check-style/check-style
+    - echo "code_scan end"
+
+# 构建
+build:
+  stage: build
+  resource_group: devide
+  only:
+    - dev-22
+    - tags
+  before_script:
+    - echo "exec git before_script"
+    - echo "git branch bef name " $CI_COMMIT_REF_NAME
+    - echo "git branch commit sha " $CI_COMMIT_SHA
+    - GITLAB_RUNNER_PATH=`pwd`
+    - echo "gitlab runner path " $GITLAB_RUNNER_PATH
+    - echo "change to local ck path " $LOCAL_CK_PATH
+    - cd $LOCAL_CK_PATH
+    - git fetch https://gitlab-ci-token:$CI_JOB_TOKEN@git.bilibili.co/datacenter/clickhouse.git $CI_COMMIT_SHA
+    - git checkout $CI_COMMIT_SHA
+    - git submodule update --init --recursive
+    - echo "check local build dir is exist"
+    - if [[ ! -d "$BUILD_PATH" ]]; then echo "build dir is not exist" && mkdir -p $BUILD_PATH; else echo "build dir is exist" && rm -rf $BUILD_PATH/*; fi
+    - echo "cmake begin"
+    - cd $BUILD_PATH && cmake .. -DCMAKE_C_COMPILER=`which clang` -DCMAKE_CXX_COMPILER=`which clang++` -DCMAKE_BUILD_TYPE=Release
+    - echo "cmake end"
+    - echo "ninja begin"
+    - ninja
+    - echo "ninja end"
+  script:
+    - echo "cp local file to gitlab"
+    - cd $GITLAB_RUNNER_PATH
+    - echo "check gitlab build dir is exist"
+    - mkdir -p build/programs && rm -rf build/programs/*
+    - cp $LOCAL_CK_PATH/build/programs/clickhouse build/programs/
+    - cp $LOCAL_CK_PATH/build/programs/clickhouse-odbc-bridge build/programs/
+    - cp $LOCAL_CK_PATH/build/programs/clickhouse-library-bridge build/programs/
+  artifacts:
+    paths:
+      - ./build/programs/clickhouse
+      - ./build/programs/clickhouse-odbc-bridge
+      - ./build/programs/clickhouse-library-bridge
+    expire_in: 1 day
+
+# 功能测试
+functional_tests:
+  resource_group: devide
+  stage: functional_tests
+  only:
+    - dev-22
+  before_script:
+    - systemctl stop clickhouse-server-ci.service
+    - echo "replace clickhouse binary begin"
+    - rm -rf /usr/bin/clickhouse && cp $BUILD_PATH/programs/clickhouse /usr/bin
+    - echo "replace clickhouse binary end"
+    - echo "clickhouse-server-ci restart begin"
+    - systemctl restart clickhouse-server-ci.service
+    - sleep 30s
+    - echo "clickhouse-server-ci restart end"
+  script:
+    - echo "functional_tests begin"
+    - ./tests/clickhouse-test create alter select drop group ttl --skip 00459_group_array_insert_at 01883_with_grouping_sets 01593_concurrent_alter_mutations_kill 01530_drop_database_atomic_sync 01181_db_atomic_drop_on_cluster 00754_alter_modify_order_by 02020_alter_table_modify_comment 02456_alter-nullable-column-bag-2 02262_column_ttl 02117_show_create_table_system
+    - echo "functional_tests end"
+  after_script:
+    - echo "clickhouse-server-ci stop begin"
+    - systemctl stop clickhouse-server-ci.service
+    - echo "clickhouse-server-ci stop end"
+    - sleep 30s
+    - echo "clear clickhouse data and log dir begin"
+    - rm -rf /mnt/storage02/ck_data/ci/*
+    - echo "clear clickhouse data and log dir end"
+  dependencies:
+    - build
+
+# 集成测试
+integration_tests:
+  resource_group: devide
+  stage: integration_tests
+  only:
+    - dev-22
+  script:
+    - echo "integration_tests begin"
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config -ss'
+    - echo "integration_tests end"
+  dependencies:
+    - build
+
+upload:
+  stage: upload
+  resource_group: devide
+  only:
+    - tags
+  script:
+    - export START_BUILD_TIME=`date "+%Y-%m-%d %H:%M:%S"`
+    - export DEST_FILE_NAME="clickhouse"
+    - export DEST_FILE_LOCAL_PATH=build/programs/clickhouse
+    - export DEST_FILE_REMOTE_PATH=$CI_PROJECT_PATH/$CI_BUILD_ID/$DEST_FILE_NAME
+    - export DEST_FILE_MD5=`alterctl md5 $DEST_FILE_LOCAL_PATH`
+    - alterctl fs upload $DEST_FILE_LOCAL_PATH $DEST_FILE_REMOTE_PATH --debug
+    - |
+      curl -v -X POST 'http://alter.bilibili.co/api/alter/metadata/pack/ci/open/add/one' \
+      --header 'Content-Type: application/json' \
+      --header 'Accept: application/json' \
+      --header 'Alter-tenant: alter-ci' \
+      --header 'Alter-Token: 5VOi3w6J0CGYmL0t' \
+      --data '{
+          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+          "ciBranch": "'"$CI_COMMIT_BRANCH"'",
+          "ciId": "'"$CI_BUILD_ID"'",
+          "ciTag":"'"$CI_COMMIT_TAG"'",
+          "ciTime":"'"$START_BUILD_TIME"'",
+          "ciUser":"'"$GITLAB_USER_LOGIN"'",
+          "commitId":"'"$CI_COMMIT_SHA"'",
+          "commitMsg":"'"$CI_COMMIT_TITLE"'",
+          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+          "gitRepo": "'"$CI_PROJECT_NAME"'",
+          "packMd5":"'"$DEST_FILE_MD5"'",
+          "packName":"'"$DEST_FILE_NAME"'",
+          "packType": 0,
+          "packSize": 0
+      }'
+    - |
+      curl -x 172.22.21.111:80 -X POST 'http://pre-cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
+      --header 'Content-Type: application/json' \
+      --header 'Accept: application/json' \
+      --data '{
+          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+          "ciTag":"'"$CI_COMMIT_TAG"'",
+          "commitId":"'"$CI_COMMIT_SHA"'",
+          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+          "gitRepo": "'"$CI_PROJECT_NAME"'",
+          "packMd5":"'"$DEST_FILE_MD5"'",
+          "packName":"'"$DEST_FILE_NAME"'"
+      }'
+    - |
+      curl -vik --resolve cloud-bm.bilibili.co:443:172.22.21.10 -X POST 'https://cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
+      --header 'Content-Type: application/json' \
+      --header 'Accept: application/json' \
+      --data '{
+          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+          "ciTag":"'"$CI_COMMIT_TAG"'",
+          "commitId":"'"$CI_COMMIT_SHA"'",
+          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+          "gitRepo": "'"$CI_PROJECT_NAME"'",
+          "packMd5":"'"$DEST_FILE_MD5"'",
+          "packName":"'"$DEST_FILE_NAME"'"
+      }'
+  dependencies:
+    - build

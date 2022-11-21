@@ -99,6 +99,14 @@ namespace
         static FunctionPtr create(ContextPtr context) { return std::make_shared<FunctionZooKeeperSessionUptime>(context); }
     };
 
+    class FunctionBiliVersion : public FunctionConstantBase<FunctionBiliVersion, String, DataTypeString>
+    {
+    public:
+        static constexpr auto name = "biliVersion";
+        static FunctionPtr create(ContextPtr context) { return std::make_shared<FunctionBiliVersion>(context); }
+        explicit FunctionBiliVersion(ContextPtr context) : FunctionConstantBase(BILI_VERSION_STRING, context->isDistributed()) { }
+    };
+
 #if defined(OS_LINUX)
     class FunctionGetOSKernelVersion : public FunctionConstantBase<FunctionGetOSKernelVersion, String, DataTypeString>
     {
@@ -149,6 +157,11 @@ void registerFunctionUptime(FunctionFactory & factory)
 void registerFunctionVersion(FunctionFactory & factory)
 {
     factory.registerFunction<FunctionVersion>(FunctionFactory::CaseInsensitive);
+}
+
+void registerFunctionBiliVersion(FunctionFactory & factory)
+{
+    factory.registerFunction<FunctionBiliVersion>(FunctionFactory::CaseInsensitive);
 }
 
 void registerFunctionZooKeeperSessionUptime(FunctionFactory & factory)

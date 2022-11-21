@@ -4,11 +4,13 @@
 #include <Functions/FunctionHelpers.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/getLeastSupertype.h>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnMap.h>
+#include <Columns/ColumnMapV2.h>
 #include <Columns/ColumnString.h>
 #include <Columns/ColumnFixedString.h>
 #include <Columns/ColumnsNumber.h>
@@ -382,18 +384,19 @@ public:
 
         const DataTypeArray * array_type = checkAndGetDataType<DataTypeArray>(first_argument_type.get());
         const DataTypeMap * map_type = checkAndGetDataType<DataTypeMap>(first_argument_type.get());
+        const DataTypeMapV2 * map_v2_type = checkAndGetDataType<DataTypeMapV2>(first_argument_type.get());
 
         DataTypePtr inner_type;
 
         /// If map is first argument only has(map_column, key) function is supported
         if constexpr (std::is_same_v<ConcreteAction, HasAction>)
         {
-            if (!array_type && !map_type)
+            if (!array_type && !map_type && !map_v2_type)
                 throw Exception(ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
-                    "First argument for function {} must be an array or map.",
+                    "First argument for function {} must be an array or map or mapV2.",
                     getName());
 
-            inner_type = map_type ? map_type->getKeyType() : array_type->getNestedType();
+            inner_type = map_type ? map_type->getKeyType() : (map_v2_type ? map_v2_type->getKeyType() : array_type->getNestedType());
         }
         else
         {
@@ -407,7 +410,7 @@ public:
 
         if (!second_argument_type->onlyNull() && !allowArguments(inner_type, second_argument_type))
         {
-            const char * first_argument_type_name = map_type ? "map" : "array";
+            const char * first_argument_type_name = map_type ? "map" : (map_v2_type ? "mapV2" : "array");
             throw Exception(ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
                 "Types of {} and 2nd argument of function `{}` must be identical up to nullability, cardinality, "
                 "numeric types, or Enum and numeric type. Passed: {} and {}.",
@@ -436,6 +439,26 @@ public:
 
                 const auto & type_map = assert_cast<const DataTypeMap &>(*arguments[0].type);
                 auto array_type = std::make_shared<DataTypeArray>(type_map.getKeyType());
+
+                auto arguments_copy = arguments;
+                arguments_copy[0].column = std::move(array_column);
+                arguments_copy[0].type = std::move(array_type);
+                arguments_copy[0].name = arguments[0].name;
+
+                return executeArrayImpl(arguments_copy, result_type);
+            }
+            if (isMapV2(arguments[0].type))
+            {
+                auto non_const_map_column = arguments[0].column->convertToFullColumnIfConst();
+
+                const auto & map_v2_column = assert_cast<const ColumnMapV2 &>(*non_const_map_column);
+                const auto & map_array_column = map_v2_column.getNestedColumn();
+                auto offsets = map_array_column.getOffsetsPtr();
+                auto keys = map_v2_column.getNestedData().getColumnPtr(0);
+                auto array_column = ColumnArray::create(keys, offsets);
+
+                const auto & type_map_v2 = assert_cast<const DataTypeMapV2 &>(*arguments[0].type);
+                auto array_type = std::make_shared<DataTypeArray>(type_map_v2.getKeyType());
 
                 auto arguments_copy = arguments;
                 arguments_copy[0].column = std::move(array_column);

@@ -218,6 +218,16 @@ protected:
     bool parseImpl(Pos & pos, ASTPtr & node, Expected & expected) override;
 };
 
+class ParserMapElementExpression : public IParserBase
+{
+private:
+    static const char * operators[];
+
+protected:
+    const char * getName() const override { return "map element expression"; }
+
+    bool parseImpl(Pos & pos, ASTPtr & node, Expected & expected) override;
+};
 
 class ParserArrayElementExpression : public IParserBase
 {

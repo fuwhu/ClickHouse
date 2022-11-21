@@ -1,12 +1,14 @@
 #pragma once
 #include <Processors/Transforms/ExceptionKeepingTransform.h>
 #include <Processors/ISimpleTransform.h>
+#include <Storages/StorageInMemoryMetadata.h>
 
 namespace DB
 {
 
 class ExpressionActions;
 using ExpressionActionsPtr = std::shared_ptr<ExpressionActions>;
+using StorageMetadataPtr = std::shared_ptr<const StorageInMemoryMetadata>;
 
 class ActionsDAG;
 
@@ -20,7 +22,9 @@ class ExpressionTransform final : public ISimpleTransform
 public:
     ExpressionTransform(
             const Block & header_,
-            ExpressionActionsPtr expression_);
+            ExpressionActionsPtr expression_,
+            bool is_skip_indices_expression_ = false,
+            StorageMetadataPtr metadata_snapshot_ = nullptr);
 
     String getName() const override { return "ExpressionTransform"; }
 
@@ -31,6 +35,8 @@ protected:
 
 private:
     ExpressionActionsPtr expression;
+    bool is_skip_indices_expression;
+    StorageMetadataPtr metadata_snapshot;
 };
 
 class ConvertingTransform final : public ExceptionKeepingTransform

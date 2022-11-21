@@ -38,11 +38,13 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypeLowCardinality.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <DataTypes/DataTypeMapV2.h>
 
 #include <IO/WriteHelpers.h>
 #include <Storages/IStorage.h>
 
 #include <AggregateFunctions/AggregateFunctionFactory.h>
+#include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
 
 namespace DB
 {
@@ -880,6 +882,35 @@ void TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         source_column_names.insert(column.name);
 
     NameSet required = columns_context.requiredColumns();
+
+    for (const auto & column_name : required)
+    {
+        auto [is_implicit, pos] = checkImplicitColumn(column_name);
+        if (is_implicit)
+        {
+            std::string col_map_name = column_name.substr(0, pos);
+
+            const auto & map_col_list = source_columns.filter(NameSet{col_map_name});
+            if (!map_col_list.empty())
+            {
+                const auto * map_v2_col = typeid_cast<const DataTypeMapV2 *>(map_col_list.front().type.get());
+                if (map_v2_col)
+                {
+                    NameAndTypePair implicit_col = {column_name, map_v2_col->getValueType()};
+                    source_columns.push_back(implicit_col);
+                    source_column_names.insert(implicit_col.name);
+                    source_columns_set.insert(implicit_col.name);
+                }
+                else
+                {
+                    WriteBufferFromOwnString ss;
+                    ss << "Column name " << column_name << " contains delimiter of MapV2, but column " << col_map_name << " is not of MapV2 type";
+                    throw Exception(ss.str(), ErrorCodes::LOGICAL_ERROR);
+                }
+            }
+        }
+    }
+
     if (columns_context.has_table_join)
     {
         NameSet available_columns;
@@ -1031,19 +1062,38 @@ void TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         WriteBufferFromOwnString ss;
         ss << "Missing columns:";
         for (const auto & name : unknown_required_source_columns)
-            ss << " '" << name << "'";
+        {
+            auto [is_implicit, pos] = checkImplicitColumn(name);
+            if (is_implicit)
+                ss << " '" << name.substr(0, pos) << "'";
+            else
+                ss << " '" << name << "'";
+        }
+
         ss << " while processing query: '" << queryToString(query) << "'";
 
         ss << ", required columns:";
         for (const auto & name : columns_context.requiredColumns())
-            ss << " '" << name << "'";
+        {
+            auto [is_implicit, pos] = checkImplicitColumn(name);
+            if (is_implicit)
+                ss << " '" << name.substr(0, pos) << "'";
+            else
+                ss << " '" << name << "'";
+        }
 
         if (storage)
         {
             std::vector<String> hint_name{};
             for (const auto & name : columns_context.requiredColumns())
             {
-                auto hints = storage->getHints(name);
+                std::string s = name;
+                auto [is_implicit, pos] = checkImplicitColumn(name);
+                if (is_implicit)
+                    s  = name.substr(0, pos);
+                else
+                    s = name;
+                auto hints = storage->getHints(s);
                 hint_name.insert(hint_name.end(), hints.begin(), hints.end());
             }
 

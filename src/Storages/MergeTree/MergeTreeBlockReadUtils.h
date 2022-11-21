@@ -29,6 +29,7 @@ NameSet injectRequiredColumns(
     bool with_subcolumns,
     Names & columns);
 
+std::pair<bool, size_t> checkImplicitColumn(const String & column_name);
 
 /// A batch of work for MergeTreeThreadSelectBlockInputStream
 struct MergeTreeReadTask

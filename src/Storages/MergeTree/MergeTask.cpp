@@ -135,6 +135,50 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
     global_ctx->all_column_names = global_ctx->metadata_snapshot->getColumns().getNamesOfPhysical();
     global_ctx->storage_columns = global_ctx->metadata_snapshot->getColumns().getAllPhysical();
 
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
+    for (const auto & part : global_ctx->future_part->parts)
+    {
+        //get implicit columns for every ColumnMapV2
+        if (global_ctx->metadata_snapshot->hasImplicitColumn())
+        {
+            for (const auto & implicit_map_name : global_ctx->metadata_snapshot->getImplicitMapNames())
+            {
+                NamesAndTypesList implicit_columns;
+                implicit_columns = *part->getImplicitColumnsForMap(implicit_map_name);
+
+                auto it = implicit_columns_maps.find(implicit_map_name);
+                if (it != implicit_columns_maps.end())
+                {
+                    for (const auto & column : implicit_columns)
+                    {
+                        if (!it->second.contains(column.name))
+                            it->second.emplace_back(column);
+                    }
+                }
+                else
+                    implicit_columns_maps.insert(std::make_pair(implicit_map_name, implicit_columns));
+            }
+        }
+    }
+
+    for (const auto & implicit_columns_map : implicit_columns_maps)
+    {
+        if (!global_ctx->data->getSettings()->implicit_map_duplication)
+        {
+            std::erase_if(
+                global_ctx->storage_columns,
+                [&implicit_columns_map](const NameAndTypePair & e) { return implicit_columns_map.first == e.name; });
+            std::erase_if(
+                global_ctx->all_column_names, [&implicit_columns_map](const String & e) { return implicit_columns_map.first == e; });
+        }
+
+        for (const auto & column : implicit_columns_map.second)
+        {
+            global_ctx->storage_columns.emplace_back(column.name, column.type);
+            global_ctx->all_column_names.emplace_back(column.name);
+        }
+    }
+
     auto object_columns = MergeTreeData::getObjectColumns(global_ctx->future_part->parts, global_ctx->metadata_snapshot->getColumns());
     global_ctx->storage_snapshot = std::make_shared<StorageSnapshot>(*global_ctx->data, global_ctx->metadata_snapshot, object_columns);
     extendObjectColumns(global_ctx->storage_columns, object_columns, false);
@@ -188,6 +232,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
     }
 
     global_ctx->new_data_part->setColumns(global_ctx->storage_columns);
+    global_ctx->new_data_part->setImplicitColumns(implicit_columns_maps);
     global_ctx->new_data_part->setSerializationInfos(infos);
 
     const auto & local_part_min_ttl = global_ctx->new_data_part->ttl_infos.part_min_ttl;
@@ -850,7 +895,8 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
     {
         const auto & indices = global_ctx->metadata_snapshot->getSecondaryIndices();
         res_pipe.addTransform(std::make_shared<ExpressionTransform>(
-            res_pipe.getHeader(), indices.getSingleExpressionForIndices(global_ctx->metadata_snapshot->getColumns(), global_ctx->data->getContext())));
+            res_pipe.getHeader(), indices.getSingleExpressionForIndices(global_ctx->metadata_snapshot->getColumns(),
+            global_ctx->data->getContext()), true, global_ctx->metadata_snapshot));
         res_pipe.addTransform(std::make_shared<MaterializingTransform>(res_pipe.getHeader()));
     }
 

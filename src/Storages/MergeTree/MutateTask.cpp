@@ -944,7 +944,9 @@ private:
         if (ctx->metadata_snapshot->hasPrimaryKey() || ctx->metadata_snapshot->hasSecondaryIndices())
         {
             builder.addTransform(
-                std::make_shared<ExpressionTransform>(builder.getHeader(), ctx->data->getPrimaryKeyAndSkipIndicesExpression(ctx->metadata_snapshot)));
+                std::make_shared<ExpressionTransform>(builder.getHeader(),
+                     ctx->data->getPrimaryKeyAndSkipIndicesExpression(ctx->metadata_snapshot),
+                     true, ctx->metadata_snapshot));
 
             builder.addTransform(std::make_shared<MaterializingTransform>(builder.getHeader()));
         }

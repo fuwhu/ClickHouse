@@ -21,6 +21,9 @@ MergeTreeDataPartWriterInMemory::MergeTreeDataPartWriterInMemory(
 void MergeTreeDataPartWriterInMemory::write(
     const Block & block, const IColumn::Permutation * permutation)
 {
+    /// make sure the implicit columns of MapV2 are constructed.
+    ensureImplicitColumnsConstructed(block);
+
     if (part_in_memory->block)
         throw Exception("DataPartWriterInMemory supports only one write", ErrorCodes::LOGICAL_ERROR);
 

@@ -6,7 +6,7 @@
 #include <Interpreters/inplaceBlockConversions.h>
 #include <Storages/MergeTree/IMergeTreeReader.h>
 #include <Common/typeid_cast.h>
-
+#include <IO/Operators.h>
 
 namespace DB
 {
@@ -48,6 +48,34 @@ IMergeTreeReader::IMergeTreeReader(
         /// to allow to use shared offset column from cache.
         columns = Nested::convertToSubcolumns(columns);
         part_columns = Nested::collect(part_columns);
+    }
+
+    if (!storage.getSettings()->implicit_map_duplication)
+    {
+        Names mapv2_columns;
+
+        for (const auto & column : columns)
+        {
+            const auto & source_columns = metadata_snapshot->getColumns();
+            DataTypePtr to_read_type = nullptr;
+
+            if (!checkImplicitColumn(column.name).first)
+                to_read_type = source_columns.get(column.name).type;
+
+            if (to_read_type && to_read_type->getTypeId() == TypeIndex::MapV2)
+                mapv2_columns.emplace_back(column.name);
+        }
+
+        if (!mapv2_columns.empty())
+        {
+            WriteBufferFromOwnString ss;
+            ss << "Cannot select MapV2 column without specified key. MapV2 columns: ";
+            for (const auto & name : mapv2_columns)
+                ss << "'" << name << "'";
+            ss << ". Set mergetree setting 'implicit_map_duplication' = 1 to enable it";
+
+            throw Exception(ss.str(), ErrorCodes::LOGICAL_ERROR);
+        }
     }
 
     for (const auto & column_from_part : part_columns)

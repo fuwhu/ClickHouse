@@ -3,6 +3,7 @@
 #include <base/types.h>
 #include <Columns/ColumnString.h>
 #include <DataTypes/DataTypesNumber.h>
+#include "FunctionsMultiStringSearch.h"
 #include "Regexps.h"
 
 #include "config_functions.h"
@@ -133,4 +134,12 @@ struct MultiMatchAnyImpl
     }
 };
 
+struct NameMultiMatchAny
+{
+    static constexpr auto name = "multiMatchAny";
+};
+
+using FunctionMultiMatchAny = FunctionsMultiStringSearch<
+    MultiMatchAnyImpl<NameMultiMatchAny, UInt8, true, false, false>,
+    std::numeric_limits<UInt32>::max()>;
 }

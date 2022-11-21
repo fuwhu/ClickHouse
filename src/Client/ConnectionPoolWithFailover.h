@@ -37,8 +37,9 @@ public:
     ConnectionPoolWithFailover(
             ConnectionPoolPtrs nested_pools_,
             LoadBalancing load_balancing,
-            time_t decrease_error_period_ = DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD,
-            size_t max_error_cap = DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT);
+            time_t decrease_connection_error_period_ = DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD,
+            size_t max_connection_error_cap = DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT,
+            time_t decrease_remote_error_period = DBMS_CONNECTION_POOL_WITH_REMOTE_EXCEPTION_DEFAULT_DECREASE_ERROR_PERIOD);
 
     using Entry = IConnectionPool::Entry;
 
@@ -68,13 +69,15 @@ public:
             const ConnectionTimeouts & timeouts,
             const Settings * settings,
             PoolMode pool_mode,
-            const QualifiedTableName & table_to_check);
+            const QualifiedTableName & table_to_check,
+            std::shared_ptr<int> index = nullptr);
 
     struct NestedPoolStatus
     {
         const Base::NestedPoolPtr pool;
         size_t error_count;
         size_t slowdown_count;
+        size_t remote_error_count;
         std::chrono::seconds estimated_recovery_time;
     };
 
@@ -83,11 +86,16 @@ public:
 
     std::vector<Base::ShuffledPool> getShuffledPools(const Settings * settings);
 
-    size_t getMaxErrorCup() const { return Base::max_error_cap; }
+    size_t getMaxErrorCup() const { return Base::max_connection_error_cap; }
 
     void updateSharedError(std::vector<ShuffledPool> & shuffled_pools)
     {
         Base::updateSharedErrorCounts(shuffled_pools);
+    }
+
+    void addRemoteError(std::shared_ptr<int> index)
+    {
+        Base::addRemoteErrorCounts(index);
     }
 
 private:
@@ -95,7 +103,8 @@ private:
     std::vector<TryResult> getManyImpl(
             const Settings * settings,
             PoolMode pool_mode,
-            const TryGetEntryFunc & try_get_entry);
+            const TryGetEntryFunc & try_get_entry,
+            std::shared_ptr<int> index = nullptr);
 
     /// Try to get a connection from the pool and check that it is good.
     /// If table_to_check is not null and the check is enabled in settings, check that replication delay

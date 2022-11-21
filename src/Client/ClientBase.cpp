@@ -1944,7 +1944,8 @@ void ClientBase::clearTerminal()
 
 void ClientBase::showClientVersion()
 {
-    std::cout << DBMS_NAME << " " + getName() + " version " << VERSION_STRING << VERSION_OFFICIAL << "." << std::endl;
+    std::cout << DBMS_NAME << " " + getName() + " version " << VERSION_STRING << " (" << BILI_VERSION_STRING << ")"
+              << "." << std::endl;
 }
 
 

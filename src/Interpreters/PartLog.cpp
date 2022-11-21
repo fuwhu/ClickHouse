@@ -27,6 +27,7 @@ NamesAndTypesList PartLogElement::getNamesAndTypes()
             {"RemovePart",    static_cast<Int8>(REMOVE_PART)},
             {"MutatePart",    static_cast<Int8>(MUTATE_PART)},
             {"MovePart",      static_cast<Int8>(MOVE_PART)},
+            {"ReceivePart",   static_cast<Int8>(RECEIVE_PART)},
         }
     );
 
@@ -62,6 +63,9 @@ NamesAndTypesList PartLogElement::getNamesAndTypes()
         /// Is there an error during the execution or commit
         {"error", std::make_shared<DataTypeUInt16>()},
         {"exception", std::make_shared<DataTypeString>()},
+
+        /// About implicit columns
+        {"implicit_column_count", std::make_shared<DataTypeUInt16>()},
     };
 }
 
@@ -100,6 +104,8 @@ void PartLogElement::appendToBlock(MutableColumns & columns) const
 
     columns[i++]->insert(error);
     columns[i++]->insert(exception);
+
+    columns[i++]->insert(implicit_column_count);
 }
 
 
@@ -165,6 +171,11 @@ bool PartLog::addNewParts(
 
             elem.error = static_cast<UInt16>(execution_status.code);
             elem.exception = execution_status.message;
+
+            UInt16 implicit_column_cnt = 0;
+            for (auto p : part->getImplicitColumsMap())
+                implicit_column_cnt += p.second.size();
+            elem.implicit_column_count = implicit_column_cnt;
 
             part_log->add(elem);
         }

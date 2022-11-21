@@ -46,6 +46,11 @@ public:
         throw Exception("Cannot convert Map to " + demangle(typeid(T).name()), ErrorCodes::CANNOT_CONVERT_TYPE);
     }
 
+    T operator() (const MapV2 &) const
+    {
+        throw Exception("Cannot convert MapV2 to " + demangle(typeid(T).name()), ErrorCodes::CANNOT_CONVERT_TYPE);
+    }
+
     T operator() (const Object &) const
     {
         throw Exception("Cannot convert Object to " + demangle(typeid(T).name()), ErrorCodes::CANNOT_CONVERT_TYPE);

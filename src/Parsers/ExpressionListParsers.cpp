@@ -23,6 +23,11 @@ using namespace std::literals;
 namespace DB
 {
 
+namespace ErrorCodes
+{
+    extern const int CANNOT_PARSE_QUOTED_STRING;
+}
+
 const char * ParserMultiplicativeExpression::operators[] =
 {
     "*",     "multiply",
@@ -83,6 +88,12 @@ const char * ParserLogicalNotExpression::operators[] =
 const char * ParserArrayElementExpression::operators[] =
 {
     "[", "arrayElement",
+    nullptr
+};
+
+const char * ParserMapElementExpression::operators[] =
+{
+    "{", "implicitColumn",
     nullptr
 };
 
@@ -340,6 +351,23 @@ bool ParserLeftAssociativeBinaryOperatorList::parseImpl(Pos & pos, ASTPtr & node
 
             /// the first argument of the function is the previous element, the second is the next one
             function->name = it[1];
+            // rewrite `select map{'a'}` to `select map_ICDS_a`
+            if (function->name == "implicitColumn")
+            {
+                const auto * ast_literal = typeid_cast<const ASTLiteral *>(elem.get());
+
+                if (!ast_literal)
+                    throw Exception("Specified key for MapV2 is not a const String.", ErrorCodes::CANNOT_PARSE_QUOTED_STRING);
+
+                String implicit_column_name = ast_literal->value.safeGet<String>();
+
+                node = std::make_shared<ASTIdentifier>(node->as<ASTIdentifier>()->name() + IMPLICIT_DELIMITER + implicit_column_name);
+                if (pos->type != TokenType::ClosingCurlyBrace)
+                    return false;
+                ++pos;
+                pos.depth = current_depth;
+                return true;
+            }
             function->arguments = exp_list;
             function->children.push_back(exp_list);
 
@@ -355,6 +383,13 @@ bool ParserLeftAssociativeBinaryOperatorList::parseImpl(Pos & pos, ASTPtr & node
             if (it[0] == "["sv)
             {
                 if (pos->type != TokenType::ClosingSquareBracket)
+                    return false;
+                ++pos;
+            }
+
+            if (0 == strcmp(it[0], "{"))
+            {
+                if (pos->type != TokenType::ClosingCurlyBrace)
                     return false;
                 ++pos;
             }
@@ -706,12 +741,20 @@ bool ParserCastExpression::parseImpl(Pos & pos, ASTPtr & node, Expected & expect
     return true;
 }
 
+bool ParserMapElementExpression::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
+{
+    return ParserLeftAssociativeBinaryOperatorList{
+            operators,
+            std::make_unique<ParserCastExpression>(std::make_unique<ParserExpressionElement>()),
+            std::make_unique<ParserExpressionWithOptionalAlias>(false)
+    }.parse(pos, node, expected);
+}
 
 bool ParserArrayElementExpression::parseImpl(Pos & pos, ASTPtr & node, Expected &expected)
 {
     return ParserLeftAssociativeBinaryOperatorList{
         operators,
-        std::make_unique<ParserCastExpression>(std::make_unique<ParserExpressionElement>()),
+        std::make_unique<ParserMapElementExpression>(),
         std::make_unique<ParserExpressionWithOptionalAlias>(false)
     }.parse(pos, node, expected);
 }

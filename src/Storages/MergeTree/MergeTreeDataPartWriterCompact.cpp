@@ -129,6 +129,9 @@ void writeColumnSingleGranule(
 
 void MergeTreeDataPartWriterCompact::write(const Block & block, const IColumn::Permutation * permutation)
 {
+    /// make sure the implicit columns of MapV2 are constructed.
+    ensureImplicitColumnsConstructed(block);
+
     /// Fill index granularity for this block
     /// if it's unknown (in case of insert data or horizontal merge,
     /// but not in case of vertical merge)

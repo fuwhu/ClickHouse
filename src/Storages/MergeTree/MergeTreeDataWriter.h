@@ -99,6 +99,8 @@ public:
         IColumn::Permutation *& permutation,
         const MergeTreeData::MergingParams & merging_params);
 
+    static void fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot);
+
 private:
     static TemporaryPart writeProjectionPartImpl(
         const String & part_name,

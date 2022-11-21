@@ -99,6 +99,11 @@ inline Field getBinaryValue(UInt8 type, ReadBuffer & buf)
             readBinary(value, buf);
             return value;
         }
+        case Field::Types::MapV2: {
+            MapV2 value;
+            DB::readBinary(value, buf);
+            return value;
+        }
         case Field::Types::Object:
         {
             Object value;
@@ -212,6 +217,37 @@ void writeBinary(const Map & x, WriteBuffer & buf)
 void writeText(const Map & x, WriteBuffer & buf)
 {
     writeFieldText(Field(x), buf);
+}
+
+void readBinary(MapV2 & x, ReadBuffer & buf)
+{
+    size_t size;
+    DB::readBinary(size, buf);
+
+    for (size_t index = 0; index < size; ++index)
+    {
+        UInt8 type;
+        DB::readBinary(type, buf);
+        x.push_back(getBinaryValue(type, buf));
+    }
+}
+
+void writeBinary(const MapV2 & x, WriteBuffer & buf)
+{
+    const size_t size = x.size();
+    DB::writeBinary(size, buf);
+
+    for (const auto & elem : x)
+    {
+        const UInt8 type = elem.getType();
+        DB::writeBinary(type, buf);
+        Field::dispatch([&buf] (const auto & value) { FieldVisitorWriteBinary()(value, buf); }, elem);
+    }
+}
+
+void writeText(const MapV2 & x, WriteBuffer & buf)
+{
+    writeFieldText(DB::Field(x), buf);
 }
 
 void readBinary(Object & x, ReadBuffer & buf)
@@ -453,6 +489,30 @@ Field Field::restoreFromDump(const std::string_view & dump_)
         std::string_view tail = dump.substr(prefix.length());
         trimLeft(tail);
         Map map;
+        while (tail != ")")
+        {
+            size_t separator = tail.find_first_of(",)");
+            if (separator == std::string_view::npos)
+                show_error();
+            bool comma = (tail[separator] == ',');
+            std::string_view element = tail.substr(0, separator);
+            tail.remove_prefix(separator);
+            if (comma)
+                tail.remove_prefix(1);
+            trimLeft(tail);
+            if (!comma && tail != ")")
+                show_error();
+            map.push_back(Field::restoreFromDump(element));
+        }
+        return map;
+    }
+
+    prefix = std::string_view{"MapV2_("};
+    if (dump.starts_with(prefix))
+    {
+        std::string_view tail = dump.substr(prefix.length());
+        trimLeft(tail);
+        MapV2 map;
         while (tail != ")")
         {
             size_t separator = tail.find_first_of(",)");

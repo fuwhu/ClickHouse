@@ -140,6 +140,7 @@ namespace ErrorCodes
     extern const int SUPPORT_IS_DISABLED;
     extern const int TOO_MANY_SIMULTANEOUS_QUERIES;
     extern const int INCORRECT_QUERY;
+    extern const int TOO_MANY_IMPLICIT_COLUMNS;
 }
 
 static void checkSampleExpression(const StorageInMemoryMetadata & metadata, bool allow_sampling_expression_not_in_primary_key, bool check_sample_column_is_correct)
@@ -213,6 +214,7 @@ MergeTreeData::MergeTreeData(
     , parts_mover(this)
     , background_operations_assignee(*this, BackgroundJobsAssignee::Type::DataProcessing, getContext())
     , background_moves_assignee(*this, BackgroundJobsAssignee::Type::Moving, getContext())
+    , parts_receive_throttler(std::make_shared<Throttler>(getSettings()->max_part_receives_network_bandwidth, getContext()->getPartsReceivesThrottler()))
 {
     context_->getGlobalContext()->initializeBackgroundExecutorsIfNeeded();
 
@@ -2389,7 +2391,12 @@ void MergeTreeData::PartsTemporaryRename::tryRenameAll()
             if (old_name.empty() || new_name.empty())
                 throw DB::Exception("Empty part name. Most likely it's a bug.", ErrorCodes::LOGICAL_ERROR);
             const auto full_path = fs::path(storage.relative_data_path) / source_dir;
-            disk->moveFile(fs::path(full_path) / old_name, fs::path(full_path) / new_name);
+            
+            /// It't is ok to remove part directory if exists, because PartsTemporaryRename is only used by 
+            /// 1. ALTER TABLE ... ATTACH PART|PARTITION ...
+            /// 2. ALTER TABLE ... DROP DETACHED PART|PARTITION ...
+            /// statements, which should obtain table write lock.
+            disk->replaceFile(fs::path(full_path) / old_name, fs::path(full_path) / new_name);
         }
         catch (...)
         {
@@ -3005,6 +3012,40 @@ size_t MergeTreeData::getPartsCount() const
     return total_active_size_parts.load(std::memory_order_acquire);
 }
 
+size_t MergeTreeData::getMaxImplicitColumnsCount() const
+{
+    std::map<String, std::set<String>> map_implicit_columns;
+
+    for (const auto & data_part : getDataParts())
+    {
+        std::set<String> distinct_implicit_names;
+        for (const auto & map_columns : data_part->getImplicitColumsMap())
+        {
+            if (map_implicit_columns.find(map_columns.first) == map_implicit_columns.end())
+            {
+                std::set<String> distinct_column_names;
+                for (const auto & type_name : map_columns.second)
+                    distinct_column_names.insert(type_name.name);
+
+                map_implicit_columns.insert(make_pair(map_columns.first, std::move(distinct_column_names)));
+            }
+            else
+            {
+                auto & distinct_column_names = map_implicit_columns[map_columns.first];
+
+                for (const auto & type_name : map_columns.second)
+                    distinct_column_names.insert(type_name.name);
+            }
+        }
+    }
+
+    size_t res = 0;
+
+    for (const auto & map_columns : map_implicit_columns)
+        res = map_columns.second.size() > res ? map_columns.second.size() : res;
+
+    return res;
+}
 
 size_t MergeTreeData::getMaxPartsCountForPartitionWithState(DataPartState state) const
 {
@@ -3068,6 +3109,18 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until) const
     {
         ProfileEvents::increment(ProfileEvents::RejectedInserts);
         throw Exception("Too many parts (" + toString(parts_count_in_total) + ") in all partitions in total. This indicates wrong choice of partition key. The threshold can be modified with 'max_parts_in_total' setting in <merge_tree> element in config.xml or with per-table setting.", ErrorCodes::TOO_MANY_PARTS);
+    }
+
+    const size_t implicit_columns_count = getMaxImplicitColumnsCount();
+
+    if (implicit_columns_count >= settings->max_implicit_columns)
+    {
+        ProfileEvents::increment(ProfileEvents::RejectedInserts);
+        throw Exception(
+            "Too many implicit columns (" + toString(implicit_columns_count) + ") in one MapV2 column in total, " + "maximum: ("
+                + settings->max_implicit_columns.toString() + "). "
+                + "The threshold can be modified with mergetree setting 'max_implicit_columns'",
+            ErrorCodes::TOO_MANY_IMPLICIT_COLUMNS);
     }
 
     size_t parts_count_in_partition = getMaxPartsCountForPartition();
@@ -5592,6 +5645,11 @@ try
         part_log_elem.path_on_disk = result_part->getFullPath();
         part_log_elem.bytes_compressed_on_disk = result_part->getBytesOnDisk();
         part_log_elem.rows = result_part->rows_count;
+
+        UInt16 implicit_column_count = 0;
+        for (const auto & p : result_part->getImplicitColumsMap())
+            implicit_column_count += p.second.size();
+        part_log_elem.implicit_column_count = implicit_column_count;
     }
 
     part_log_elem.source_part_names.reserve(source_parts.size());

@@ -2,6 +2,7 @@
 
 #include <Common/SimpleIncrement.h>
 #include <Common/MultiVersion.h>
+#include <Interpreters/InterserverIOHandler.h>
 #include <Storages/IStorage.h>
 #include <IO/ReadBufferFromString.h>
 #include <IO/WriteBufferFromFile.h>
@@ -497,6 +498,7 @@ public:
     size_t getTotalActiveSizeInRows() const;
 
     size_t getPartsCount() const;
+    size_t getMaxImplicitColumnsCount() const;
     size_t getMaxPartsCountForPartitionWithState(DataPartState state) const;
     size_t getMaxPartsCountForPartition() const;
     size_t getMaxInactivePartsCountForPartition() const;
@@ -941,6 +943,7 @@ protected:
     friend class MergeTreeDataWriter;
     friend class MergeTask;
     friend class IMergedBlockOutputStream; // for access to log
+    friend class DataPartsReceive;
 
     bool require_part_metadata;
 
@@ -1029,6 +1032,12 @@ protected:
     /// These callbacks will be passed to the constructor of each task.
     std::function<void(bool)> common_assignee_trigger;
     std::function<void(bool)> moves_assignee_trigger;
+    /// used in DataPartsReceive
+    std::atomic_uint current_table_receives{0};
+
+    ThrottlerPtr parts_receive_throttler;
+
+    InterserverIOEndpointPtr data_parts_receive_endpoint;
 
     using DataPartIteratorByInfo = DataPartsIndexes::index<TagByInfo>::type::iterator;
     using DataPartIteratorByStateAndInfo = DataPartsIndexes::index<TagByStateAndInfo>::type::iterator;

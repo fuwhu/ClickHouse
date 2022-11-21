@@ -39,6 +39,8 @@ public:
     Columns releaseIndexColumns();
     const MergeTreeIndexGranularity & getIndexGranularity() const { return index_granularity; }
 
+    static void ensureImplicitColumnsConstructed(const Block & block);
+
 protected:
 
     const MergeTreeData::DataPartPtr data_part;

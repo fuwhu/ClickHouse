@@ -57,6 +57,8 @@ void registerFunctionLogTrace(FunctionFactory & factory);
 void registerFunctionsTimeWindow(FunctionFactory &);
 void registerFunctionToBool(FunctionFactory &);
 
+void registerUDFs(FunctionFactory & factory);
+
 #if USE_SSL
 void registerFunctionEncrypt(FunctionFactory & factory);
 void registerFunctionDecrypt(FunctionFactory & factory);
@@ -127,6 +129,8 @@ void registerFunctions()
 #endif
     registerFunctionTid(factory);
     registerFunctionLogTrace(factory);
+
+    registerUDFs(factory);
 }
 
 }

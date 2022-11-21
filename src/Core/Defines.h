@@ -42,6 +42,8 @@
 #define DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD 60
 /// replica error max cap, this is to prevent replica from accumulating too many errors and taking to long to recover.
 #define DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT 1000
+/// this period should be more longer than connection error period cause some remote exceptions (like disk recovery) cost too long.
+#define DBMS_CONNECTION_POOL_WITH_REMOTE_EXCEPTION_DEFAULT_DECREASE_ERROR_PERIOD 120 
 
 /// The boundary on which the blocks for asynchronous file operations should be aligned.
 #define DEFAULT_AIO_FILE_BLOCK_SIZE 4096
@@ -81,3 +83,5 @@
 #else
 #define QUERY_PROFILER_DEFAULT_SAMPLE_RATE_NS 0
 #endif
+
+#define IMPLICIT_DELIMITER "_ICDS_"

@@ -8,6 +8,8 @@
 #include <IO/WriteHelpers.h>
 #include <Common/ArenaAllocator.h>
 #include <Common/assert_cast.h>
+#include <Core/Field.h>
+#include <Columns/ColumnArray.h>
 
 #include <AggregateFunctions/AggregateFunctionNull.h>
 
@@ -130,9 +132,9 @@ struct AggregateFunctionWindowFunnelData
   * Usage:
   * - windowFunnel(window)(timestamp, cond1, cond2, cond3, ....)
   */
-template <typename T, typename Data>
+template <typename T, typename Data, bool is_array>
 class AggregateFunctionWindowFunnel final
-    : public IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data>>
+    : public IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data, is_array>>
 {
 private:
     UInt64 window;
@@ -221,7 +223,7 @@ public:
     }
 
     AggregateFunctionWindowFunnel(const DataTypes & arguments, const Array & params)
-        : IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data>>(arguments, params)
+        : IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data, is_array>>(arguments, params)
     {
         events_size = arguments.size() - 1;
         window = params.at(0).safeGet<UInt64>();
@@ -262,6 +264,34 @@ public:
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, const size_t row_num, Arena *) const override
     {
         bool has_event = false;
+        if constexpr (is_array)
+        {
+            const auto & col_array = assert_cast<const ColumnArray &>(*columns[0]);
+            const auto timestamps = col_array[row_num].get<Array>();
+            for (auto i = events_size; i > 0; --i)
+            {
+                auto event = assert_cast<const ColumnVector<UInt8> *>(columns[i])->getData()[row_num];
+                if (event)
+                {
+                    for (const auto & timestamp : timestamps)
+                    {
+                        this->data(place).add(timestamp.get<T>(), i);
+                    }
+
+                    has_event = true;
+                }
+            }
+
+            if (strict_order && !has_event)
+            {
+                for (const auto & timestamp : timestamps)
+                {
+                    this->data(place).add(timestamp.get<T>(), 0);
+                }
+            }
+            return;
+        }
+
         const auto timestamp = assert_cast<const ColumnVector<T> *>(columns[0])->getData()[row_num];
         /// reverse iteration and stable sorting are needed for events that are qualified by more than one condition.
         for (auto i = events_size; i > 0; --i)

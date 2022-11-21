@@ -216,7 +216,8 @@ int Keeper::run()
     }
     if (config().hasOption("version"))
     {
-        std::cout << DBMS_NAME << " keeper version " << VERSION_STRING << VERSION_OFFICIAL << "." << std::endl;
+        std::cout << DBMS_NAME << " keeper version " << VERSION_STRING << " (" << BILI_VERSION_STRING << ")"
+                  << "." << std::endl;
         return 0;
     }
 

@@ -333,6 +333,7 @@ namespace
         [[noreturn]] void operator() (const Array &) { throwUnsupported(); }
         [[noreturn]] void operator() (const Tuple &) { throwUnsupported(); }
         [[noreturn]] void operator() (const Map &) { throwUnsupported(); }
+        [[noreturn]] void operator() (const MapV2 &) { throwUnsupported(); }
         [[noreturn]] void operator() (const Object &) { throwUnsupported(); }
         [[noreturn]] void operator() (const AggregateFunctionStateData &) { throwUnsupported(); }
         void operator() (const String & x) { res = {x.data(), x.size()}; }

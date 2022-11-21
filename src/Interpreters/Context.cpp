@@ -222,6 +222,7 @@ struct ContextSharedPart
 
     mutable ThrottlerPtr replicated_fetches_throttler; /// A server-wide throttler for replicated fetches
     mutable ThrottlerPtr replicated_sends_throttler; /// A server-wide throttler for replicated sends
+    mutable ThrottlerPtr parts_receives_throttler; /// A server-wide throttler for data parts receives
 
     MultiVersion<Macros> macros;                            /// Substitutions extracted from config.
     std::unique_ptr<DDLWorker> ddl_worker;                  /// Process ddl commands from zk.
@@ -1821,6 +1822,16 @@ ThrottlerPtr Context::getReplicatedSendsThrottler() const
             settings.max_replicated_sends_network_bandwidth_for_server);
 
     return shared->replicated_sends_throttler;
+}
+
+ThrottlerPtr Context::getPartsReceivesThrottler() const
+{
+    auto lock = getLock();
+    if (!shared->parts_receives_throttler)
+        shared->parts_receives_throttler = std::make_shared<Throttler>(
+            settings.max_parts_receives_network_bandwidth_for_server);
+
+    return shared->parts_receives_throttler;
 }
 
 bool Context::hasDistributedDDL() const

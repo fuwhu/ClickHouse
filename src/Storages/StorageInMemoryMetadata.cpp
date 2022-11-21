@@ -10,6 +10,8 @@
 #include <IO/ReadBufferFromString.h>
 #include <IO/ReadHelpers.h>
 #include <IO/Operators.h>
+#include <DataTypes/DataTypeMapV2.h>
+#include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
 
 
 namespace DB
@@ -495,6 +497,39 @@ namespace
     }
 }
 
+bool  StorageInMemoryMetadata::isImplicitColumn(const String & column_name) const
+{
+    auto [is_implicit, pos] = checkImplicitColumn(column_name);
+    if (is_implicit)
+        return getColumns().has(column_name.substr(0, pos));
+    else
+        return false;
+
+}
+
+bool StorageInMemoryMetadata::hasImplicitColumn() const
+{
+    for (const auto & col : getColumns())
+    {
+        if (isMapV2(col.type))
+            return true;
+    }
+
+    return false;
+}
+
+Names StorageInMemoryMetadata::getImplicitMapNames() const
+{
+    Names res;
+    for (const auto & col : getColumns())
+    {
+        if (isMapV2(col.type))
+            res.emplace_back(col.name);
+    }
+
+    return res;
+}
+
 String listOfColumns(const NamesAndTypesList & available_columns)
 {
     WriteBufferFromOwnString ss;
@@ -517,29 +552,30 @@ void StorageInMemoryMetadata::check(const NamesAndTypesList & provided_columns) 
     for (const NameAndTypePair & column : provided_columns)
     {
         const auto * it = columns_map.find(column.name);
-        if (columns_map.end() == it)
+        auto is_implicit_column = isImplicitColumn(column.name);
+        /// Do not check implicit column
+        if (columns_map.end() == it && !is_implicit_column)
             throw Exception(
                 ErrorCodes::NO_SUCH_COLUMN_IN_TABLE,
                 "There is no column with name {}. There are columns: {}",
                 column.name,
                 listOfColumns(available_columns));
 
-        const auto * available_type = it->getMapped();
-
-        if (!isObject(*available_type)
-            && !column.type->equals(*available_type)
-            && !isCompatibleEnumTypes(available_type, column.type.get()))
-            throw Exception(
-                ErrorCodes::TYPE_MISMATCH,
-                "Type mismatch for column {}. Column has type {}, got type {}",
-                column.name,
-                available_type->getName(),
-                column.type->getName());
+        if (!is_implicit_column)
+        {
+            const auto * available_type = it->getMapped();
+            if (!isObject(*available_type) && !column.type->equals(*available_type)
+                && !isCompatibleEnumTypes(available_type, column.type.get()))
+                throw Exception(
+                    ErrorCodes::TYPE_MISMATCH,
+                    "Type mismatch for column {}. Column has type {}, got type {}",
+                    column.name,
+                    available_type->getName(),
+                    column.type->getName());
+        }
 
         if (unique_names.end() != unique_names.find(column.name))
-            throw Exception(ErrorCodes::COLUMN_QUERIED_MORE_THAN_ONCE,
-                "Column {} queried more than once",
-                column.name);
+            throw Exception(ErrorCodes::COLUMN_QUERIED_MORE_THAN_ONCE, "Column {} queried more than once", column.name);
 
         unique_names.insert(column.name);
     }
@@ -565,30 +601,31 @@ void StorageInMemoryMetadata::check(const NamesAndTypesList & provided_columns, 
             continue;
 
         const auto * jt = available_columns_map.find(name);
-        if (available_columns_map.end() == jt)
+        auto is_implicit_column = isImplicitColumn(name);
+        /// Do not check implicit column
+        if (available_columns_map.end() == jt && !is_implicit_column)
             throw Exception(
                 ErrorCodes::NO_SUCH_COLUMN_IN_TABLE,
                 "There is no column with name {}. There are columns: {}",
                 name,
                 listOfColumns(available_columns));
 
-        const auto * provided_column_type = it->getMapped();
-        const auto * available_column_type = jt->getMapped();
-
-        if (!isObject(*provided_column_type)
-            && !provided_column_type->equals(*available_column_type)
-            && !isCompatibleEnumTypes(available_column_type, provided_column_type))
-            throw Exception(
-                ErrorCodes::TYPE_MISMATCH,
-                "Type mismatch for column {}. Column has type {}, got type {}",
-                name,
-                available_column_type->getName(),
-                provided_column_type->getName());
+        if (!is_implicit_column)
+        {
+            const auto * provided_column_type = it->getMapped();
+            const auto * available_column_type = jt->getMapped();
+            if (!isObject(*provided_column_type) && !provided_column_type->equals(*available_column_type)
+                && !isCompatibleEnumTypes(available_column_type, provided_column_type))
+                throw Exception(
+                    ErrorCodes::TYPE_MISMATCH,
+                    "Type mismatch for column {}. Column has type {}, got type {}",
+                    name,
+                    available_column_type->getName(),
+                    provided_column_type->getName());
+        }
 
         if (unique_names.end() != unique_names.find(name))
-            throw Exception(ErrorCodes::COLUMN_QUERIED_MORE_THAN_ONCE,
-                "Column {} queried more than once",
-                name);
+            throw Exception(ErrorCodes::COLUMN_QUERIED_MORE_THAN_ONCE, "Column {} queried more than once", name);
 
         unique_names.insert(name);
     }
@@ -611,23 +648,27 @@ void StorageInMemoryMetadata::check(const Block & block, bool need_all) const
         names_in_block.insert(column.name);
 
         const auto * it = columns_map.find(column.name);
-        if (columns_map.end() == it)
+        auto is_implicit_column = isImplicitColumn(column.name);
+        /// Do not check implicit column
+        if (columns_map.end() == it && !is_implicit_column)
             throw Exception(
                 ErrorCodes::NO_SUCH_COLUMN_IN_TABLE,
                 "There is no column with name {}. There are columns: {}",
                 column.name,
                 listOfColumns(available_columns));
 
-        const auto * available_type = it->getMapped();
-        if (!isObject(*available_type)
-            && !column.type->equals(*available_type)
-            && !isCompatibleEnumTypes(available_type, column.type.get()))
-            throw Exception(
-                ErrorCodes::TYPE_MISMATCH,
-                "Type mismatch for column {}. Column has type {}, got type {}",
-                column.name,
-                available_type->getName(),
-                column.type->getName());
+        if (!is_implicit_column)
+        {
+            const auto * available_type = it->getMapped();
+            if (!isObject(*available_type) && !column.type->equals(*available_type)
+                && !isCompatibleEnumTypes(available_type, column.type.get()))
+                throw Exception(
+                    ErrorCodes::TYPE_MISMATCH,
+                    "Type mismatch for column {}. Column has type {}, got type {}",
+                    column.name,
+                    available_type->getName(),
+                    column.type->getName());
+        }
     }
 
     if (need_all && names_in_block.size() < columns_map.size())
@@ -639,6 +680,4 @@ void StorageInMemoryMetadata::check(const Block & block, bool need_all) const
         }
     }
 }
-
-
 }

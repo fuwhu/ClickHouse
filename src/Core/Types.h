@@ -87,6 +87,7 @@ enum class TypeIndex
     AggregateFunction,
     LowCardinality,
     Map,
+    MapV2,
     Object,
 };
 #if !defined(__clang__)

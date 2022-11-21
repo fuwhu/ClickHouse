@@ -34,6 +34,7 @@
 #include <Storages/MergeTree/MergeTreeReaderCompact.h>
 #include <Storages/MergeTree/LeaderElection.h>
 #include <Storages/MergeTree/ZeroCopyLock.h>
+#include <Storages/MergeTree/DataPartsReceive.h>
 
 
 #include <Databases/DatabaseOnDisk.h>
@@ -1272,6 +1273,8 @@ void StorageReplicatedMergeTree::checkPartChecksumsAndAddCommitOps(const zkutil:
     std::shuffle(replicas.begin(), replicas.end(), thread_local_rng);
     bool has_been_already_added = false;
 
+    bool ignore_check_column_hash = getSettings()->ignore_check_column_hash;
+
     for (const String & replica : replicas)
     {
         String current_part_path = fs::path(zookeeper_path) / "replicas" / replica / "parts" / part_name;
@@ -1312,6 +1315,12 @@ void StorageReplicatedMergeTree::checkPartChecksumsAndAddCommitOps(const zkutil:
 
         if (replica_part_header.getColumnsHash() != local_part_header.getColumnsHash())
         {
+            /// For compatibility, because data type `Map` has different column hash between 21.7 and 22.3
+            if (ignore_check_column_hash)
+            {
+                LOG_WARNING(log, "Not checking checksums of part {} with replica {} because columns are different", part_name, replica);
+                continue;
+            }
             /// Either it's a bug or ZooKeeper contains broken data.
             /// TODO Fix KILL MUTATION and replace CHECKSUM_DOESNT_MATCH with LOGICAL_ERROR
             /// (some replicas may skip killed mutation even if it was executed on other replicas)
@@ -4080,6 +4089,15 @@ void StorageReplicatedMergeTree::startup()
         /// Table may be still in readonly mode if this attempt failed for any reason.
         startup_event.wait();
 
+        if (getContext()->getSettingsRef().enable_data_parts_receive_service
+            && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
+        {
+            InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive>(*this);
+            std::atomic_exchange(&data_parts_receive_endpoint, data_parts_receive_ptr);
+            getContext()->getInterserverIOHandler().addEndpoint(
+                data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()), data_parts_receive_ptr);
+        }
+
         startBackgroundMovesIfNeeded();
 
         part_moves_between_shards_orchestrator.start();
@@ -4144,6 +4162,21 @@ void StorageReplicatedMergeTree::shutdown()
         /// Wait for all of them
         std::unique_lock lock(data_parts_exchange_ptr->rwlock);
     }
+
+    auto data_parts_receive_ptr = std::atomic_exchange(&data_parts_receive_endpoint, InterserverIOEndpointPtr{});
+    if (data_parts_receive_ptr)
+    {
+        getContext()->getInterserverIOHandler().removeEndpointIfExists(
+            data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()));
+        data_parts_receive_ptr->blocker.cancelForever();
+        std::unique_lock lock(data_parts_receive_ptr->rwlock);
+    }
+
+    /// We clear all old parts after stopping all background operations. It's
+    /// important, because background operations can produce temporary parts
+    /// which will remove themselves in their destructors. If so, we may have
+    /// race condition between our remove call and background process.
+    clearOldPartsFromFilesystem(true);
 }
 
 
@@ -4770,7 +4803,7 @@ void StorageReplicatedMergeTree::alter(
     if (mutation_znode)
     {
         LOG_DEBUG(log, "Metadata changes applied. Will wait for data changes.");
-        waitMutation(*mutation_znode, query_context->getSettingsRef().replication_alter_partitions_sync);
+        waitMutation(*mutation_znode, query_context->getSettingsRef().replication_alter_mutation_sync);
         LOG_DEBUG(log, "Data changes applied.");
     }
 }

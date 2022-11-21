@@ -52,6 +52,7 @@ DEFINE_FIELD_VECTOR(Tuple);
 
 /// An array with the following structure: [(key1, value1), (key2, value2), ...]
 DEFINE_FIELD_VECTOR(Map); /// TODO: use map instead of vector.
+DEFINE_FIELD_VECTOR(MapV2);
 
 #undef DEFINE_FIELD_VECTOR
 
@@ -233,6 +234,7 @@ template <> struct NearestFieldTypeImpl<String> { using Type = String; };
 template <> struct NearestFieldTypeImpl<Array> { using Type = Array; };
 template <> struct NearestFieldTypeImpl<Tuple> { using Type = Tuple; };
 template <> struct NearestFieldTypeImpl<Map> { using Type = Map; };
+template <> struct NearestFieldTypeImpl<MapV2> { using Type = MapV2; };
 template <> struct NearestFieldTypeImpl<Object> { using Type = Object; };
 template <> struct NearestFieldTypeImpl<bool> { using Type = UInt64; };
 template <> struct NearestFieldTypeImpl<Null> { using Type = Null; };
@@ -299,6 +301,7 @@ public:
             UUID = 27,
             Bool = 28,
             Object = 29,
+            MapV2 = 30,
         };
     };
 
@@ -478,6 +481,7 @@ public:
             case Types::Array:   return get<Array>()   < rhs.get<Array>();
             case Types::Tuple:   return get<Tuple>()   < rhs.get<Tuple>();
             case Types::Map:     return get<Map>()     < rhs.get<Map>();
+            case Types::MapV2:   return get<MapV2>()   < rhs.get<MapV2>();
             case Types::Object:  return get<Object>()  < rhs.get<Object>();
             case Types::Decimal32:  return get<DecimalField<Decimal32>>()  < rhs.get<DecimalField<Decimal32>>();
             case Types::Decimal64:  return get<DecimalField<Decimal64>>()  < rhs.get<DecimalField<Decimal64>>();
@@ -517,6 +521,7 @@ public:
             case Types::Array:   return get<Array>()   <= rhs.get<Array>();
             case Types::Tuple:   return get<Tuple>()   <= rhs.get<Tuple>();
             case Types::Map:     return get<Map>()     <= rhs.get<Map>();
+            case Types::MapV2:   return get<MapV2>()   <= rhs.get<MapV2>();
             case Types::Object:  return get<Object>()  <= rhs.get<Object>();
             case Types::Decimal32:  return get<DecimalField<Decimal32>>()  <= rhs.get<DecimalField<Decimal32>>();
             case Types::Decimal64:  return get<DecimalField<Decimal64>>()  <= rhs.get<DecimalField<Decimal64>>();
@@ -556,6 +561,7 @@ public:
             case Types::Array:   return get<Array>()   == rhs.get<Array>();
             case Types::Tuple:   return get<Tuple>()   == rhs.get<Tuple>();
             case Types::Map:     return get<Map>()     == rhs.get<Map>();
+            case Types::MapV2:   return get<MapV2>()   == rhs.get<MapV2>();
             case Types::Object:  return get<Object>()  == rhs.get<Object>();
             case Types::UInt128: return get<UInt128>() == rhs.get<UInt128>();
             case Types::UInt256: return get<UInt256>() == rhs.get<UInt256>();
@@ -601,6 +607,7 @@ public:
             case Types::Array:   return f(field.template get<Array>());
             case Types::Tuple:   return f(field.template get<Tuple>());
             case Types::Map:     return f(field.template get<Map>());
+            case Types::MapV2:   return f(field.template get<MapV2>());
             case Types::Bool:
             {
                 bool value = bool(field.template get<UInt64>());
@@ -625,7 +632,7 @@ public:
 
 private:
     std::aligned_union_t<DBMS_MIN_FIELD_SIZE - sizeof(Types::Which),
-        Null, UInt64, UInt128, UInt256, Int64, Int128, Int256, UUID, Float64, String, Array, Tuple, Map,
+        Null, UInt64, UInt128, UInt256, Int64, Int128, Int256, UUID, Float64, String, Array, Tuple, Map, MapV2,
         DecimalField<Decimal32>, DecimalField<Decimal64>, DecimalField<Decimal128>, DecimalField<Decimal256>,
         AggregateFunctionStateData
         > storage;
@@ -723,6 +730,9 @@ private:
             case Types::Map:
                 destroy<Map>();
                 break;
+            case Types::MapV2:
+                destroy<MapV2>();
+                break;
             case Types::Object:
                 destroy<Object>();
                 break;
@@ -763,6 +773,7 @@ template <> struct Field::TypeToEnum<String>  { static constexpr Types::Which va
 template <> struct Field::TypeToEnum<Array>   { static constexpr Types::Which value = Types::Array; };
 template <> struct Field::TypeToEnum<Tuple>   { static constexpr Types::Which value = Types::Tuple; };
 template <> struct Field::TypeToEnum<Map>     { static constexpr Types::Which value = Types::Map; };
+template <> struct Field::TypeToEnum<MapV2>   { static constexpr Types::Which value = Types::MapV2; };
 template <> struct Field::TypeToEnum<Object>  { static constexpr Types::Which value = Types::Object; };
 template <> struct Field::TypeToEnum<DecimalField<Decimal32>>{ static constexpr Types::Which value = Types::Decimal32; };
 template <> struct Field::TypeToEnum<DecimalField<Decimal64>>{ static constexpr Types::Which value = Types::Decimal64; };
@@ -785,6 +796,7 @@ template <> struct Field::EnumToType<Field::Types::String>  { using Type = Strin
 template <> struct Field::EnumToType<Field::Types::Array>   { using Type = Array; };
 template <> struct Field::EnumToType<Field::Types::Tuple>   { using Type = Tuple; };
 template <> struct Field::EnumToType<Field::Types::Map>     { using Type = Map; };
+template <> struct Field::EnumToType<Field::Types::MapV2>     { using Type = MapV2; };
 template <> struct Field::EnumToType<Field::Types::Object>  { using Type = Object; };
 template <> struct Field::EnumToType<Field::Types::Decimal32> { using Type = DecimalField<Decimal32>; };
 template <> struct Field::EnumToType<Field::Types::Decimal64> { using Type = DecimalField<Decimal64>; };
@@ -947,6 +959,14 @@ void readBinary(Map & x, ReadBuffer & buf);
 void writeBinary(const Map & x, WriteBuffer & buf);
 void writeText(const Map & x, WriteBuffer & buf);
 [[noreturn]] inline void writeQuoted(const Map &, WriteBuffer &) { throw Exception("Cannot write Map quoted.", ErrorCodes::NOT_IMPLEMENTED); }
+
+void readBinary(MapV2 & x, ReadBuffer & buf);
+[[noreturn]] inline void readText(MapV2 &, ReadBuffer &) { throw Exception("Cannot read MapV2.", ErrorCodes::NOT_IMPLEMENTED); }
+[[noreturn]] inline void readQuoted(MapV2 &, ReadBuffer &) { throw Exception("Cannot read MapV2.", ErrorCodes::NOT_IMPLEMENTED); }
+
+void writeBinary(const MapV2 & x, WriteBuffer & buf);
+void writeText(const MapV2 & x, WriteBuffer & buf);
+[[noreturn]] inline void writeQuoted(const MapV2 &, WriteBuffer &) { throw Exception("Cannot write MapV2 quoted.", ErrorCodes::NOT_IMPLEMENTED); }
 
 void readBinary(Object & x, ReadBuffer & buf);
 [[noreturn]] inline void readText(Object &, ReadBuffer &) { throw Exception("Cannot read Object.", ErrorCodes::NOT_IMPLEMENTED); }

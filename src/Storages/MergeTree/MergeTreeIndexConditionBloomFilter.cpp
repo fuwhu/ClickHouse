@@ -1,5 +1,8 @@
 #include <Common/HashTable/ClearableHashMap.h>
 #include <Common/FieldVisitorsAccurateComparison.h>
+#include "Core/Field.h"
+#include "Core/Types.h"
+#include "DataTypes/IDataType.h"
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeMap.h>
 #include <DataTypes/DataTypeTuple.h>
@@ -315,6 +318,27 @@ bool MergeTreeIndexConditionBloomFilter::traverseFunction(const ASTPtr & node, B
                     maybe_useful = true;
             }
         }
+        else if (function->name == "greater" || 
+                 function->name == "greaterOrEquals" || 
+                 function->name == "less" || 
+                 function->name == "lessOrEquals" || 
+                 function->name == "like")
+        {
+            Field const_value;
+            DataTypePtr const_type;
+            if (KeyCondition::getConstant(arguments[1], block_with_constants, const_value, const_type))
+            {
+                if (expectElementTypeOnIndex(arguments[0], TypeIndex::Map)
+                    && traverseASTEquals("equals", arguments[0], const_type, const_value, out, parent))
+                    maybe_useful = true;
+            }
+            else if (KeyCondition::getConstant(arguments[0], block_with_constants, const_value, const_type))
+            {
+                if (expectElementTypeOnIndex(arguments[1], TypeIndex::Map)
+                    && traverseASTEquals("equals", arguments[1], const_type, const_value, out, parent))
+                    maybe_useful = true;
+            }
+        }
     }
 
     return maybe_useful;
@@ -334,7 +358,7 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
     const String & function_name,
     const ASTPtr & key_ast,
     const SetPtr & prepared_set,
-    const DataTypePtr & type,
+    const DataTypePtr & value_type,
     const ColumnPtr & column,
     RPNElement & out)
 {
@@ -343,7 +367,7 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
         size_t row_size = column->size();
         size_t position = header.getPositionByName(key_ast->getColumnName());
         const DataTypePtr & index_type = header.getByPosition(position).type;
-        const auto & converted_column = castColumn(ColumnWithTypeAndName{column, type, ""}, index_type);
+        const auto & converted_column = castColumn(ColumnWithTypeAndName{column, value_type, ""}, index_type);
         out.predicate.emplace_back(std::make_pair(position, BloomFilterHash::hashWithColumn(index_type, converted_column, 0, row_size)));
 
         if (function_name == "in"  || function_name == "globalIn")
@@ -357,12 +381,12 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
 
     if (const auto * function = key_ast->as<ASTFunction>())
     {
-        WhichDataType which(type);
+        WhichDataType which(value_type);
 
         if (which.isTuple() && function->name == "tuple")
         {
             const auto & tuple_column = typeid_cast<const ColumnTuple *>(column.get());
-            const auto & tuple_data_type = typeid_cast<const DataTypeTuple *>(type.get());
+            const auto & tuple_data_type = typeid_cast<const DataTypeTuple *>(value_type.get());
             const ASTs & arguments = typeid_cast<const ASTExpressionList &>(*function->arguments).children;
 
             if (tuple_data_type->getElements().size() != arguments.size() || tuple_column->getColumns().size() != arguments.size())
@@ -391,8 +415,8 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
             if (!prepared_set)
                 return false;
 
-            auto default_column_to_check = type->createColumnConstWithDefaultValue(1)->convertToFullColumnIfConst();
-            ColumnWithTypeAndName default_column_with_type_to_check { default_column_to_check, type, "" };
+            auto default_column_to_check = value_type->createColumnConstWithDefaultValue(1)->convertToFullColumnIfConst();
+            ColumnWithTypeAndName default_column_with_type_to_check { default_column_to_check, value_type, "" };
             ColumnsWithTypeAndName default_columns_with_type_to_check = {default_column_with_type_to_check};
             auto set_contains_default_value_predicate_column = prepared_set->execute(default_columns_with_type_to_check, false /*negative*/);
             const auto & set_contains_default_value_predicate_column_typed = assert_cast<const ColumnUInt8 &>(*set_contains_default_value_predicate_column);
@@ -405,21 +429,32 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
                 return false;
 
             const auto & col_name = column_ast_identifier->name();
-            auto map_keys_index_column_name = fmt::format("mapKeys({})", col_name);
-            auto map_values_index_column_name = fmt::format("mapValues({})", col_name);
 
-            if (header.has(map_keys_index_column_name))
+            /// for array[index] & map['key']
+            if (header.has(col_name))
             {
-                /// For mapKeys we serialize key argument with bloom filter
+                size_t position = header.getPositionByName(col_name);
+                const DataTypePtr & index_type = header.getByPosition(position).type;
 
-                auto & argument = function->arguments.get()->children[1];
-
-                if (const auto * literal = argument->as<ASTLiteral>())
+                WhichDataType type(index_type);
+                if (type.isArray())
                 {
-                    size_t position = header.getPositionByName(map_keys_index_column_name);
-                    const DataTypePtr & index_type = header.getByPosition(position).type;
+                    size_t row_size = column->size();
+                    const auto & array_type = assert_cast<const DataTypeArray &>(*index_type);
+                    const auto & array_nested_type = array_type.getNestedType();
+                    const auto & converted_column = castColumn(ColumnWithTypeAndName{column, value_type, ""}, array_nested_type);
+                    out.predicate.emplace_back(
+                        std::make_pair(position, BloomFilterHash::hashWithColumn(array_nested_type, converted_column, 0, row_size)));
+                }
+                else if (type.isMap())
+                {
+                    Field element_key;
+                    auto & argument = function->arguments.get()->children[1];
+                    if (const auto * literal = argument->as<ASTLiteral>())
+                        element_key = literal->value;
+                    else
+                        return false;
 
-                    auto element_key = literal->value;
                     const DataTypePtr actual_type = BloomFilter::getPrimitiveType(index_type);
                     out.predicate.emplace_back(std::make_pair(position, BloomFilterHash::hashWithField(actual_type.get(), element_key)));
                 }
@@ -428,21 +463,49 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTIn(
                     return false;
                 }
             }
-            else if (header.has(map_values_index_column_name))
-            {
-                /// For mapValues we serialize set with bloom filter
-
-                size_t row_size = column->size();
-                size_t position = header.getPositionByName(map_values_index_column_name);
-                const DataTypePtr & index_type = header.getByPosition(position).type;
-                const auto & array_type = assert_cast<const DataTypeArray &>(*index_type);
-                const auto & array_nested_type = array_type.getNestedType();
-                const auto & converted_column = castColumn(ColumnWithTypeAndName{column, type, ""}, array_nested_type);
-                out.predicate.emplace_back(std::make_pair(position, BloomFilterHash::hashWithColumn(array_nested_type, converted_column, 0, row_size)));
-            }
             else
             {
-                return false;
+                auto map_keys_index_column_name = fmt::format("mapKeys({})", col_name);
+                auto map_values_index_column_name = fmt::format("mapValues({})", col_name);
+
+                if (header.has(map_keys_index_column_name))
+                {
+                    /// For mapKeys we serialize key argument with bloom filter
+
+                    auto & argument = function->arguments.get()->children[1];
+
+                    if (const auto * literal = argument->as<ASTLiteral>())
+                    {
+                        size_t position = header.getPositionByName(map_keys_index_column_name);
+                        const DataTypePtr & index_type = header.getByPosition(position).type;
+
+                        auto element_key = literal->value;
+                        const DataTypePtr actual_type = BloomFilter::getPrimitiveType(index_type);
+                        out.predicate.emplace_back(
+                            std::make_pair(position, BloomFilterHash::hashWithField(actual_type.get(), element_key)));
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                else if (header.has(map_values_index_column_name))
+                {
+                    /// For mapValues we serialize set with bloom filter
+
+                    size_t row_size = column->size();
+                    size_t position = header.getPositionByName(map_values_index_column_name);
+                    const DataTypePtr & index_type = header.getByPosition(position).type;
+                    const auto & array_type = assert_cast<const DataTypeArray &>(*index_type);
+                    const auto & array_nested_type = array_type.getNestedType();
+                    const auto & converted_column = castColumn(ColumnWithTypeAndName{column, value_type, ""}, array_nested_type);
+                    out.predicate.emplace_back(
+                        std::make_pair(position, BloomFilterHash::hashWithColumn(array_nested_type, converted_column, 0, row_size)));
+                }
+                else
+                {
+                    return false;
+                }
             }
 
             if (function_name == "in"  || function_name == "globalIn")
@@ -528,6 +591,19 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTEquals(
     {
         size_t position = header.getPositionByName(key_ast->getColumnName());
         const DataTypePtr & index_type = header.getByPosition(position).type;
+
+        WhichDataType type(index_type);
+        /// implicit map keys index
+        if (type.isMap() && (function_name == "mapContains" || function_name == "has"))
+        {
+            out.function = RPNElement::FUNCTION_HAS;
+            const DataTypePtr actual_type = BloomFilter::getPrimitiveType(index_type);
+            Field converted_field = convertFieldToType(value_field, *actual_type, value_type.get());
+            out.predicate.emplace_back(std::make_pair(position, BloomFilterHash::hashWithField(actual_type.get(), converted_field)));
+
+            return true;
+        }
+
         const auto * array_type = typeid_cast<const DataTypeArray *>(index_type.get());
 
         if (function_name == "has" || function_name == "indexOf")
@@ -657,30 +733,54 @@ bool MergeTreeIndexConditionBloomFilter::traverseASTEquals(
 
             const auto & col_name = column_ast_identifier->name();
 
-            auto map_keys_index_column_name = fmt::format("mapKeys({})", col_name);
-            auto map_values_index_column_name = fmt::format("mapValues({})", col_name);
-
             size_t position = 0;
             Field const_value = value_field;
 
-            if (header.has(map_keys_index_column_name))
+            /// implicit map keys index
+            if (header.has(col_name))
             {
-                position = header.getPositionByName(map_keys_index_column_name);
+                position = header.getPositionByName(col_name);
+                auto index_type = header.getByPosition(position).type;
 
-                auto & argument = function->arguments.get()->children[1];
+                WhichDataType type(index_type);
+                if (type.isMap())
+                {
+                    auto & argument = function->arguments.get()->children[1];
 
-                if (const auto * literal = argument->as<ASTLiteral>())
-                    const_value = literal->value;
-                else
+                    if (const auto * literal = argument->as<ASTLiteral>())
+                        const_value = literal->value;
+                    else
+                        return false;
+                }
+                else if (!type.isArray())
+                {
                     return false;
-            }
-            else if (header.has(map_values_index_column_name))
-            {
-                position = header.getPositionByName(map_values_index_column_name);
+                }
             }
             else
             {
-                return false;
+                auto map_keys_index_column_name = fmt::format("mapKeys({})", col_name);
+                auto map_values_index_column_name = fmt::format("mapValues({})", col_name);
+
+                if (header.has(map_keys_index_column_name))
+                {
+                    position = header.getPositionByName(map_keys_index_column_name);
+
+                    auto & argument = function->arguments.get()->children[1];
+
+                    if (const auto * literal = argument->as<ASTLiteral>())
+                        const_value = literal->value;
+                    else
+                        return false;
+                }
+                else if (header.has(map_values_index_column_name))
+                {
+                    position = header.getPositionByName(map_values_index_column_name);
+                }
+                else
+                {
+                    return false;
+                }
             }
 
             out.function = function_name == "equals" ? RPNElement::FUNCTION_EQUALS : RPNElement::FUNCTION_NOT_EQUALS;
@@ -716,4 +816,22 @@ SetPtr MergeTreeIndexConditionBloomFilter::getPreparedSet(const ASTPtr & node)
     return DB::SetPtr();
 }
 
+bool MergeTreeIndexConditionBloomFilter::expectElementTypeOnIndex(const ASTPtr & node, const TypeIndex & expect_type)
+{
+    if (const auto * function = node->as<ASTFunction>())
+    {
+        if (function->name == "arrayElement")
+        {
+            const auto & col_name = assert_cast<ASTIdentifier *>(function->arguments.get()->children[0].get())->name();
+            if (header.has(col_name))
+            {
+                size_t position = header.getPositionByName(col_name);
+                const DataTypePtr & index_type = header.getByPosition(position).type;
+                WhichDataType which(index_type);
+                return which.idx == expect_type;
+            }
+        }
+    }
+    return false;
+}
 }

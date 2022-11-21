@@ -11,12 +11,14 @@
 #include <Columns/ColumnsNumber.h>
 #include <DataTypes/getLeastSupertype.h>
 #include <Interpreters/castColumn.h>
+#include <cstddef>
 #include <memory>
 
 #include <Common/assert_cast.h>
 #include <Common/typeid_cast.h>
 #include "array/arrayIndex.h"
 #include "Functions/like.h"
+#include "Functions/MultiMatchAnyImpl.h"
 #include "Functions/FunctionsStringSearch.h"
 
 
@@ -382,11 +384,63 @@ public:
     bool useDefaultImplementationForConstants() const override { return true; }
 };
 
-class FunctionExtractKeyLike : public IFunction
+struct ExtractKeyLikeImpl
+{
+    static constexpr auto name = "mapExtractKeyLike";
+
+    static void checkArguments(const ColumnsWithTypeAndName & arguments)
+    {
+        if (!isStringOrFixedString(arguments[1].type))
+            throw Exception{
+                "Second argument passed to function " + static_cast<String>(name) + " must be String or FixedString",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
+    }
+
+    static ColumnPtr
+    executeImpl(const ColumnsWithTypeAndName & arguments, const DataTypePtr & result_type, size_t input_rows_count, size_t, size_t)
+    {
+        FunctionLike function;
+        return function.executeImpl(arguments, result_type, input_rows_count);
+    }
+};
+
+struct ExtractKeyMultiLikeImpl
+{
+    static constexpr auto name = "mapExtractKeyMultiLike";
+
+    static void checkArguments(const ColumnsWithTypeAndName & arguments)
+    {
+        const DataTypeArray * col_arr = checkAndGetDataType<DataTypeArray>(arguments[1].type.get());
+        if (!col_arr || !isStringOrFixedString(col_arr->getNestedType()))
+            throw Exception{
+                "Second argument passed to function " + static_cast<String>(name) + " must be Array of String or FixedString",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
+    }
+
+    static ColumnPtr executeImpl(
+        const ColumnsWithTypeAndName & arguments,
+        const DataTypePtr & result_type,
+        size_t input_rows_count,
+        size_t max_hyperscan_regexp_length,
+        size_t max_hyperscan_regexp_total_length)
+    {
+        FunctionMultiMatchAny function(max_hyperscan_regexp_length, max_hyperscan_regexp_total_length);
+        return function.executeImpl(arguments, result_type, input_rows_count);
+    }
+};
+
+template <typename Impl>
+class FunctionExtractKey : public IFunction
 {
 public:
-    static constexpr auto name = "mapExtractKeyLike";
-    static FunctionPtr create(ContextPtr) { return std::make_shared<FunctionExtractKeyLike>(); }
+    static constexpr auto name = Impl::name;
+    static FunctionPtr create(ContextPtr context) { return std::make_shared<FunctionExtractKey<Impl>>(context); }
+
+    explicit FunctionExtractKey(ContextPtr context)
+    {
+        this->max_hyperscan_regexp_length = context->getSettingsRef().max_hyperscan_regexp_length;
+        this->max_hyperscan_regexp_total_length = context->getSettingsRef().max_hyperscan_regexp_total_length;
+    }
 
     String getName() const override
     {
@@ -420,9 +474,7 @@ public:
             throw Exception{"Function " + getName() + "only support the map with String or FixedString key",
                 ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
 
-        if (!isStringOrFixedString(arguments[1].type))
-            throw Exception{"Second argument passed to function " + getName() + " must be String or FixedString",
-                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
+        Impl::checkArguments(arguments);
 
         return std::make_shared<DataTypeMap>(map_type->getKeyType(), map_type->getValueType());
     }
@@ -447,8 +499,6 @@ public:
         const auto & values_column = col_map->getNestedData().getColumn(1);
         const ColumnString * keys_string_column = checkAndGetColumn<ColumnString>(keys_column);
         const ColumnFixedString * keys_fixed_string_column = checkAndGetColumn<ColumnFixedString>(keys_column);
-
-        FunctionLike func_like;
 
         //create result data
         MutableColumnPtr keys_data = key_type->createColumn();
@@ -489,7 +539,7 @@ public:
                     arguments[1]
                     };
 
-            auto res = func_like.executeImpl(new_arguments, result_type, input_rows_count);
+            auto res = Impl::executeImpl(new_arguments, result_type, input_rows_count, max_hyperscan_regexp_length, max_hyperscan_regexp_total_length);
             const auto & container = checkAndGetColumn<ColumnUInt8>(res.get())->getData();
 
             for (size_t row_num = 0; row_num < element_size; ++row_num)
@@ -516,6 +566,10 @@ public:
 
         return ColumnMap::create(result_nested_column);
     }
+
+private:
+    size_t max_hyperscan_regexp_length;
+    size_t max_hyperscan_regexp_total_length;
 };
 
 class FunctionMapUpdate : public IFunction
@@ -636,7 +690,8 @@ void registerFunctionsMap(FunctionFactory & factory)
     factory.registerFunction<FunctionMapKeys>();
     factory.registerFunction<FunctionMapValues>();
     factory.registerFunction<FunctionMapContainsKeyLike>();
-    factory.registerFunction<FunctionExtractKeyLike>();
+    factory.registerFunction<FunctionExtractKey<ExtractKeyLikeImpl>>();
+    factory.registerFunction<FunctionExtractKey<ExtractKeyMultiLikeImpl>>();
     factory.registerFunction<FunctionMapUpdate>();
 }
 

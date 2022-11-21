@@ -1,6 +1,8 @@
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
+#include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
 #include <Columns/ColumnConst.h>
+#include <Columns/ColumnMapV2.h>
 #include <Common/HashTable/HashMap.h>
 #include <Common/Exception.h>
 #include <Disks/createVolume.h>
@@ -25,6 +27,8 @@
 #include <Processors/Merges/Algorithms/VersionedCollapsingAlgorithm.h>
 #include <Processors/Merges/Algorithms/GraphiteRollupSortedAlgorithm.h>
 #include <Processors/Sources/SourceFromSingleChunk.h>
+
+#include <DataTypes/DataTypeMapV2.h>
 
 namespace ProfileEvents
 {
@@ -283,6 +287,8 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     TemporaryPart temp_part;
     Block & block = block_with_partition.block;
     auto columns = metadata_snapshot->getColumns().getAllPhysical().filter(block.getNames());
+    NamesAndTypesList new_columns;
+    std::map<String, NamesAndTypesList> implicit_columns_map;
     auto storage_snapshot = data.getStorageSnapshot(metadata_snapshot);
 
     if (!storage_snapshot->object_columns.empty())
@@ -291,6 +297,37 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
             GetColumnsOptions(GetColumnsOptions::AllPhysical).withExtendedObjects());
 
         convertObjectsToTuples(columns, block, extended_storage_columns);
+    }
+
+    //Insert implicit columns to block
+    for (auto & col : columns)
+    {
+        if (isMapV2(col.type))
+        {
+            if (data.getSettings()->implicit_map_duplication)
+                new_columns.emplace_back(col);
+                
+            NamesAndTypesList implicit_columns;
+
+            auto * column = block.findByName(col.name);
+            auto & column_map_v2 = typeid_cast<ColumnMapV2 &>(*column->column->assumeMutable());
+
+            String map_name = col.name;
+            if (column_map_v2.getColumns().empty())
+                column_map_v2.constructImplicitColumns();
+            for (const auto & implicit_column : column_map_v2.getColumns())
+            {
+                const auto & implicit_column_name = map_name + IMPLICIT_DELIMITER + implicit_column.name;
+                implicit_columns.emplace_back(implicit_column_name, implicit_column.type);
+                new_columns.emplace_back(implicit_column_name, implicit_column.type);
+                const ColumnWithTypeAndName & new_col = {implicit_column.column, implicit_column.type, implicit_column_name};
+                block.insert(new_col);
+            }
+
+            implicit_columns_map.insert(std::make_pair(map_name, implicit_columns));
+        }
+        else
+            new_columns.emplace_back(col);
     }
 
     static const String TMP_PREFIX = "tmp_insert_";
@@ -322,6 +359,9 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     }
     else
         part_name = new_part_info.getPartName();
+
+    /// Fill non-existing implicit columns needed for skip indices.
+    fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot);
 
     /// If we need to calculate some columns to sort.
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
@@ -384,11 +424,12 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     const auto & data_settings = data.getSettings();
 
     SerializationInfo::Settings settings{data_settings->ratio_of_defaults_for_sparse_serialization, true};
-    SerializationInfoByName infos(columns, settings);
+    SerializationInfoByName infos(new_columns, settings);
     infos.add(block);
 
-    new_data_part->setColumns(columns);
+    new_data_part->setColumns(new_columns);
     new_data_part->setSerializationInfos(infos);
+    new_data_part->setImplicitColumns(implicit_columns_map);
     new_data_part->rows_count = block.rows();
     new_data_part->partition = std::move(partition);
     new_data_part->minmax_idx = std::move(minmax_idx);
@@ -436,7 +477,7 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     auto compression_codec = data.getContext()->chooseCompressionCodec(0, 0);
 
     const auto & index_factory = MergeTreeIndexFactory::instance();
-    auto out = std::make_unique<MergedBlockOutputStream>(new_data_part, metadata_snapshot, columns,
+    auto out = std::make_unique<MergedBlockOutputStream>(new_data_part, metadata_snapshot, new_columns,
         index_factory.getMany(metadata_snapshot->getSecondaryIndices()), compression_codec);
 
     out->writeWithPermutation(block, perm_ptr);
@@ -657,4 +698,60 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeInMemoryProjectionP
         projection);
 }
 
+void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot)
+{
+    if (!metadata_snapshot->hasImplicitColumn())
+        return;
+
+    std::unordered_set<String> skip_indexes_column_names_set;
+    for (const auto & index : metadata_snapshot->secondary_indices)
+    {
+        if (index.expression)
+        {
+            const auto col_names = index.expression->getRequiredColumns();
+            std::copy(
+                col_names.cbegin(), col_names.cend(), std::inserter(skip_indexes_column_names_set, skip_indexes_column_names_set.end()));
+        }
+        else
+            std::copy(
+                index.column_names.cbegin(),
+                index.column_names.cend(),
+                std::inserter(skip_indexes_column_names_set, skip_indexes_column_names_set.end()));
+    }
+
+    auto skip_index_columns = Names(skip_indexes_column_names_set.begin(), skip_indexes_column_names_set.end());
+
+    NamesAndTypes non_existing_skip_indices_columns;
+    /// Check if the col_name exist in block, if not and it's implicit column, fill it with default value.
+    for (auto col_name : skip_index_columns)
+    {
+        if (block.has(col_name))
+            continue;
+
+        if (const auto & [is_implicit, pos] = checkImplicitColumn(col_name); is_implicit)
+        {
+            std::string col_map_name = col_name.substr(0, pos);
+            const auto * map_type = dynamic_cast<const DataTypeMapV2 *>(metadata_snapshot->getColumns().get(col_map_name).type.get());
+            if (map_type)
+                non_existing_skip_indices_columns.emplace_back(col_name, map_type->getValueType());
+            else
+                throw Exception(
+                    "The parent column of " + col_name + " is not of MapV2 type, which is illegal here.", ErrorCodes::LOGICAL_ERROR);
+        }
+        else
+            throw Exception("skip index column " + col_name + " is not found in block.", ErrorCodes::LOGICAL_ERROR);
+    }
+
+    if (!non_existing_skip_indices_columns.empty())
+    {
+        size_t row_size = block.rows();
+        for (const auto & name_type : non_existing_skip_indices_columns)
+        {
+            auto column = name_type.type->createColumn();
+            column->insertManyDefaults(row_size);
+            ColumnWithTypeAndName skip_index_column{column->getPtr(), name_type.type, name_type.name};
+            block.insert(skip_index_column);
+        }
+    }
+}
 }

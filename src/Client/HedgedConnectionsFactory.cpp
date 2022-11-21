@@ -179,7 +179,7 @@ int HedgedConnectionsFactory::getNextIndex()
 
         /// Check if we can try this replica.
         if (replicas[next_index].connection_establisher.getResult().entry.isNull()
-            && (max_tries == 0 || shuffled_pools[next_index].error_count < max_tries))
+            && (max_tries == 0 || shuffled_pools[next_index].connection_error_count < max_tries))
             finish = true;
 
         /// If we made a complete round, there is no replica to connect.
@@ -304,13 +304,13 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processFinishedConnect
     {
         ShuffledPool & shuffled_pool = shuffled_pools[index];
         LOG_WARNING(
-            log, "Connection failed at try №{}, reason: {}", (shuffled_pool.error_count + 1), fail_message);
+            log, "Connection failed at try №{}, reason: {}", (shuffled_pool.connection_error_count + 1), fail_message);
         ProfileEvents::increment(ProfileEvents::DistributedConnectionFailTry);
 
-        shuffled_pool.error_count = std::min(pool->getMaxErrorCup(), shuffled_pool.error_count + 1);
+        shuffled_pool.connection_error_count = std::min(pool->getMaxErrorCup(), shuffled_pool.connection_error_count + 1);
         shuffled_pool.slowdown_count = 0;
 
-        if (shuffled_pool.error_count >= max_tries)
+        if (shuffled_pool.connection_error_count >= max_tries)
         {
             ++failed_pools_count;
             ProfileEvents::increment(ProfileEvents::DistributedConnectionFailAtAll);

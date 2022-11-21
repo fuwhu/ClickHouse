@@ -124,6 +124,15 @@ namespace
             for (const auto & elem : x)
                 applyVisitor(*this, elem);
         }
+        void operator() (const MapV2 & x) const
+        {
+            UInt8 type = Field::Types::MapV2;
+            hash.update(type);
+            hash.update(x.size());
+
+            for (const auto & elem : x)
+                applyVisitor(*this, elem);
+        }
         void operator() (const Object & x) const
         {
             UInt8 type = Field::Types::Object;

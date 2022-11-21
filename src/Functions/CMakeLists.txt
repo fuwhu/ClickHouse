@@ -124,3 +124,6 @@ set_source_files_properties("pointInPolygon.cpp" PROPERTIES COMPILE_FLAGS -fno-s
 if (ENABLE_FUZZING)
     add_compile_definitions(FUZZING_MODE=1)
 endif ()
+
+add_subdirectory(udf)
+target_link_libraries(clickhouse_functions PRIVATE clickhouse_functions_udf)

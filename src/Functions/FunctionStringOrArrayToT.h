@@ -8,6 +8,7 @@
 #include <Columns/ColumnFixedString.h>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnMap.h>
+#include <Columns/ColumnMapV2.h>
 #include <Columns/ColumnsNumber.h>
 #include <Interpreters/Context_fwd.h>
 
@@ -109,6 +110,16 @@ public:
             typename ColumnVector<ResultType>::Container & vec_res = col_res->getData();
             vec_res.resize(col_map->size());
             const auto & col_nested = col_map->getNestedColumn();
+
+            Impl::array(col_nested.getOffsets(), vec_res);
+            return col_res;
+        }
+        else if (const ColumnMapV2 * col_map_v2 = checkAndGetColumn<ColumnMapV2>(column.get()))
+        {
+            auto col_res = ColumnVector<ResultType>::create();
+            typename ColumnVector<ResultType>::Container & vec_res = col_res->getData();
+            vec_res.resize(col_map_v2->size());
+            const auto & col_nested = col_map_v2->getNestedColumn();
 
             Impl::array(col_nested.getOffsets(), vec_res);
             return col_res;

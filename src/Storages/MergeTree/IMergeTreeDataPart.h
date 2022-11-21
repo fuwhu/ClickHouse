@@ -130,6 +130,19 @@ public:
 
     void setColumns(const NamesAndTypesList & new_columns);
 
+    void setImplicitColumns(const std::map<String, NamesAndTypesList> & implicit_columns_maps_);
+
+    const std::map<String, NamesAndTypesList> & getImplicitColumsMap() const { return implicit_columns_maps; }
+
+    std::shared_ptr<NamesAndTypesList> getImplicitColumnsForMap(const String & map_name) const
+    {
+        auto it = implicit_columns_maps.find(map_name);
+        if (it == implicit_columns_maps.end())
+            return std::make_shared<NamesAndTypesList>();
+        else
+            return std::make_shared<NamesAndTypesList>(it->second);
+    }
+
     const NamesAndTypesList & getColumns() const { return columns; }
 
     void setSerializationInfos(const SerializationInfoByName & new_infos);
@@ -449,6 +462,7 @@ protected:
     /// Columns description. Cannot be changed, after part initialization.
     NamesAndTypesList columns;
 
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
     const Type part_type;
 
     /// Not null when it's a projection part.
