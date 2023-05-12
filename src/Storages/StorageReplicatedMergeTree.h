@@ -216,6 +216,8 @@ public:
      */
     static void dropReplica(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path, const String & replica, Poco::Logger * logger);
 
+    void dropReplica(const String & drop_zookeeper_path, const String & drop_replica, Poco::Logger * logger);
+
     /// Removes table from ZooKeeper after the last replica was dropped
     static bool removeTableNodesFromZooKeeper(zkutil::ZooKeeperPtr zookeeper, const String & zookeeper_path,
                                               const zkutil::EphemeralNodeHolder::Ptr & metadata_drop_lock, Poco::Logger * logger);
