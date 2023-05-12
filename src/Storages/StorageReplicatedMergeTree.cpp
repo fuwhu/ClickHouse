@@ -101,6 +101,7 @@ namespace ProfileEvents
 namespace CurrentMetrics
 {
     extern const Metric BackgroundFetchesPoolTask;
+    extern const Metric ReadonlyReplica;
 }
 
 namespace DB
@@ -4069,7 +4070,21 @@ void StorageReplicatedMergeTree::startup()
 {
     /// Do not start replication if ZooKeeper is not configured or there is no metadata in zookeeper
     if (!has_metadata_in_zookeeper.has_value() || !*has_metadata_in_zookeeper)
+    {
+        if (!since_metadata_err_incr_readonly_metric)
+        {
+            since_metadata_err_incr_readonly_metric = true;
+            CurrentMetrics::add(CurrentMetrics::ReadonlyReplica);
+        }
+
         return;
+    }
+
+    if (since_metadata_err_incr_readonly_metric)
+    {
+        since_metadata_err_incr_readonly_metric = false;
+        CurrentMetrics::sub(CurrentMetrics::ReadonlyReplica);
+    }
 
     try
     {
