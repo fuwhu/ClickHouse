@@ -85,7 +85,7 @@ std::unique_ptr<QueryPlan> createLocalPlan(
     auto query_plan = std::make_unique<QueryPlan>();
 
     InterpreterSelectQuery interpreter(
-        query_ast, context, SelectQueryOptions(processed_stage).setShardInfo(shard_num, shard_count));
+        query_ast, context, SelectQueryOptions(processed_stage).setShardInfo(shard_num, shard_count).ignoreASTOptimizations());
     interpreter.buildQueryPlan(*query_plan);
 
     addConvertingActions(*query_plan, header);
