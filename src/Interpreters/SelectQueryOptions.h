@@ -126,7 +126,7 @@ struct SelectQueryOptions
         return *this;
     }
 
-    SelectQueryOptions & ignoreASTOptimizationsAlias(bool value = true)
+    SelectQueryOptions & ignoreASTOptimizations(bool value = true)
     {
         ignore_ast_optimizations = value;
         return *this;
