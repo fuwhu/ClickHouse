@@ -1,3 +1,4 @@
+#include <memory>
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
 #include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
@@ -15,6 +16,7 @@
 #include <DataTypes/ObjectUtils.h>
 #include <IO/WriteHelpers.h>
 #include <Common/typeid_cast.h>
+#include "Storages/MergeTree/MergeTreeIndices.h"
 #include <Processors/TTL/ITTLAlgorithm.h>
 
 #include <Parsers/queryToString.h>
@@ -361,7 +363,7 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
         part_name = new_part_info.getPartName();
 
     /// Fill non-existing implicit columns needed for skip indices.
-    fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot);
+    fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot, metadata_snapshot->secondary_indices);
 
     /// If we need to calculate some columns to sort.
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
@@ -698,13 +700,13 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeInMemoryProjectionP
         projection);
 }
 
-void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot)
+void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot, const std::vector<IndexDescription> & skip_indices)
 {
-    if (!metadata_snapshot->hasImplicitColumn())
+    if (!metadata_snapshot->hasImplicitColumn() || skip_indices.empty())
         return;
 
     std::unordered_set<String> skip_indexes_column_names_set;
-    for (const auto & index : metadata_snapshot->secondary_indices)
+    for (const auto & index : skip_indices)
     {
         if (index.expression)
         {

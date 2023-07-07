@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vector>
 #include <Core/Block.h>
 
 #include <IO/WriteBufferFromFile.h>
@@ -11,7 +12,7 @@
 
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
-
+#include "Storages/IndicesDescription.h"
 
 namespace DB
 {
@@ -99,7 +100,7 @@ public:
         IColumn::Permutation *& permutation,
         const MergeTreeData::MergingParams & merging_params);
 
-    static void fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot);
+    static void fillMissingImplicitColumnsForSkipIndices(Block & block, const StorageMetadataPtr & metadata_snapshot, const std::vector<IndexDescription> & skip_indices);
 
 private:
     static TemporaryPart writeProjectionPartImpl(

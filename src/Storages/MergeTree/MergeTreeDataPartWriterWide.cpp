@@ -1,9 +1,12 @@
+#include <vector>
 #include <Storages/MergeTree/MergeTreeDataPartWriterWide.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Interpreters/Context.h>
 #include <Compression/CompressionFactory.h>
 #include <Compression/CompressedReadBufferFromFile.h>
 #include <DataTypes/Serializations/ISerialization.h>
 #include <Common/escapeForFileName.h>
+#include "Storages/IndicesDescription.h"
 #include <Columns/ColumnSparse.h>
 #include <base/logger_useful.h>
 
@@ -209,6 +212,13 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Perm
     Block primary_key_block;
     if (settings.rewrite_primary_key)
         primary_key_block = getBlockAndPermute(block, metadata_snapshot->getPrimaryKeyColumns(), permutation);
+
+    /// Fill non-existing implicit columns needed for skip indices.
+    auto & mutable_block = const_cast<Block &>(block);
+    std::vector<IndexDescription> indices_to_fill;
+    for (const auto & skip_idx : skip_indices)
+        indices_to_fill.emplace_back(skip_idx->index);
+    MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_block, metadata_snapshot, indices_to_fill);
 
     Block skip_indexes_block = getBlockAndPermute(block, getSkipIndicesColumns(), permutation);
 

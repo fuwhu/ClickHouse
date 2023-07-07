@@ -1,5 +1,7 @@
 #include <Storages/MergeTree/MergeTreeDataPartWriterCompact.h>
 #include <Storages/MergeTree/MergeTreeDataPartCompact.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
+#include "Core/Block.h"
 
 namespace DB
 {
@@ -161,6 +163,13 @@ void MergeTreeDataPartWriterCompact::write(const Block & block, const IColumn::P
 
 void MergeTreeDataPartWriterCompact::writeDataBlockPrimaryIndexAndSkipIndices(const Block & block, const Granules & granules_to_write)
 {
+    /// Fill non-existing implicit columns needed for skip indices.
+    auto & mutable_block = const_cast<Block &>(block);
+    std::vector<IndexDescription> indices_to_fill;
+    for (const auto & skip_idx : skip_indices)
+        indices_to_fill.emplace_back(skip_idx->index);
+    MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_block, metadata_snapshot, indices_to_fill);
+
     writeDataBlock(block, granules_to_write);
 
     if (settings.rewrite_primary_key)
