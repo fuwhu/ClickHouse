@@ -20,9 +20,7 @@ ExpressionTransform::ExpressionTransform(
 {
     auto & mutable_header = const_cast<Block &>(header_);
     if (is_skip_indices_expression && metadata_snapshot->hasImplicitColumn())
-    {
-        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_header, metadata_snapshot);
-    }
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_header, metadata_snapshot, metadata_snapshot->secondary_indices);
 }
 
 void ExpressionTransform::transform(Chunk & chunk)
