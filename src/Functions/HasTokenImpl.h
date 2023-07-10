@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Columns/ColumnString.h>
-
+#include <Common/StringUtils/StringUtils.h>
 
 namespace DB
 {
@@ -14,7 +14,7 @@ namespace ErrorCodes
 
 /** Token search the string, means that needle must be surrounded by some separator chars, like whitespace or puctuation.
   */
-template <typename Name, typename TokenSearcher, bool negate_result = false>
+template <typename Name, typename Searcher, bool negate = false>
 struct HasTokenImpl
 {
     using ResultType = UInt8;
@@ -43,31 +43,41 @@ struct HasTokenImpl
         /// The current index in the array of strings.
         size_t i = 0;
 
-        TokenSearcher searcher(pattern.data(), pattern.size(), end - pos);
+        size_t pattern_size = pattern.size();
+        Searcher searcher(pattern.data(), pattern_size, end - pos);
 
         /// We will search for the next occurrence in all rows at once.
         while (pos < end && end != (pos = searcher.search(pos, end - pos)))
         {
-            /// Let's determine which index it refers to.
-            while (begin + offsets[i] <= pos)
+            /// The found substring is a token
+            if ((pos == begin || isTokenSeparator(pos[-1])) && (pos + pattern_size == end || isTokenSeparator(pos[pattern_size])))
             {
-                res[i] = negate_result;
+                /// Let's determine which index it refers to.
+                while (begin + offsets[i] <= pos)
+                {
+                    res[i] = negate;
+                    ++i;
+                }
+
+                /// We check that the entry does not pass through the boundaries of strings.
+                if (pos + pattern.size() < begin + offsets[i])
+                    res[i] = !negate;
+                else
+                    res[i] = negate;
+
+                pos = begin + offsets[i];
                 ++i;
             }
-
-            /// We check that the entry does not pass through the boundaries of strings.
-            if (pos + pattern.size() < begin + offsets[i])
-                res[i] = !negate_result;
             else
-                res[i] = negate_result;
-
-            pos = begin + offsets[i];
-            ++i;
+            {
+                /// Not a token. Jump over it.
+                pos += pattern_size;
+            }
         }
 
         /// Tail, in which there can be no substring.
         if (i < res.size())
-            memset(&res[i], negate_result, (res.size() - i) * sizeof(res[0]));
+            memset(&res[i], negate, (res.size() - i) * sizeof(res[0]));
     }
 
     template <typename... Args>
@@ -88,6 +98,9 @@ struct HasTokenImpl
     {
         throw Exception(ErrorCodes::ILLEGAL_COLUMN, "Function '{}' doesn't support FixedString haystack argument", name);
     }
+
+private:
+    static bool isTokenSeparator(UInt8 c) { return isASCII(c) && !isAlphaNumericASCII(c); }
 };
 
 }
