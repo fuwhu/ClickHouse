@@ -5,22 +5,21 @@
 namespace DB
 {
 
-Block ExpressionTransform::transformHeader(Block header, const ActionsDAG & expression)
+Block ExpressionTransform::transformHeader(Block header, const ActionsDAG & expression, bool is_skip_indices_expression, StorageMetadataPtr metadata_snapshot)
 {
+    if (is_skip_indices_expression && metadata_snapshot && metadata_snapshot->hasImplicitColumn())
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(header, metadata_snapshot, metadata_snapshot->secondary_indices);
     return expression.updateHeader(std::move(header));
 }
 
 
 ExpressionTransform::ExpressionTransform(
     const Block & header_, ExpressionActionsPtr expression_, bool is_skip_indices_expression_, StorageMetadataPtr metadata_snapshot_)
-    : ISimpleTransform(header_, transformHeader(header_, expression_->getActionsDAG()), false)
+    : ISimpleTransform(header_, transformHeader(header_, expression_->getActionsDAG(), is_skip_indices_expression_, metadata_snapshot_), false)
     , expression(std::move(expression_))
     , is_skip_indices_expression(is_skip_indices_expression_)
     , metadata_snapshot(metadata_snapshot_)
 {
-    auto & mutable_header = const_cast<Block &>(header_);
-    if (is_skip_indices_expression && metadata_snapshot->hasImplicitColumn())
-        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_header, metadata_snapshot, metadata_snapshot->secondary_indices);
 }
 
 void ExpressionTransform::transform(Chunk & chunk)
@@ -28,6 +27,8 @@ void ExpressionTransform::transform(Chunk & chunk)
     size_t num_rows = chunk.getNumRows();
     auto block = getInputPort().getHeader().cloneWithColumns(chunk.detachColumns());
 
+    if (is_skip_indices_expression && metadata_snapshot && metadata_snapshot->hasImplicitColumn())
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot, metadata_snapshot->secondary_indices);
     expression->execute(block, num_rows);
 
     chunk.setColumns(block.getColumns(), num_rows);

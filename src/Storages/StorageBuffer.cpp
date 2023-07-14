@@ -55,6 +55,7 @@ namespace CurrentMetrics
 {
     extern const Metric StorageBufferRows;
     extern const Metric StorageBufferBytes;
+    extern const Metric MemoryTracking;    
 }
 
 
@@ -69,6 +70,7 @@ namespace ErrorCodes
     extern const int INFINITE_LOOP;
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
     extern const int ALTER_OF_COLUMN_IS_FORBIDDEN;
+    extern const int MEMORY_LIMIT_EXCEEDED;
 }
 
 
@@ -550,6 +552,16 @@ public:
 
     void consume(Chunk chunk) override
     {
+        size_t max_memory_usage_before_forbid_writing = storage.getContext()->getSettingsRef().max_memory_usage_before_forbid_writing_buffer_table;
+        size_t current_server_memory_usage = CurrentMetrics::values[CurrentMetrics::MemoryTracking].load(std::memory_order_relaxed);
+        if (max_memory_usage_before_forbid_writing && current_server_memory_usage >= max_memory_usage_before_forbid_writing)
+            throw Exception("Memory usage of clickhouse server exceed max_memory_usage_before_forbid_writing_buffer_table(" + std::to_string(max_memory_usage_before_forbid_writing) + "), so writing into buffer tables is forbidden right now.", ErrorCodes::MEMORY_LIMIT_EXCEEDED);
+
+        size_t max_buffer_table_bytes = storage.getContext()->getSettingsRef().max_memory_usage_for_buffer_tables;
+        size_t current_buffer_table_bytes = CurrentMetrics::values[CurrentMetrics::StorageBufferBytes].load(std::memory_order_relaxed);
+        if (max_buffer_table_bytes && current_buffer_table_bytes >= max_buffer_table_bytes)
+            throw Exception("Memory usage in buffers of buffer tables exceed max_memory_usage_for_buffer_tables(" + std::to_string(max_buffer_table_bytes) + "), so writing into buffer tables is forbidden right now.", ErrorCodes::MEMORY_LIMIT_EXCEEDED);
+
         size_t rows = chunk.getNumRows();
         if (!rows)
             return;
@@ -870,6 +882,25 @@ bool StorageBuffer::flushBuffer(Buffer & buffer, bool check_thresholds, bool loc
     try
     {
         writeBlockToDestination(block_to_write, DatabaseCatalog::instance().tryGetTable(destination_id, getContext()));
+    }
+    catch (const Exception & e)
+    {
+        ProfileEvents::increment(ProfileEvents::StorageBufferErrorOnFlush);
+        last_flush_error_info.error_code = e.code();
+        last_flush_error_info.error_time = time(nullptr);
+
+        /// Return the block to its place in the buffer.
+
+        CurrentMetrics::add(CurrentMetrics::StorageBufferRows, block_to_write.rows());
+        CurrentMetrics::add(CurrentMetrics::StorageBufferBytes, block_to_write.bytes());
+
+        buffer.data.swap(block_to_write);
+
+        if (!buffer.first_write_time) // -V547
+            buffer.first_write_time = current_time;
+
+        /// After a while, the next write attempt will happen.
+        throw;
     }
     catch (...)
     {

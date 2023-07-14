@@ -28,7 +28,11 @@ public:
 
     String getName() const override { return "ExpressionTransform"; }
 
-    static Block transformHeader(Block header, const ActionsDAG & expression);
+    static Block transformHeader(
+            Block header, 
+            const ActionsDAG & expression,
+            bool is_skip_indices_expression = false, 
+            StorageMetadataPtr metadata_snapshot = nullptr);
 
 protected:
     void transform(Chunk & chunk) override;
