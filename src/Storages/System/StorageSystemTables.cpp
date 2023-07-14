@@ -5,6 +5,7 @@
 #include <Storages/System/StorageSystemTables.h>
 #include <Storages/SelectQueryInfo.h>
 #include <Storages/VirtualColumnUtils.h>
+#include <Storages/StorageBuffer.h>
 #include <Databases/IDatabase.h>
 #include <Access/ContextAccess.h>
 #include <Interpreters/Context.h>
@@ -58,6 +59,10 @@ StorageSystemTables::StorageSystemTables(const StorageID & table_id_)
         {"lifetime_rows", std::make_shared<DataTypeNullable>(std::make_shared<DataTypeUInt64>())},
         {"lifetime_bytes", std::make_shared<DataTypeNullable>(std::make_shared<DataTypeUInt64>())},
         {"comment", std::make_shared<DataTypeString>()},
+        {"buffer_bytes", std::make_shared<DataTypeUInt64>()},
+        {"buffer_rows", std::make_shared<DataTypeUInt64>()},
+        {"last_flush_error_code", std::make_shared<DataTypeUInt64>()},
+        {"last_flush_error_time", std::make_shared<DataTypeDateTime>()},
         {"has_own_data", std::make_shared<DataTypeUInt8>()},
         {"loading_dependencies_database", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
         {"loading_dependencies_table", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
@@ -489,6 +494,74 @@ protected:
                         res_columns[res_index++]->insert(metadata_snapshot->comment);
                     else
                         res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (!table)
+                        res_columns[res_index++]->insertDefault();
+                    else
+                    {
+                        auto * buffer_table = dynamic_cast<StorageBuffer *>(table.get());
+                        if (buffer_table)
+                        {
+                            auto buffer_bytes = buffer_table->bufferBytes();
+                            res_columns[res_index++]->insert(*buffer_bytes);
+                        }
+                        else
+                            res_columns[res_index++]->insertDefault();
+                    }
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (!table)
+                        res_columns[res_index++]->insertDefault();
+                    else
+                    {
+                        auto * buffer_table = dynamic_cast<StorageBuffer *>(table.get());
+                        if (buffer_table)
+                        {
+                            auto buffer_rows = buffer_table->bufferRows();
+                            res_columns[res_index++]->insert(*buffer_rows);
+                        }
+                        else
+                            res_columns[res_index++]->insertDefault();
+                    }
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (!table)
+                        res_columns[res_index++]->insertDefault();
+                    else
+                    {
+                        auto * buffer_table = dynamic_cast<StorageBuffer *>(table.get());
+                        if (buffer_table)
+                        {
+                            auto last_flush_error_code = buffer_table->lastFlushErrorCode();
+                            res_columns[res_index++]->insert(*last_flush_error_code);
+                        }
+                        else
+                            res_columns[res_index++]->insertDefault();
+                    }
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if (!table)
+                        res_columns[res_index++]->insertDefault();
+                    else
+                    {
+                        auto * buffer_table = dynamic_cast<StorageBuffer *>(table.get());
+                        if (buffer_table)
+                        {
+                            auto last_flush_error_time = buffer_table->lastFlushErrorTime();
+                            res_columns[res_index++]->insert(*last_flush_error_time);
+                        }
+                        else
+                            res_columns[res_index++]->insertDefault();
+                    }
                 }
 
                 if (columns_mask[src_index++])

@@ -115,6 +115,12 @@ public:
     std::optional<UInt64> lifetimeRows() const override { return lifetime_writes.rows; }
     std::optional<UInt64> lifetimeBytes() const override { return lifetime_writes.bytes; }
 
+    std::optional<UInt64> lastFlushErrorCode() const { return last_flush_error_info.error_code; }
+    std::optional<UInt64> lastFlushErrorTime() const { return last_flush_error_info.error_time; }
+
+    std::optional<UInt64> bufferBytes() const { return total_writes.bytes; }
+    std::optional<UInt64> bufferRows() const { return total_writes.rows; }
+
 
 private:
     struct Buffer
@@ -150,6 +156,13 @@ private:
     };
     Writes lifetime_writes;
     Writes total_writes;
+    
+    struct FlushErrorInfo
+    {
+        std::atomic<size_t> error_code = 0;
+        std::atomic<size_t> error_time = 0;
+    };
+    FlushErrorInfo last_flush_error_info;
 
     Poco::Logger * log;
 
