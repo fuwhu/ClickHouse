@@ -139,6 +139,7 @@ struct Settings;
     M(UInt64, min_bytes_to_rebalance_partition_over_jbod, 0, "Minimal amount of bytes to enable part rebalance over JBOD array (0 - disabled).", 0) \
     M(Bool, check_sample_column_is_correct, true, "Check columns or columns by hash for sampling are unsigned integer.", 0) \
     M(Bool, ignore_check_column_hash, true, "Ignore checking part column hash, for compatibility", 0) \
+    M(Bool, select_data_parts_for_move_by_ttl, false, "When disk space is low, move TTL older data to a cold drive", 0) \
     \
     /** Experimental/work in progress feature. Unsafe for production. */ \
     M(UInt64, part_moves_between_shards_enable, 0, "Experimental/Incomplete feature to move parts between shards. Does not take into account sharding expressions.", 0) \
