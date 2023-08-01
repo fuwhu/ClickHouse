@@ -885,6 +885,9 @@ void TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
 
     for (const auto & column_name : required)
     {
+        if (source_column_names.find(column_name) != source_column_names.end())
+            continue;
+
         auto [is_implicit, pos] = checkImplicitColumn(column_name);
         if (is_implicit)
         {
