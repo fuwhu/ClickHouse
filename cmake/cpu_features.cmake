@@ -20,6 +20,7 @@ option (ENABLE_AVX "Use AVX instructions on x86_64" 0)
 option (ENABLE_AVX2 "Use AVX2 instructions on x86_64" 0)
 option (ENABLE_AVX512 "Use AVX512 instructions on x86_64" 0)
 option (ENABLE_BMI "Use BMI instructions on x86_64" 0)
+option (ENABLE_BMI2 "Use BMI2 instructions on x86_64 (depends on ENABLE_AVX2)" 0)
 option (ENABLE_AVX2_FOR_SPEC_OP "Use avx2 instructions for specific operations on x86_64" 0)
 option (ENABLE_AVX512_FOR_SPEC_OP "Use avx512 instructions for specific operations on x86_64" 0)
 
@@ -163,6 +164,20 @@ else ()
         }
     " HAVE_BMI)
     if (HAVE_BMI AND ENABLE_BMI)
+        set (COMPILER_FLAGS "${COMPILER_FLAGS} ${TEST_FLAG}")
+    endif ()
+
+    set (TEST_FLAG "-mbmi2")
+    set (CMAKE_REQUIRED_FLAGS "${TEST_FLAG} -O0")
+    check_cxx_source_compiles("
+        #include <immintrin.h>
+        int main() {
+            auto a = _pdep_u64(0, 0);
+            (void)a;
+            return 0;
+        }
+    " HAVE_BMI2)
+    if (HAVE_BMI2 AND HAVE_AVX2 AND ENABLE_AVX2 AND ENABLE_BMI2)
         set (COMPILER_FLAGS "${COMPILER_FLAGS} ${TEST_FLAG}")
     endif ()
 

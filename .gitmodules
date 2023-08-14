@@ -262,3 +262,6 @@
 [submodule "contrib/minizip-ng"]
 	path = contrib/minizip-ng
 	url = https://github.com/zlib-ng/minizip-ng
+[submodule "contrib/morton-nd"]
+	path = contrib/morton-nd
+	url = https://github.com/morton-nd/morton-nd.git

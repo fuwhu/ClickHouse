@@ -56,6 +56,8 @@ void registerFunctionTid(FunctionFactory & factory);
 void registerFunctionLogTrace(FunctionFactory & factory);
 void registerFunctionsTimeWindow(FunctionFactory &);
 void registerFunctionToBool(FunctionFactory &);
+void registerFunctionMortonEncode(FunctionFactory &);
+void registerFunctionMortonDecode(FunctionFactory &);
 
 void registerUDFs(FunctionFactory & factory);
 
@@ -129,6 +131,8 @@ void registerFunctions()
 #endif
     registerFunctionTid(factory);
     registerFunctionLogTrace(factory);
+    registerFunctionMortonEncode(factory);
+    registerFunctionMortonDecode(factory);
 
     registerUDFs(factory);
 }

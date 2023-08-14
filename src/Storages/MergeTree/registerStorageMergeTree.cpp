@@ -517,6 +517,8 @@ static StoragePtr create(const StorageFactory::Arguments & args)
 
     if (is_extended_storage_def)
     {
+        storage_settings->loadFromQuery(*args.storage_def);
+
         ASTPtr partition_by_key;
         if (args.storage_def->partition_by)
             partition_by_key = args.storage_def->partition_by->ptr();
@@ -544,17 +546,34 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         metadata.sorting_key = KeyDescription::getSortingKeyFromAST(
             args.storage_def->order_by->ptr(), metadata.columns, args.getContext(), merging_param_key_arg);
 
-        /// If primary key explicitly defined, than get it from AST
-        if (args.storage_def->primary_key)
+        if (storage_settings->order_by_use_zcurve)
         {
-            metadata.primary_key = KeyDescription::getKeyFromAST(args.storage_def->primary_key->ptr(), metadata.columns, args.getContext());
+            if (args.storage_def->primary_key)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Primary key not supported while using Z Order");
+
+            if (metadata.sorting_key.column_names.size() < 2 || metadata.sorting_key.column_names.size() > 8)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "ZCurve sorting needs at least 2 columns and at most 8 columns");
+
+            /// Should set primary key to empty if use z order
+            auto empty_primary_key = makeASTFunction("tuple");
+            metadata.primary_key = KeyDescription::getKeyFromAST(empty_primary_key, metadata.columns, args.getContext());
         }
-        else /// Otherwise we don't have explicit primary key and copy it from order by
+        else
         {
-            metadata.primary_key = KeyDescription::getKeyFromAST(args.storage_def->order_by->ptr(), metadata.columns, args.getContext());
-            /// and set it's definition_ast to nullptr (so isPrimaryKeyDefined()
-            /// will return false but hasPrimaryKey() will return true.
-            metadata.primary_key.definition_ast = nullptr;
+            /// If primary key explicitly defined, than get it from AST
+            if (args.storage_def->primary_key)
+            {
+                metadata.primary_key
+                    = KeyDescription::getKeyFromAST(args.storage_def->primary_key->ptr(), metadata.columns, args.getContext());
+            }
+            else /// Otherwise we don't have explicit primary key and copy it from order by
+            {
+                metadata.primary_key
+                    = KeyDescription::getKeyFromAST(args.storage_def->order_by->ptr(), metadata.columns, args.getContext());
+                /// and set it's definition_ast to nullptr (so isPrimaryKeyDefined()
+                /// will return false but hasPrimaryKey() will return true.
+                metadata.primary_key.definition_ast = nullptr;
+            }
         }
 
         auto minmax_columns = metadata.getColumnsRequiredForPartitionKey();
@@ -594,8 +613,6 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             auto new_ttl_entry = TTLDescription::getTTLFromAST(ast, columns, args.getContext(), metadata.primary_key);
             metadata.column_ttls_by_name[name] = new_ttl_entry;
         }
-
-        storage_settings->loadFromQuery(*args.storage_def);
 
         // updates the default storage_settings with settings specified via SETTINGS arg in a query
         if (args.storage_def->settings)

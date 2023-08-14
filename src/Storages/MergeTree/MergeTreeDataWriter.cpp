@@ -16,7 +16,8 @@
 #include <DataTypes/ObjectUtils.h>
 #include <IO/WriteHelpers.h>
 #include <Common/typeid_cast.h>
-#include "Storages/MergeTree/MergeTreeIndices.h"
+#include <Storages/MergeTree/MergeTreeIndices.h>
+#include <Functions/FunctionFactory.h>
 #include <Processors/TTL/ITTLAlgorithm.h>
 
 #include <Parsers/queryToString.h>
@@ -301,12 +302,14 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
         convertObjectsToTuples(columns, block, extended_storage_columns);
     }
 
+    const auto & data_settings = data.getSettings();
+
     //Insert implicit columns to block
     for (auto & col : columns)
     {
         if (isMapV2(col.type))
         {
-            if (data.getSettings()->implicit_map_duplication)
+            if (data_settings->implicit_map_duplication)
                 new_columns.emplace_back(col);
                 
             NamesAndTypesList implicit_columns;
@@ -379,6 +382,13 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
 
     ProfileEvents::increment(ProfileEvents::MergeTreeDataWriterBlocks);
 
+    MergeTreeDictionaryStorePtr dict_store;
+    if (data_settings->order_by_use_zcurve)
+    {
+        dict_store = std::make_unique<MergeTreeDictionaryStore>();
+        computeAndInjectZCurveSortDesc(block, sort_description, *dict_store);
+    }
+
     /// Sort
     IColumn::Permutation * perm_ptr = nullptr;
     IColumn::Permutation perm;
@@ -423,8 +433,6 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     if (data.storage_settings.get()->assign_part_uuids)
         new_data_part->uuid = UUIDHelpers::generateV4();
 
-    const auto & data_settings = data.getSettings();
-
     SerializationInfo::Settings settings{data_settings->ratio_of_defaults_for_sparse_serialization, true};
     SerializationInfoByName infos(new_columns, settings);
     infos.add(block);
@@ -436,6 +444,12 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     new_data_part->partition = std::move(partition);
     new_data_part->minmax_idx = std::move(minmax_idx);
     new_data_part->is_temp = true;
+
+    if (dict_store)
+    {
+        dict_store->setMergeTreePart(new_data_part.get());
+        new_data_part->dict_store = std::move(dict_store);
+    }
 
     SyncGuardPtr sync_guard;
     if (new_data_part->isStoredOnDisk())
@@ -495,6 +509,7 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
                 temp_part.streams.emplace_back(std::move(stream));
         }
     }
+
     auto finalizer = out->finalizePartAsync(new_data_part, data_settings->fsync_after_insert);
 
     temp_part.part = new_data_part;
@@ -755,5 +770,51 @@ void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(Block & block
             block.insert(skip_index_column);
         }
     }
+}
+
+void MergeTreeDataWriter::computeAndInjectZCurveSortDesc(
+    Block & block, SortDescription & description, MergeTreeDictionaryStore & dict_store)
+{
+    ColumnsWithTypeAndName z_curve_args;
+    size_t col_size = 0;
+
+    for (const auto & desc : description)
+    {
+        const auto & col_type_and_name = block.getByPosition(desc.column_number);
+        auto dict = MergeTreeDictionaryStore::createDictionary(IMergeTreeDictionary::DictionaryType::KEY_VALUE, col_type_and_name.type);
+
+        const auto & col = col_type_and_name.column;
+        col_size = col->size();
+
+        dict->buildFrom(*col);
+
+        auto index_column = ColumnUInt64::create(col_size);
+        auto & container = index_column->getData();
+        for (auto row : collections::range(col_size))
+        {
+            auto row_data = col->getDataAt(row);
+            auto idx = dict->getIndex(row_data);
+            if (!idx)
+                throw Exception(
+                    ErrorCodes::LOGICAL_ERROR,
+                    "Can not get MergeTreeDictionary index for col: {}, key: {}",
+                    col_type_and_name.name,
+                    row_data.toString());
+
+            container[row] = *idx;
+        }
+
+        z_curve_args.emplace_back(ColumnWithTypeAndName{std::move(index_column), std::make_shared<DataTypeUInt64>(), ""});
+
+        dict_store.addDictionary(col_type_and_name.name, dict);
+    }
+
+    auto func = FunctionFactory::instance().get("zCurve", data.getContext());
+    auto z_value_col = func->build(z_curve_args)->execute(z_curve_args, std::make_shared<DataTypeUInt64>(), col_size);
+
+    block.insert(ColumnWithTypeAndName{z_value_col, std::make_shared<DataTypeUInt64>(), "_zcurve"});
+
+    description.clear();
+    description.emplace_back(block.getPositionByName("_zcurve"), 1, 1);
 }
 }

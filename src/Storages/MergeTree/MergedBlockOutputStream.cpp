@@ -276,6 +276,13 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
                 + ". It is a bug.", ErrorCodes::LOGICAL_ERROR);
     }
 
+    if (new_part->dict_store)
+    {
+        new_part->dict_store->serialize(checksums);
+        /// Clear dict right now, do not keep it in memory
+        new_part->dict_store = nullptr;
+    }
+
     {
         /// Write file with checksums.
         auto out = volume->getDisk()->writeFile(fs::path(part_path) / "checksums.txt", 4096);
