@@ -673,6 +673,18 @@ void IMergeTreeDataPart::loadProjections(bool require_columns_checksums, bool ch
     }
 }
 
+void IMergeTreeDataPart::loadDictionaries() const
+{
+    if (dict_store)
+        return;
+
+    assertOnDisk();
+    auto store = std::make_unique<MergeTreeDictionaryStore>(this);
+    store->deserialize();
+
+    dict_store = std::move(store);
+}
+
 void IMergeTreeDataPart::loadIndexGranularity()
 {
     throw Exception("Method 'loadIndexGranularity' is not implemented for part with type " + getType().toString(), ErrorCodes::NOT_IMPLEMENTED);

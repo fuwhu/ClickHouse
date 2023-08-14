@@ -129,6 +129,10 @@ QueryPlanPtr MergeTreeDataSelectExecutor::read(
     if (query_info.merge_tree_empty_result)
         return std::make_unique<QueryPlan>();
 
+    /// disable read in order optimization for z order
+    if (data.getSettings()->order_by_use_zcurve)
+        const_cast<SelectQueryInfo &>(query_info).input_order_info = nullptr;
+
     const auto & settings = context->getSettingsRef();
     const auto & metadata_for_reading = storage_snapshot->getMetadataForQuery();
 

@@ -114,6 +114,8 @@ private:
         Block block,
         const ProjectionDescription & projection);
 
+    void computeAndInjectZCurveSortDesc(Block & block, SortDescription & description, MergeTreeDictionaryStore & dict_store);
+
     MergeTreeData & data;
 
     Poco::Logger * log;
