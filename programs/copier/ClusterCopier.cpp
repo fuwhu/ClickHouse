@@ -1,7 +1,9 @@
 #include "ClusterCopier.h"
 
 #include "Internals.h"
+#include "Parsers/ASTIdentifier.h"
 #include "StatusAccumulator.h"
+#include "StatusProcesses.h"
 
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/KeeperException.h>
@@ -15,6 +17,7 @@
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <Processors/Executors/PushingPipelineExecutor.h>
 #include <Processors/Sources/RemoteSource.h>
+#include <Poco/StringTokenizer.h>
 
 namespace DB
 {
@@ -65,6 +68,10 @@ void ClusterCopier::init()
     zookeeper->createAncestors(getWorkersPath() + "/");
     /// Init status node
     zookeeper->createIfNotExists(task_zookeeper_path + "/status", "{}");
+    //  Init process_status node
+    zookeeper->createIfNotExists(task_zookeeper_path + "/processes_status", "{}");
+    zookeeper->createIfNotExists(task_zookeeper_path + "/processes_status" + "/" + host_id, "{}");
+
 }
 
 template <typename T>
@@ -226,6 +233,20 @@ void ClusterCopier::uploadTaskDescription(const std::string & task_path, const s
         ((code != Coordination::Error::ZOK && !force) ? "not " : ""), local_task_description_path, code, Coordination::errorMessage(code));
 }
 
+void ClusterCopier::signProcessStatus(const ProcessState & process_status_sign,const std::string & info)
+{
+    //  Set the infomations of current process to 'process_status' node in Zookeeper.
+    //  Provides process status for third-party monitors.
+    auto zookeeper = getContext()->getZooKeeper();
+
+    auto statuses = std::make_shared<StatusProcesses::ProcessStatus>();
+    statuses->info = info;
+    statuses->process_status_sign = static_cast<size_t>(process_status_sign);
+    
+    auto statuses_to_commit = StatusProcesses::serializeToJSON(statuses);
+    zookeeper->set(task_zookeeper_path + "/processes_status" + "/" + host_id,statuses_to_commit);
+}
+
 void ClusterCopier::reloadTaskDescription()
 {
     auto zookeeper = getContext()->getZooKeeper();
@@ -261,6 +282,7 @@ void ClusterCopier::updateConfigIfNeeded()
 
 void ClusterCopier::process(const ConnectionTimeouts & timeouts)
 {
+    signProcessStatus(ProcessState::Running,"Start running");
     for (TaskTable & task_table : task_cluster->table_tasks)
     {
         LOG_INFO(log, "Process table task {} with {} shards, {} of them are local ones", task_table.table_id, task_table.all_shards.size(), task_table.local_shards.size());
@@ -321,10 +343,12 @@ void ClusterCopier::process(const ConnectionTimeouts & timeouts)
 
         if (!table_is_done)
         {
-            throw Exception("Too many tries to process table " + task_table.table_id + ". Abort remaining execution",
-                            ErrorCodes::UNFINISHED);
+            std::string err_str = "Too many tries to process table " + task_table.table_id + ". Abort remaining execution";
+            signProcessStatus(ProcessState::Failed ,err_str);
+            throw Exception(err_str,ErrorCodes::UNFINISHED);
         }
     }
+    signProcessStatus(ProcessState::Finished,"Finished");
 }
 
 /// Protected section
@@ -1286,7 +1310,8 @@ TaskStatus ClusterCopier::processPartitionPieceTaskImpl(
             query += " SAMPLE 1/" + toString(number_of_splits) + " OFFSET " + toString(current_piece_number) + "/" + toString(number_of_splits);
 
         /// TODO: Bad, it is better to rewrite with ASTLiteral(partition_key_field)
-        query += " WHERE (" + queryToString(task_table.engine_push_partition_key_ast) + " = partition_key)";
+        query = query + " WHERE ";
+        optimizeWhereCondition(task_table, task_partition.name, query);
 
         if (enable_splitting && !experimental_use_sample_offset)
             query += " AND ( cityHash64(" + primary_key_comma_separated + ") %" + toString(number_of_splits) + " = " + toString(current_piece_number) + " )";
@@ -1886,9 +1911,10 @@ bool ClusterCopier::checkShardHasPartition(const ConnectionTimeouts & timeouts,
     TaskTable & task_table = task_shard.task_table;
 
     WriteBufferFromOwnString ss;
-    ss << "WITH " + partition_quoted_name + " AS partition_key ";
-    ss << "SELECT 1 FROM " << getQuotedTable(task_shard.table_read_shard);
-    ss << " WHERE (" << queryToString(task_table.engine_push_partition_key_ast) << " = partition_key)";
+    ss << "SELECT 1 FROM " + getQuotedTable(task_shard.table_read_shard) + " WHERE ";
+    std::string query_str;
+    optimizeWhereCondition(task_table, partition_quoted_name, query_str);
+    ss<< query_str;
     if (!task_table.where_condition_str.empty())
         ss << " AND (" << task_table.where_condition_str << ")";
     ss << " LIMIT 1";
@@ -1929,7 +1955,8 @@ bool ClusterCopier::checkPresentPartitionPiecesOnCurrentShard(const ConnectionTi
     if (experimental_use_sample_offset)
         query += " SAMPLE 1/" + toString(number_of_splits) + " OFFSET " + toString(current_piece_number) + "/" + toString(number_of_splits);
 
-    query += " WHERE (" + queryToString(task_table.engine_push_partition_key_ast) + " = partition_key)";
+    query = query + " WHERE ";
+    optimizeWhereCondition(task_table, partition_quoted_name, query);
 
     if (!experimental_use_sample_offset)
         query += " AND (cityHash64(" + primary_key_comma_separated + ") % "
@@ -2032,4 +2059,56 @@ UInt64 ClusterCopier::executeQueryOnCluster(
     return successfully_executed.load();
 }
 
+void ClusterCopier::optimizeWhereCondition(const TaskTable & task_table, const std::string & partition_quoted_name, std::string & query)
+{
+    String partition_without_quoted = partition_quoted_name;
+    auto left_loc = partition_without_quoted.find_first_of('(');
+    auto rigin_loc = partition_without_quoted.find_last_of(')');
+    if (left_loc != partition_without_quoted.npos && rigin_loc != partition_without_quoted.npos)
+    {
+        const ASTFunction * node = task_table.engine_push_partition_key_ast->as<ASTFunction>();
+        if (!node || node->name != "tuple" || node->arguments->children.size() != 2)
+        {
+            query = query + "(" + queryToString(task_table.engine_push_partition_key_ast) + " = (" + partition_quoted_name
+                + " AS partition_key))";
+            return;
+        }
+        partition_without_quoted = partition_without_quoted.replace(left_loc, 1, "").replace(rigin_loc - 1, 1, "");
+        Poco::StringTokenizer st(partition_without_quoted, ",");
+        if (st.count() > 1)
+        {
+            if (node->arguments->children.size() == st.count())
+            {
+                size_t index = 0;
+                for (auto iter = node->arguments->children.begin(); iter != node->arguments->children.end(); iter++)
+                {
+                    if (auto * ident = (*iter)->as<ASTIdentifier>())
+                    {
+                        query = query + ident->name() + " = " + st[index];
+                        index++;
+                        if (index < st.count())
+                        {
+                            query = query + " AND ";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                query = query + "(" + queryToString(task_table.engine_push_partition_key_ast) + " = (" + partition_quoted_name
+                    + " AS partition_key))";
+            }
+        }
+        else
+        {
+            query = query + "(" + queryToString(task_table.engine_push_partition_key_ast) + " = (" + partition_quoted_name
+                + " AS partition_key))";
+        }
+    }
+    else
+    {
+        query = query + "(" + queryToString(task_table.engine_push_partition_key_ast) + " = (" + partition_quoted_name
+            + " AS partition_key))";
+    }
+}
 }
