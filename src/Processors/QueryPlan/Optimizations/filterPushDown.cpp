@@ -27,6 +27,65 @@ namespace DB::ErrorCodes
 namespace DB::QueryPlanOptimizations
 {
 
+static bool identifiersIsAmongAllGroupingSets(
+    const Aggregator::Params & params, const GroupingSetsParamsList & grouping_sets_params, const NameSet & identifiers_in_predicate)
+{
+    auto get_grouping_set_keys = [&](const GroupingSetsParams & grouping_set)
+    {
+        Names keys;
+        keys.reserve(grouping_set.used_keys.size());
+        for (auto pos : grouping_set.used_keys)
+            keys.push_back(params.src_header.getByPosition(pos).name);
+
+        return keys;
+    };
+
+    for (const auto & grouping_sets : grouping_sets_params)
+    {
+        const auto & grouping_set_keys = get_grouping_set_keys(grouping_sets);
+        for (const auto & identifier : identifiers_in_predicate)
+        {
+            if (std::find(grouping_set_keys.begin(), grouping_set_keys.end(), identifier) == grouping_set_keys.end())
+                return false;
+        }
+    }
+    return true;
+}
+
+static NameSet findIdentifiersOfNode(const ActionsDAG::Node * node)
+{
+    NameSet res;
+
+    /// We treat all INPUT as identifier
+    if (node->type == ActionsDAG::ActionType::INPUT)
+    {
+        res.emplace(node->result_name);
+        return res;
+    }
+
+    std::queue<const ActionsDAG::Node *> queue;
+    queue.push(node);
+
+    while (!queue.empty())
+    {
+        const auto * top = queue.front();
+        for (const auto * child : top->children)
+        {
+            if (child->type == ActionsDAG::ActionType::INPUT)
+            {
+                res.emplace(child->result_name);
+            }
+            else
+            {
+                /// Only push non INPUT child into the queue
+                queue.push(child);
+            }
+        }
+        queue.pop();
+    }
+    return res;
+}
+
 static size_t tryAddNewFilterStep(
     QueryPlan::Node * parent_node,
     QueryPlan::Nodes & nodes,
@@ -113,6 +172,21 @@ size_t tryPushDownFilter(QueryPlan::Node * parent_node, QueryPlan::Nodes & nodes
     if (auto * aggregating = typeid_cast<AggregatingStep *>(child.get()))
     {
         const auto & params = aggregating->getParams();
+
+        /// If aggregating is GROUPING SETS, and not all the identifiers exist in all
+        /// of the grouping sets, we could not push the filter down.
+        if (aggregating->isGroupingSets())
+        {
+            const auto & actions = filter->getExpression();
+            actions->findInIndex(filter->getFilterColumnName());
+            const auto & filter_node = actions->findInIndex(filter->getFilterColumnName());
+
+            auto identifiers_in_predicate = findIdentifiersOfNode(&filter_node);
+
+            if (!identifiersIsAmongAllGroupingSets(params, aggregating->getGroupingSetsParamsList(), identifiers_in_predicate))
+                return 0;
+        }
+
         Names keys = getAggregatingKeys(params);
 
         if (auto updated_steps = tryAddNewFilterStep(parent_node, nodes, keys))
