@@ -13,6 +13,7 @@
 #include <Storages/MergeTree/MergeTreeDataPartTTLInfo.h>
 #include <Storages/MergeTree/MergeTreeIOSettings.h>
 #include <Storages/MergeTree/KeyCondition.h>
+#include <Storages/MergeTree/UniqueMergeTreeIndexCommon.h>
 #include <DataTypes/Serializations/SerializationInfo.h>
 #include <Storages/MergeTree/MergeTreeDictionary.h>
 
@@ -40,6 +41,8 @@ class IMergeTreeReader;
 class IMergeTreeDataPartWriter;
 class MarkCache;
 class UncompressedCache;
+
+using MergeTreeDataPartPtr = std::shared_ptr<const IMergeTreeDataPart>;
 
 /// Description of the data part.
 class IMergeTreeDataPart : public std::enable_shared_from_this<IMergeTreeDataPart>
@@ -144,6 +147,42 @@ public:
             return std::make_shared<NamesAndTypesList>(it->second);
     }
 
+    void setUniqueKeyIndex(const UniqueKeyIndexPtr & unique_key_index_)
+    {
+        unique_key_index = unique_key_index_;
+    }
+
+    void setUniqueKeyBucketIndex(const UniqueKeyBucketIndexPtr & unique_key_bucket_index_)
+    {
+        unique_key_bucket_index = unique_key_bucket_index_;
+    }
+
+    void clearUniqueKeyIndex() { unique_key_index = nullptr; }
+
+    void setUniqueDeleteBitmap(const UniqueDeleteBitmapPtr & unique_delete_bitmap_)
+    {
+        std::unique_lock<std::shared_mutex> lock(unique_delete_bitmap_rw_lock);
+        unique_delete_bitmap = unique_delete_bitmap_;
+    }
+
+    void setUniqueKeyMinMaxIndex(const UniqueKeyMinMaxIndexPtr & unique_key_minmax_index_)
+    {
+        unique_key_minmax_index = unique_key_minmax_index_;
+    }
+
+    UniqueKeyIndexPtr getUniqueKeyIndex(bool keep_loaded_in_memory = false, LoadingBucketPoolPtr loading_bucket_pool = nullptr,
+                                        BucketIndexRangePtr bucket_range = nullptr);
+
+    UniqueKeyBucketIndexPtr & getUniqueKeyBucketIndex() { return unique_key_bucket_index; }
+
+    UniqueDeleteBitmapPtr & getUniqueDeleteBitmap() 
+    {
+        std::shared_lock<std::shared_mutex> lock(unique_delete_bitmap_rw_lock);
+        return unique_delete_bitmap; 
+    }
+
+    UniqueKeyMinMaxIndexPtr & getUniqueKeyMinMaxIndex() { return unique_key_minmax_index; }
+
     const NamesAndTypesList & getColumns() const { return columns; }
 
     void setSerializationInfos(const SerializationInfoByName & new_infos);
@@ -216,6 +255,8 @@ public:
     MergeTreeIndexGranularityInfo index_granularity_info;
 
     size_t rows_count = 0;
+
+    size_t effective_rows_count = 0;
 
     time_t modification_time = 0;
     /// When the part is removed from the working set. Changes once.
@@ -295,6 +336,63 @@ public:
 
     MergeTreePartition partition;
 
+    enum MergeUpdateStatus
+    {
+        NORMAL,          /// Not being merged and not being updated and not being moved.
+        MERGING,         /// Being merged.
+        UPDATING,        /// Being updated.
+        MOVING           /// Being moved.
+    };
+
+    std::atomic<MergeUpdateStatus> merge_update_status{NORMAL};
+
+    String getMergeUpdateStatusName() const
+    {
+        switch (merge_update_status)
+        {
+            case NORMAL:
+                return "NORMAL";
+            case MERGING:
+                return "MERGING";
+            case UPDATING:
+                return "UPDATING";
+            case MOVING:
+                return "MOVING";
+        }
+
+        return "UNKNOWN";
+    }
+
+    enum CommitType
+    {
+        NORMAL_INSERT,
+        EXECUTE_MERGE,   /// triggered by current replica merge.
+        MERGE_BY_FETCH,  /// merge part by fetch part.
+        EXECUTE_MOVE     /// triggered by current replica move.
+    };
+
+    std::atomic<CommitType> commit_type{NORMAL_INSERT};
+
+    String getCommitTypeName() const
+    {
+        switch (commit_type)
+        {
+            case NORMAL_INSERT:
+                return "NORMAL_INSERT";
+            case EXECUTE_MERGE:
+                return "EXECUTE_MERGE";
+            case MERGE_BY_FETCH:
+                return "MERGE_BY_FETCH";
+            case EXECUTE_MOVE:
+                return "EXECUTE_MOVE";
+        }
+
+        return "UNKNOWN";
+    }
+
+    std::vector<MergeTreeDataPartPtr> merge_source_parts; /// for merge result part, store the source parts from which current part is merged.
+    MergeTreeDataPartPtr move_source_part; /// for move result part, store the source part from which current part is moved.
+
     /// Amount of rows between marks
     /// As index always loaded into memory
     MergeTreeIndexGranularity index_granularity;
@@ -354,7 +452,7 @@ public:
     String getFullRelativePath() const;
 
     /// Returns full path to part dir
-    String getFullPath() const;
+    String getFullPath(bool with_last_slash = true) const;
 
     /// Moves a part to detached/ directory and adds prefix to its name
     void renameToDetached(const String & prefix) const;
@@ -448,6 +546,12 @@ public:
     /// Required for distinguish different copies of the same part on remote FS.
     String getUniqueId() const;
 
+    /// Load rows count for this part from disk (for the newer storage format version).
+    /// For the older format version calculates rows count from the size of a column with a fixed size.
+    void loadRowsCount();
+
+    UniqueKeyIndexPtr loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool = nullptr, BucketIndexRangePtr bucket_range = nullptr);
+
 protected:
 
     /// Total size of all columns, calculated once in calcuateColumnSizesOnDisk
@@ -466,6 +570,14 @@ protected:
 
     /// Columns description. Cannot be changed, after part initialization.
     NamesAndTypesList columns;
+
+    /// Data for uniq engine.
+    std::shared_mutex unique_delete_bitmap_rw_lock;
+
+    UniqueKeyIndexPtr unique_key_index;
+    UniqueKeyBucketIndexPtr unique_key_bucket_index;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
 
     std::map<String, NamesAndTypesList> implicit_columns_maps;
     const Type part_type;
@@ -501,6 +613,12 @@ private:
     /// Reads columns names and types from columns.txt
     void loadColumns(bool require);
 
+    void loadUniqueKeyBucketIndex();
+
+    void loadUniqueDeleteBitmap();
+
+    void loadUniqueKeyMinMaxIndex();
+
     /// If checksums.txt exists, reads file's checksums (and sizes) from it
     void loadChecksums(bool require);
 
@@ -509,10 +627,6 @@ private:
 
     /// Loads index file.
     void loadIndex();
-
-    /// Load rows count for this part from disk (for the newer storage format version).
-    /// For the older format version calculates rows count from the size of a column with a fixed size.
-    void loadRowsCount();
 
     /// Loads ttl infos in json format from file ttl.txt. If file doesn't exists assigns ttl infos with all zeros
     void loadTTLInfos();
@@ -532,11 +646,13 @@ private:
     /// for this column with default parameters.
     CompressionCodecPtr detectDefaultCompressionCodec() const;
 
+    /// move part uniq tmp file to new directory for unique engine
+    void renameUniqueTempDir(const String & new_relative_path, bool remove_new_dir_if_exists) const;
+
     mutable State state{State::Temporary};
 };
 
 using MergeTreeDataPartState = IMergeTreeDataPart::State;
-using MergeTreeDataPartPtr = std::shared_ptr<const IMergeTreeDataPart>;
 using MergeTreeMutableDataPartPtr = std::shared_ptr<IMergeTreeDataPart>;
 
 bool isCompactPart(const MergeTreeDataPartPtr & data_part);

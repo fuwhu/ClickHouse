@@ -1,3 +1,4 @@
+#include <utility>
 #include <Storages/MergeTree/MergeTreeSequentialSource.h>
 #include <Storages/MergeTree/MergeTreeBlockReadUtils.h>
 #include <Interpreters/Context.h>
@@ -7,6 +8,23 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int MEMORY_LIMIT_EXCEEDED;
+}
+
+static void filterColumns(Columns & columns, const IColumn::Filter & filter)
+{
+    for (auto & column : columns)
+    {
+        if (column)
+        {
+            column = column->filter(filter, -1);
+
+            if (column->empty())
+            {
+                columns.clear();
+                return;
+            }
+        }
+    }
 }
 
 MergeTreeSequentialSource::MergeTreeSequentialSource(
@@ -29,11 +47,22 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
     {
         /// Print column name but don't pollute logs in case of many columns.
         if (columns_to_read.size() == 1)
-            LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part, column {}",
-                data_part->getMarksCount(), data_part->name, data_part->rows_count, columns_to_read.front());
+        {
+            if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+                LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows effective {} rows starting from the beginning of the part, column {}",
+                    data_part->getMarksCount(), data_part->name, data_part->rows_count, data_part->effective_rows_count, columns_to_read.front());
+            else
+                LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part, column {}",
+                    data_part->getMarksCount(), data_part->name, data_part->rows_count, columns_to_read.front());
+
+        }
         else
-            LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part",
-                data_part->getMarksCount(), data_part->name, data_part->rows_count);
+            if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+                LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows effective {} rows starting from the beginning of the part",
+                    data_part->getMarksCount(), data_part->name, data_part->rows_count, data_part->effective_rows_count);
+            else
+                LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part",
+                    data_part->getMarksCount(), data_part->name, data_part->rows_count);
     }
 
     /// Note, that we don't check setting collaborate_with_coordinator presence, because this source
@@ -75,7 +104,7 @@ try
 {
     const auto & header = getPort().getHeader();
 
-    if (!isCancelled() && current_row < data_part->rows_count)
+    while (!isCancelled() && current_row < data_part->rows_count)
     {
         size_t rows_to_read = data_part->index_granularity.getMarkRows(current_mark);
         bool continue_reading = (current_mark != 0);
@@ -86,9 +115,6 @@ try
 
         if (rows_read)
         {
-            current_row += rows_read;
-            current_mark += (rows_to_read == rows_read);
-
             bool should_evaluate_missing_defaults = false;
             reader->fillMissingColumns(columns, should_evaluate_missing_defaults, rows_read);
 
@@ -98,6 +124,36 @@ try
             }
 
             reader->performRequiredConversions(columns);
+
+            size_t delete_size = 0;
+            if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+            {
+                // const auto delete_bitmap = const_cast<MergeTreeData::DataPart *>(data_part.get())->getUniqueDeleteBitmap();
+
+                if (unique_delete_bitmap && unique_delete_bitmap->deleteRowsSize())
+                {
+                    auto col_vec = ColumnUInt8::create(rows_read);
+                    auto & data = col_vec->getData();
+
+                    UInt8 * pos = data.data();
+
+                    for (size_t row = current_row; row < current_row + rows_read; ++row)
+                    {
+                        const auto & is_deleted = unique_delete_bitmap->isDeleted(row);
+                        if (is_deleted)
+                            delete_size++;
+                        *pos++ = !is_deleted;
+                    }
+
+                    filterColumns(columns, col_vec->getData());
+                }
+            }
+
+            current_row += rows_read;
+            current_mark += (rows_to_read == rows_read);
+
+            if (columns.empty())
+                continue;
 
             /// Reorder columns and fill result block.
             size_t num_columns = sample.size();
@@ -113,13 +169,11 @@ try
                 ++it;
             }
 
-            return Chunk(std::move(res_columns), rows_read);
+            return Chunk(std::move(res_columns), rows_read - delete_size);
         }
     }
-    else
-    {
-        finish();
-    }
+
+    finish();
 
     return {};
 }
@@ -139,6 +193,12 @@ void MergeTreeSequentialSource::finish()
      */
     reader.reset();
     data_part.reset();
+}
+
+void MergeTreeSequentialSource::setUniqueDeleteBitmap(UniqueDeleteBitmapPtr unique_delete_bitmap_)
+{
+    if (unique_delete_bitmap_)
+        unique_delete_bitmap = std::move(unique_delete_bitmap_);
 }
 
 MergeTreeSequentialSource::~MergeTreeSequentialSource() = default;

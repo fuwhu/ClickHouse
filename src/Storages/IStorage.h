@@ -576,6 +576,10 @@ public:
     /// Does takes underlying Storage (if any) into account.
     virtual std::optional<UInt64> totalRows(const Settings &) const { return {}; }
 
+    /// if engine = UniqueMergeTree or ReplicatedUniqueMergeTree totalEffectiveRows = totalRows - deleteRows,
+    /// otherwise totalEffectiveRows = totalRows.
+    virtual std::optional<UInt64> totalEffectiveRows(const Settings & settings) const { return totalRows(settings); }
+
     /// Same as above but also take partition predicate into account.
     virtual std::optional<UInt64> totalRowsByPartitionPredicate(const SelectQueryInfo &, ContextPtr) const { return {}; }
 

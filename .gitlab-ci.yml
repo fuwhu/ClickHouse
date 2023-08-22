@@ -98,7 +98,7 @@ functional_tests:
     - echo "clickhouse-server-ci restart end"
   script:
     - echo "functional_tests begin"
-    - ./tests/clickhouse-test create alter select drop group ttl --skip 00459_group_array_insert_at 01883_with_grouping_sets 01593_concurrent_alter_mutations_kill 01530_drop_database_atomic_sync 01181_db_atomic_drop_on_cluster 00754_alter_modify_order_by 02020_alter_table_modify_comment 02456_alter-nullable-column-bag-2 02262_column_ttl 02117_show_create_table_system
+    - ./tests/clickhouse-test create alter select drop group ttl 02471_storage_unique_engine --skip 00459_group_array_insert_at 01883_with_grouping_sets 01593_concurrent_alter_mutations_kill 01530_drop_database_atomic_sync 01181_db_atomic_drop_on_cluster 00754_alter_modify_order_by 02020_alter_table_modify_comment 02456_alter-nullable-column-bag-2 02262_column_ttl 02117_show_create_table_system
     - echo "functional_tests end"
   after_script:
     - echo "clickhouse-server-ci stop begin"
@@ -119,7 +119,7 @@ integration_tests:
     - dev-22
   script:
     - echo "integration_tests begin"
-    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config -ss'
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_repliacted_storage_unique_engine -ss'
     - echo "integration_tests end"
   dependencies:
     - build

@@ -28,7 +28,7 @@ MergedColumnOnlyOutputStream::MergedColumnOnlyOutputStream(
         global_settings,
         storage_settings,
         index_granularity_info ? index_granularity_info->is_adaptive : data_part->storage.canUseAdaptiveGranularity(),
-        /* rewrite_primary_key = */false);
+        /* rewrite_primary_key = */false, /* rewrite_unique_key = */false);
 
     writer = data_part->getWriter(
         header.getNamesAndTypesList(),

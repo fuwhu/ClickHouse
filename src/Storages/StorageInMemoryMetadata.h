@@ -37,6 +37,8 @@ struct StorageInMemoryMetadata
     /// ORDER BY expression. Required field for all MergeTree tables
     /// even in old syntax MergeTree(partition_key, order_by, ...)
     KeyDescription sorting_key;
+    /// UNIQUE KEY expression. Supported for UniqueMergeTree only.
+    KeyDescription unique_key;
     /// SAMPLE BY expression. Supported for MergeTree only.
     KeyDescription sampling_key;
     /// Separate ttl expressions for columns
@@ -83,6 +85,8 @@ struct StorageInMemoryMetadata
     void setSortingKey(const KeyDescription & sorting_key_);
     /// Set primary key for storage (methods below, are just wrappers for this struct).
     void setPrimaryKey(const KeyDescription & primary_key_);
+    /// Set unique key for storage (methods below, are just wrappers for this struct).
+    void setUniqueKey(const KeyDescription & unique_key_);
     /// Set sampling key for storage (methods below, are just wrappers for this struct).
     void setSamplingKey(const KeyDescription & sampling_key_);
 
@@ -189,6 +193,11 @@ struct StorageInMemoryMetadata
     /// Returns columns names in sorting key specified by user in ORDER BY
     /// expression. For example: 'a', 'x * y', 'toStartOfMonth(date)', etc.
     Names getSortingKeyColumns() const;
+
+    /// Returns structure with unique key.
+    const KeyDescription & getUniqueKey() const;
+    /// Storage has unique key. It means, that it contains at least one column for unique engine.
+    bool hasUniqueKey() const;
 
     /// Returns column names that need to be read for FINAL to work.
     Names getColumnsRequiredForFinal() const { return getColumnsRequiredForSortingKey(); }

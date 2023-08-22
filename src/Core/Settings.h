@@ -96,6 +96,10 @@ class IColumn;
     M(UInt64, background_message_broker_schedule_pool_size, 16, "Number of threads performing background tasks for message streaming. Only has meaning at server startup.", 0) \
     M(UInt64, background_distributed_schedule_pool_size, 16, "Number of threads performing background tasks for distributed sends. Only has meaning at server startup.", 0) \
     M(UInt64, max_replicated_fetches_network_bandwidth_for_server, 0, "The maximum speed of data exchange over the network in bytes per second for replicated fetches. Zero means unlimited. Only has meaning at server startup.", 0) \
+    M(UInt64, background_unique_engine_update_pool_size, 16, "Number of threads performing background tasks for unique engine tables to update existing data parts.", 0) \
+    M(UInt64, background_unique_engine_update_schedule_timeout, 10, "Timeout of scheduling unique engine data updating task, unit is second.", 0) \
+    M(UInt64, background_unique_engine_load_pool_size, 16, "Number of threads performing background tasks for unique engine tables to load unique key buckets.", 0) \
+    M(UInt64, background_unique_engine_load_schedule_timeout, 10, "Timeout of scheduling unique engine unique key buckets loading task, unit is second.", 0) \
     M(UInt64, max_replicated_sends_network_bandwidth_for_server, 0, "The maximum speed of data exchange over the network in bytes per second for replicated sends. Zero means unlimited. Only has meaning at server startup.", 0) \
     M(Bool, stream_like_engine_allow_direct_select, false, "Allow direct SELECT query for Kafka, RabbitMQ and FileLog engines. In case there are attached materialized views, SELECT query is not allowed even if this setting is enabled.", 0) \
     M(UInt64, max_parts_receives_network_bandwidth_for_server, 0, "The maximum speed of data parts receives over the network in bytes per second. Zero means unlimited. Only has meaning at server startup.", 0) \

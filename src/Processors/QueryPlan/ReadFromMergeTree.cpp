@@ -593,6 +593,10 @@ static void addMergingFinal(
             case MergeTreeData::MergingParams::Graphite:
                 return std::make_shared<GraphiteRollupSortedTransform>(header, num_outputs,
                             sort_description, max_block_size, merging_params.graphite_params, now);
+
+            case MergeTreeData::MergingParams::Unique:
+                return std::make_shared<MergingSortedTransform>(header, num_outputs,
+                            sort_description, max_block_size);
         }
 
         __builtin_unreachable();

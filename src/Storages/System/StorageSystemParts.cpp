@@ -83,6 +83,10 @@ StorageSystemParts::StorageSystemParts(const StorageID & table_id_)
         {"implicit_columns",                            std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
 
         {"projections",                                 std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
+
+        {"effective_rows",                              std::make_shared<DataTypeUInt64>()},
+        {"merge_update_status",                         std::make_shared<DataTypeString>()},
+        {"commit_type",                                 std::make_shared<DataTypeString>()},
     }
     )
 {
@@ -283,6 +287,15 @@ void StorageSystemParts::processNextStorage(
 
         if (columns_mask[src_index++])
             columns[res_index++]->insert(projections);
+
+        if (columns_mask[src_index++])
+            columns[res_index++]->insert(part->effective_rows_count);
+
+        if (columns_mask[src_index++])
+            columns[res_index++]->insert(part->getMergeUpdateStatusName());
+
+        if (columns_mask[src_index++])
+            columns[res_index++]->insert(part->getCommitTypeName());
 
         /// _state column should be the latest.
         /// Do not use part->getState*, it can be changed from different thread

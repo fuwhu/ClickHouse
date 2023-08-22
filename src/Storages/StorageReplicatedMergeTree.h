@@ -116,6 +116,7 @@ public:
         unsigned num_streams) override;
 
     std::optional<UInt64> totalRows(const Settings & settings) const override;
+    std::optional<UInt64> totalEffectiveRows(const Settings & settings) const override;
     std::optional<UInt64> totalRowsByPartitionPredicate(const SelectQueryInfo & query_info, ContextPtr context) const override;
     std::optional<UInt64> totalBytes(const Settings & settings) const override;
 
@@ -625,7 +626,8 @@ private:
         const String & replica_path,
         bool to_detached,
         size_t quorum,
-        zkutil::ZooKeeper::Ptr zookeeper_ = nullptr);
+        zkutil::ZooKeeper::Ptr zookeeper_ = nullptr,
+        bool fetch_merged = false);
 
     /** Download the specified part from the specified replica.
       * Used for replace local part on the same s3-shared part in hybrid storage.

@@ -36,6 +36,8 @@
 #include <boost/multi_index/global_fun.hpp>
 #include <boost/range/iterator_range_core.hpp>
 
+#include <memory>
+#include <mutex>
 
 namespace DB
 {
@@ -219,7 +221,9 @@ public:
     using DataPartsVector = std::vector<DataPartPtr>;
 
     using DataPartsLock = std::unique_lock<std::mutex>;
+    using UniqueEngineWriteLock = std::unique_lock<std::mutex>;
     DataPartsLock lockParts() const { return DataPartsLock(data_parts_mutex); }
+    UniqueEngineWriteLock lockUniqueEngineForWrite() const { return UniqueEngineWriteLock(unique_engine_write_mutex); }
 
     MergeTreeDataPartType choosePartType(size_t bytes_uncompressed, size_t rows_count) const;
     MergeTreeDataPartType choosePartTypeOnDisk(size_t bytes_uncompressed, size_t rows_count) const;
@@ -236,6 +240,91 @@ public:
 
     MutableDataPartPtr createPart(const String & name, const MergeTreePartInfo & part_info,
         const VolumePtr & volume, const String & relative_path, const IMergeTreeDataPart * parent_part = nullptr) const;
+
+    bool changePartMergeUpdateStatus(
+        DataPartPtr part, IMergeTreeDataPart::MergeUpdateStatus from, IMergeTreeDataPart::MergeUpdateStatus to) const;
+
+    /// Responsible for wrapping and writing all the data specific for Unique Engine table,
+    /// including delete bitmap, unique key index, etc.
+    /// Generated for each data part of Unique Engine table being written.
+    class UniqueEngineDataWriter
+    {
+    public:
+        constexpr static auto TEMP_DIR_SUFFIX = "_uniq_tmp";
+        constexpr static auto TEMP_MERGING_MOVING_DIR_SUFFIX = "_uniq_merging_moving_tmp";
+        constexpr static auto MERGING_MOVING_DIR_SUFFIX = "_uniq_merging_moving";
+        constexpr static auto DELETED_KEYS_FILE_NAME = "deletekeyversion";
+
+        using ActiveDataPartPtrs = std::vector<MutableDataPartPtr>;
+        using PartToWriteLock = std::unique_lock<std::mutex>;
+        explicit UniqueEngineDataWriter(MutableDataPartPtr & data_part)
+            : part_to_write(data_part)
+            , storage(const_cast<MergeTreeData &>(data_part->storage))
+            , pool(storage.getSettings()->unique_key_update_parallelism)
+        {
+            if (storage.getSettings()->enable_unique_key_bucket && data_part->commit_type != IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
+                loading_bucket_pool = std::make_shared<ThreadPool>(storage.getSettings()->unique_key_bucket_load_parallelism);
+        }
+        void prepare();
+        void commit();
+        void clearTempDirs();
+        ~UniqueEngineDataWriter();
+        void scheduleDedupTask(
+            UniqueEngineDataWriter * uniq_engine_writer,
+            const ActiveDataPartPtrs & data_parts,
+            const UniqueKeyIndexPtr & current_key_index,
+            const UniqueDeleteBitmapPtr & current_delete_bitmap,
+            size_t begin,
+            size_t end);
+
+    private:
+        friend class MergeTreeData;
+
+        void prepareForNewPart(bool is_merge_by_fetch = false);
+        void prepareForMergeResultPart();
+        void prepareForMoveResultPart();
+        void prepareForMergeByFetchPart();
+        void enrollDataPart(const MutableDataPartPtr & data_part, DeletedKeysPtr deleted_keys = nullptr);
+        void flushToTempFiles(const MutableDataPartPtr & data_part);
+        void flushToTempFiles(const MutableDataPartPtr & data_part, const DeletedKeysPtr & deleted_keys);
+        void executeParallelDedupByPart(
+            const ActiveDataPartPtrs & data_parts,
+            const UniqueKeyIndexPtr & current_key_index,
+            const UniqueDeleteBitmapPtr & current_delete_bitmap);
+        void runParallelDedupByKey();
+        void dedupFunctionByPart(
+            const ActiveDataPartPtrs & data_parts,
+            const UniqueKeyIndexPtr & current_key_index,
+            const UniqueDeleteBitmapPtr & current_delete_bitmap,
+            size_t begin,
+            size_t end);
+        void dedupFunctionBykey();
+        PartToWriteLock lockPartToWrite() const { return PartToWriteLock(part_to_write_mutex); }
+
+        MutableDataPartPtr & part_to_write;
+        MergeTreeData & storage;
+
+        std::shared_mutex unique_delete_bitmap_map_rw_lock;
+        std::map<MutableDataPartPtr, UniqueDeleteBitmapPtr> unique_delete_bitmap_map;
+
+        bool containDeleteBitmap(const MutableDataPartPtr & part_);
+        UniqueDeleteBitmapPtr & getDeleteBitmap(const MutableDataPartPtr & part_);
+        void addDeleteBitmap(const MutableDataPartPtr & part_);
+
+        std::shared_mutex unique_deleted_keys_map_rw_lock;
+        std::map<MutableDataPartPtr, DeletedKeysPtr> unique_deleted_keys_map;
+
+        bool containDeletedKeys(const MutableDataPartPtr & part_);
+        void addDeletedKeys(const MutableDataPartPtr & part_, const DeletedKeysPtr & deleted_keys_);
+
+        bool has_temp_dir = false;
+        mutable std::mutex part_to_write_mutex;
+        ThreadPool pool;
+        LoadingBucketPoolPtr loading_bucket_pool;
+    };
+
+    using UniqueEngineDataWriterPtr = std::shared_ptr<UniqueEngineDataWriter>;
+    using UniqueEngineDataWriters = std::map<String, UniqueEngineDataWriterPtr>;
 
     /// Auxiliary object to add a set of parts into the working set in two steps:
     /// * First, as PreActive parts (the parts are ready, but not yet in the active set).
@@ -258,6 +347,8 @@ public:
         size_t size() const { return precommitted_parts.size(); }
         bool isEmpty() const { return precommitted_parts.empty(); }
 
+        void enrollDataPart(MutableDataPartPtr & part);
+
         ~Transaction()
         {
             try
@@ -275,8 +366,10 @@ public:
 
         MergeTreeData & data;
         DataParts precommitted_parts;
+        UniqueEngineDataWriters unique_engine_data_writers;
 
         void clear() { precommitted_parts.clear(); }
+        void prepareForUniqueEngineWrite();
     };
 
     using TransactionUniquePtr = std::unique_ptr<Transaction>;
@@ -329,6 +422,7 @@ public:
             Replacing           = 5,
             Graphite            = 6,
             VersionedCollapsing = 7,
+            Unique              = 8,
         };
 
         Mode mode;
@@ -539,7 +633,8 @@ public:
         DataPartsLock & lock,
         DataPartsVector * out_covered_parts = nullptr,
         MergeTreeDeduplicationLog * deduplication_log = nullptr,
-        std::string_view deduplication_token = std::string_view());
+        std::string_view deduplication_token = std::string_view(),
+        UniqueEngineDataWriterPtr uniq_engine_data_writer = nullptr);
 
     /// Remove parts from working set immediately (without wait for background
     /// process). Transfer part state to temporary. Have very limited usage only
@@ -854,6 +949,7 @@ public:
 
     ExpressionActionsPtr getPrimaryKeyAndSkipIndicesExpression(const StorageMetadataPtr & metadata_snapshot) const;
     ExpressionActionsPtr getSortingKeyAndSkipIndicesExpression(const StorageMetadataPtr & metadata_snapshot) const;
+    ExpressionActionsPtr getUniqueKeyExpression(const StorageMetadataPtr & metadata_snapshot) const;
 
     /// Get compression codec for part according to TTL rules and <compression>
     /// section from config.xml.
@@ -1005,6 +1101,8 @@ protected:
 
     /// Current set of data parts.
     mutable std::mutex data_parts_mutex;
+    /// Lock for writing data to unique engine table, including merged data part.
+    mutable std::mutex unique_engine_write_mutex;
     DataPartsIndexes data_parts_indexes;
     DataPartsIndexes::index<TagByInfo>::type & data_parts_by_info;
     DataPartsIndexes::index<TagByStateAndInfo>::type & data_parts_by_state_and_info;

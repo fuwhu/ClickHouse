@@ -290,10 +290,64 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
 
     MergeTreeData::DataPartsVector parts;
     parts.reserve(parts_to_merge.size());
-    for (IMergeSelector::Part & part_info : parts_to_merge)
+
+    /// add restrict range, cas change part merge update status only for unique engine, avoid affecting other engines.
+    if (data.merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
-        const MergeTreeData::DataPartPtr & part = *static_cast<const MergeTreeData::DataPartPtr *>(part_info.data);
-        parts.push_back(part);
+        for (IMergeSelector::Part & part_info : parts_to_merge)
+        {
+            const MergeTreeData::DataPartPtr & part = *static_cast<const MergeTreeData::DataPartPtr *>(part_info.data);
+
+            if (IMergeTreeDataPart::MERGING == part->merge_update_status.load())
+            {
+                LOG_WARNING(
+                    log,
+                    "the merge_update_status of part {} is already MERGING, this may be caused by the failure of last merge.",
+                    part->name);
+                parts.push_back(part);
+            }
+            else
+            {
+                if (data.changePartMergeUpdateStatus(part, IMergeTreeDataPart::NORMAL, IMergeTreeDataPart::MERGING))
+                    parts.push_back(part);
+                else
+                {
+                    LOG_DEBUG(
+                        log,
+                        "Since the part {} is being updated, the parts to merge is reduced from {} to {}",
+                        part->name,
+                        parts_to_merge.size(),
+                        parts.size());
+                    break;
+                }
+            }
+        }
+
+        if (parts.empty())
+        {
+            LOG_DEBUG(log, "no part to merge");
+
+            if (out_disable_reason)
+                *out_disable_reason = "There is no need to merge parts, some selected data part are being updated or merged.";
+
+            return SelectPartsDecision::CANNOT_SELECT;
+        }
+
+        if (parts.size() == 1 && future_part->merge_type == MergeType::REGULAR)
+        {
+            /// rollback merge_update_status of part
+            data.changePartMergeUpdateStatus(parts[0], IMergeTreeDataPart::MERGING, IMergeTreeDataPart::NORMAL);
+
+            throw Exception("Logical error: regular merge selector returned only one part that can be merged.", ErrorCodes::LOGICAL_ERROR);
+        }
+    }
+    else
+    {
+        for (IMergeSelector::Part & part_info : parts_to_merge)
+        {
+            const MergeTreeData::DataPartPtr & part = *static_cast<const MergeTreeData::DataPartPtr *>(part_info.data);
+            parts.push_back(part);
+        }
     }
 
     LOG_DEBUG(log, "Selected {} parts from {} to {}", parts.size(), parts.front()->name, parts.back()->name);

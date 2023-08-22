@@ -110,9 +110,15 @@ protected:
     /// require additional state: skip_indices_aggregators and skip_index_accumulated_marks
     void calculateAndSerializeSkipIndices(const Block & skip_indexes_block, const Granules & granules_to_write);
 
+    // Update and write unique map , unique index, deleted bitmap to disk
+    void calculateUniqueData(const Block & unique_key_version_block, const Granules & granules_to_write);
+
     /// Finishes primary index serialization: write final primary index row (if required) and compute checksums
     void fillPrimaryIndexChecksums(MergeTreeData::DataPart::Checksums & checksums);
     void finishPrimaryIndexSerialization(bool sync);
+    /// Finishes unique data serialization: write all accumulated data to disk and compute checksums
+    void fillUniqueDataChecksums(MergeTreeData::DataPart::Checksums & checksums);
+    void finishUniqueDataSerialization(bool sync);
     /// Finishes skip indices serialization: write all accumulated data to disk and compute checksums
     void fillSkipIndicesChecksums(MergeTreeData::DataPart::Checksums & checksums);
     void finishSkipIndicesSerialization(bool sync);
@@ -132,6 +138,19 @@ protected:
     const CompressionCodecPtr default_codec;
 
     const bool compute_granularity;
+
+    UniqueKeyIndexPtr unique_key_index;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
+    UniqueKeyBucketIndexPtr unique_key_bucket_index;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
+
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_index_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_bucket_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_bucket_index_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_minmax_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_minmax_index_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_delete_bitmap_file_stream;
 
     std::vector<StreamPtr> skip_indices_streams;
     MergeTreeIndexAggregators skip_indices_aggregators;
@@ -155,6 +174,7 @@ protected:
 private:
     void initSkipIndices();
     void initPrimaryIndex();
+    void initUniqueIndex();
 
     virtual void fillIndexGranularity(size_t index_granularity_for_block, size_t rows_in_block) = 0;
 };

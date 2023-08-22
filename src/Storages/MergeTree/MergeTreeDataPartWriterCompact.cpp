@@ -180,6 +180,22 @@ void MergeTreeDataPartWriterCompact::writeDataBlockPrimaryIndexAndSkipIndices(co
 
     Block skip_indices_block = getBlockAndPermute(block, getSkipIndicesColumns(), nullptr);
     calculateAndSerializeSkipIndices(skip_indices_block, granules_to_write);
+
+    // Update for UniqEngine
+    if (data_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        // We need to checkou primary keys while creating table
+        // To make sure we only have one primary key
+        Names unique_key_version_names;
+        const auto & unique_key_names = metadata_snapshot->unique_key.column_names;
+        unique_key_version_names.insert(unique_key_version_names.end(), unique_key_names.begin(), unique_key_names.end());
+
+        const auto & version_name = data_part->storage.merging_params.version_column;
+        unique_key_version_names.emplace_back(version_name);
+
+        Block unique_key_version_block = getBlockAndPermute(block, unique_key_version_names, nullptr);
+        calculateUniqueData(unique_key_version_block, granules_to_write);
+    }
 }
 
 void MergeTreeDataPartWriterCompact::writeDataBlock(const Block & block, const Granules & granules)
@@ -383,6 +399,9 @@ void MergeTreeDataPartWriterCompact::fillChecksums(IMergeTreeDataPart::Checksums
     if (settings.rewrite_primary_key)
         fillPrimaryIndexChecksums(checksums);
 
+    if (settings.rewrite_unique_key)
+        fillUniqueDataChecksums(checksums);
+
     fillSkipIndicesChecksums(checksums);
 }
 
@@ -394,6 +413,9 @@ void MergeTreeDataPartWriterCompact::finish(bool sync)
 
     if (settings.rewrite_primary_key)
         finishPrimaryIndexSerialization(sync);
+
+    if (settings.rewrite_unique_key)
+        finishUniqueDataSerialization(sync);
 
     finishSkipIndicesSerialization(sync);
 }
