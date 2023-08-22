@@ -42,6 +42,7 @@ namespace ErrorCodes
 static void extractMergingAndGatheringColumns(
     const NamesAndTypesList & storage_columns,
     const ExpressionActionsPtr & sorting_key_expr,
+    const ExpressionActionsPtr & unique_key_expr,
     const IndicesDescription & indexes,
     const MergeTreeData::MergingParams & merging_params,
     NamesAndTypesList & gathering_columns, Names & gathering_column_names,
@@ -67,6 +68,15 @@ static void extractMergingAndGatheringColumns(
     /// Force sign column for VersionedCollapsing mode. Version is already in primary key.
     if (merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing)
         key_columns.emplace(merging_params.sign_column);
+
+    /// Force unique key and version column for Unique mode
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        Names unique_key_columns_vec = unique_key_expr->getRequiredColumns();
+        std::copy(unique_key_columns_vec.cbegin(), unique_key_columns_vec.cend(),
+                  std::inserter(key_columns, key_columns.end()));
+        key_columns.emplace(merging_params.version_column);
+    }
 
     /// Force to merge at least one column in case of empty key
     if (key_columns.empty())
@@ -187,6 +197,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
     extractMergingAndGatheringColumns(
         global_ctx->storage_columns,
         global_ctx->metadata_snapshot->getSortingKey().expression,
+        global_ctx->metadata_snapshot->getUniqueKey().expression,
         global_ctx->metadata_snapshot->getSecondaryIndices(),
         ctx->merging_params,
         global_ctx->gathering_columns,
@@ -204,6 +215,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
         local_tmp_part_basename,
         global_ctx->parent_part);
 
+    global_ctx->new_data_part->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MERGE;
     global_ctx->new_data_part->uuid = global_ctx->future_part->uuid;
     global_ctx->new_data_part->partition.assign(global_ctx->future_part->getPartition());
     global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr;
@@ -218,9 +230,15 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
     };
 
     SerializationInfoByName infos(global_ctx->storage_columns, info_settings);
-
+    size_t total_effective_rows_count = 0;
     for (const auto & part : global_ctx->future_part->parts)
     {
+        if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+        {
+            total_effective_rows_count += part->effective_rows_count;
+            global_ctx->new_data_part->merge_source_parts.emplace_back(part);
+        }
+
         global_ctx->new_data_part->ttl_infos.update(part->ttl_infos);
         if (global_ctx->metadata_snapshot->hasAnyTTL() && !part->checkAllTTLCalculated(global_ctx->metadata_snapshot))
         {
@@ -232,6 +250,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
         infos.add(part->getSerializationInfos());
     }
 
+    global_ctx->new_data_part->rows_count = total_effective_rows_count;
     global_ctx->new_data_part->setColumns(global_ctx->storage_columns);
     global_ctx->new_data_part->setImplicitColumns(implicit_columns_maps);
     global_ctx->new_data_part->setSerializationInfos(infos);
@@ -330,7 +349,8 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare()
 MergeTask::StageRuntimeContextPtr MergeTask::ExecuteAndFinalizeHorizontalPart::getContextForNextStage()
 {
     auto new_ctx = std::make_shared<VerticalMergeRuntimeContext>();
-
+    
+    new_ctx->merging_params = std::move(ctx->merging_params);
     new_ctx->rows_sources_write_buf = std::move(ctx->rows_sources_write_buf);
     new_ctx->rows_sources_uncompressed_write_buf = std::move(ctx->rows_sources_uncompressed_write_buf);
     new_ctx->rows_sources_file = std::move(ctx->rows_sources_file);
@@ -466,6 +486,9 @@ void MergeTask::VerticalMergeStage::prepareVerticalMergeForOneColumn() const
     {
         auto column_part_source = std::make_shared<MergeTreeSequentialSource>(
             *global_ctx->data, global_ctx->storage_snapshot, global_ctx->future_part->parts[part_num], column_names, ctx->read_with_direct_io, true);
+
+        if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+            column_part_source->setUniqueDeleteBitmap(global_ctx->future_part->unique_delete_bitmaps[part_num]);
 
         /// Dereference unique_ptr
         column_part_source->setProgressCallback(
@@ -835,10 +858,13 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
         global_ctx->new_data_part->dict_store = std::move(new_part_dict_store);
     }
 
-    for (const auto & part : global_ctx->future_part->parts)
+    for (size_t part_num = 0; part_num < global_ctx->future_part->parts.size(); ++part_num)
     {
         auto input = std::make_unique<MergeTreeSequentialSource>(
-            *global_ctx->data, global_ctx->storage_snapshot, part, global_ctx->merging_column_names, ctx->read_with_direct_io, true);
+            *global_ctx->data, global_ctx->storage_snapshot, global_ctx->future_part->parts[part_num], global_ctx->merging_column_names, ctx->read_with_direct_io, true);
+
+        if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+            input->setUniqueDeleteBitmap(global_ctx->future_part->unique_delete_bitmaps[part_num]);
 
         /// Dereference unique_ptr and pass horizontal_stage_progress by reference
         input->setProgressCallback(
@@ -939,6 +965,11 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
                 header, pipes.size(), sort_description, ctx->merging_params.sign_column,
                 merge_block_size, ctx->rows_sources_write_buf.get(), ctx->blocks_are_granules_size);
             break;
+
+        case MergeTreeData::MergingParams::Unique:
+            merged_transform = std::make_shared<MergingSortedTransform>(
+                header, pipes.size(), sort_description, merge_block_size, 0, ctx->rows_sources_write_buf.get(), true, ctx->blocks_are_granules_size);
+            break;
     }
 
     auto res_pipe = Pipe::unitePipes(std::move(pipes));
@@ -960,6 +991,12 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
             global_ctx->data->getContext()), true, global_ctx->metadata_snapshot));
         res_pipe.addTransform(std::make_shared<MaterializingTransform>(res_pipe.getHeader()));
     }
+
+     if (global_ctx->metadata_snapshot->hasUniqueKey())
+     {
+          res_pipe.addTransform(std::make_shared<ExpressionTransform>(
+            res_pipe.getHeader(), global_ctx->data->getUniqueKeyExpression(global_ctx->metadata_snapshot)));
+     }
 
     global_ctx->merged_pipeline = QueryPipeline(std::move(res_pipe));
     global_ctx->merging_executor = std::make_unique<PullingPipelineExecutor>(global_ctx->merged_pipeline);
@@ -986,7 +1023,8 @@ MergeAlgorithm MergeTask::ExecuteAndFinalizeHorizontalPart::chooseMergeAlgorithm
         ctx->merging_params.mode == MergeTreeData::MergingParams::Ordinary ||
         ctx->merging_params.mode == MergeTreeData::MergingParams::Collapsing ||
         ctx->merging_params.mode == MergeTreeData::MergingParams::Replacing ||
-        ctx->merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing;
+        ctx->merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing ||
+        ctx->merging_params.mode == MergeTreeData::MergingParams::Unique;
 
     bool enough_ordinary_cols = global_ctx->gathering_columns.size() >= data_settings->vertical_merge_algorithm_min_columns_to_activate;
 

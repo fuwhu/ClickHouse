@@ -97,6 +97,8 @@ namespace ProfileEvents
 namespace CurrentMetrics
 {
     extern const Metric DelayedInserts;
+    extern const Metric BackgroundMovePoolTask;
+    extern const Metric BackgroundUniqueEngineUpdateTask;
 }
 
 
@@ -575,6 +577,12 @@ ExpressionActionsPtr MergeTreeData::getSortingKeyAndSkipIndicesExpression(const 
     return getCombinedIndicesExpression(metadata_snapshot->getSortingKey(), metadata_snapshot->getSecondaryIndices(), metadata_snapshot->getColumns(), getContext());
 }
 
+ExpressionActionsPtr MergeTreeData::getUniqueKeyExpression(const StorageMetadataPtr & metadata_snapshot) const
+{
+    ASTPtr expr_list = metadata_snapshot->getUniqueKey().expression_list_ast->clone();
+    auto syntax_result = TreeRewriter(getContext()).analyze(expr_list, metadata_snapshot->getColumns().getAllPhysical());
+    return ExpressionAnalyzer(expr_list, syntax_result, getContext()).getActions(false);
+}
 
 void MergeTreeData::checkPartitionKeyAndInitMinMax(const KeyDescription & new_partition_key)
 {
@@ -690,8 +698,8 @@ void MergeTreeData::MergingParams::check(const StorageInMemoryMetadata & metadat
         throw Exception("Sign column for MergeTree cannot be specified in modes except Collapsing or VersionedCollapsing.",
                         ErrorCodes::LOGICAL_ERROR);
 
-    if (!version_column.empty() && mode != MergingParams::Replacing && mode != MergingParams::VersionedCollapsing)
-        throw Exception("Version column for MergeTree cannot be specified in modes except Replacing or VersionedCollapsing.",
+    if (!version_column.empty() && mode != MergingParams::Replacing && mode != MergingParams::VersionedCollapsing && mode != MergingParams::Unique)
+        throw Exception("Version column for MergeTree cannot be specified in modes except Replacing or VersionedCollapsing or Unique.",
                         ErrorCodes::LOGICAL_ERROR);
 
     if (!columns_to_sum.empty() && mode != MergingParams::Summing)
@@ -796,6 +804,9 @@ void MergeTreeData::MergingParams::check(const StorageInMemoryMetadata & metadat
         check_version_column(false, "VersionedCollapsingMergeTree");
     }
 
+    if (mode == MergingParams::Unique)
+        check_version_column(true, "UniqueMergeTree");
+
     /// TODO Checks for Graphite mode.
 }
 
@@ -892,11 +903,23 @@ std::optional<UInt64> MergeTreeData::totalRowsByPartitionPredicateImpl(
     // At this point, empty `part_values` means all parts.
 
     size_t res = 0;
-    for (const auto & part : parts)
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
-        if ((part_values.empty() || part_values.find(part->name) != part_values.end()) && !partition_pruner.canBePruned(*part))
-            res += part->rows_count;
+        for (const auto & part : parts)
+        {
+            if ((part_values.empty() || part_values.find(part->name) != part_values.end()) && !partition_pruner.canBePruned(*part))
+                res += part->effective_rows_count;
+        }
     }
+    else
+    {
+        for (const auto & part : parts)
+        {
+            if ((part_values.empty() || part_values.find(part->name) != part_values.end()) && !partition_pruner.canBePruned(*part))
+                res += part->rows_count;
+        }
+    }
+
     return res;
 }
 
@@ -912,6 +935,7 @@ String MergeTreeData::MergingParams::getModeName() const
         case Replacing:     return "Replacing";
         case Graphite:      return "Graphite";
         case VersionedCollapsing: return "VersionedCollapsing";
+        case Unique:        return "Unique";
     }
 
     __builtin_unreachable();
@@ -1708,10 +1732,21 @@ size_t MergeTreeData::clearEmptyParts()
     auto parts = getDataPartsVector();
     for (const auto & part : parts)
     {
-        if (part->rows_count == 0)
+        if (merging_params.mode == MergingParams::Unique)
         {
-            dropPartNoWaitNoThrow(part->name);
-            ++cleared_count;
+            if (part->effective_rows_count == 0)
+            {
+                dropPartNoWaitNoThrow(part->name);
+                ++cleared_count;
+            }
+        }
+        else
+        {
+            if (part->rows_count == 0)
+            {
+                dropPartNoWaitNoThrow(part->name);
+                ++cleared_count;
+            }
         }
     }
     return cleared_count;
@@ -2312,6 +2347,29 @@ MergeTreeData::MutableDataPartPtr MergeTreeData::createPart(
     return createPart(name, type, part_info, volume, relative_path, parent_part);
 }
 
+bool MergeTreeData::changePartMergeUpdateStatus(
+    DataPartPtr cas_part, IMergeTreeDataPart::MergeUpdateStatus from, IMergeTreeDataPart::MergeUpdateStatus to) const
+{
+    LOG_DEBUG(log, "Changing merge_update_status of part {} change from {} to {}.", cas_part->name, from, to);
+
+    if (const_cast<IMergeTreeDataPart *>(cas_part.get())->merge_update_status.compare_exchange_strong(from, to))
+    {
+        LOG_DEBUG(log, "Finished changing merge_update_status of part {} from {} to {}.", cas_part->name, from, to);
+        return true;
+    }
+    else
+    {
+        LOG_DEBUG(
+            log,
+            "Failed changing merge_update_status of part {} merge_update_status {} from {} to {}.",
+            cas_part->name,
+            cas_part->merge_update_status,
+            from,
+            to);
+        return false;
+    }
+}
+
 void MergeTreeData::changeSettings(
         const ASTPtr & new_settings,
         AlterLockHolder & /* table_lock_holder */)
@@ -2506,8 +2564,17 @@ bool MergeTreeData::renameTempPartAndAdd(
 
     DataPartsVector covered_parts;
     {
+        UniqueEngineDataWriterPtr uniq_engine_data_writer;
+        UniqueEngineWriteLock uniq_engine_write_lock;
+        if (merging_params.mode == MergingParams::Unique && !out_transaction)
+        {
+            /// TODO :: check if the part is covered/covering existing active data parts for non-replicated unique engine table as well.?
+            uniq_engine_write_lock = lockUniqueEngineForWrite();
+            uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
+            uniq_engine_data_writer->prepare();
+        }
         auto lock = lockParts();
-        if (!renameTempPartAndReplace(part, increment, out_transaction, lock, &covered_parts, deduplication_log, deduplication_token))
+        if (!renameTempPartAndReplace(part, increment, out_transaction, lock, &covered_parts, deduplication_log, deduplication_token, uniq_engine_data_writer))
             return false;
     }
     if (!covered_parts.empty())
@@ -2525,7 +2592,8 @@ bool MergeTreeData::renameTempPartAndReplace(
     std::unique_lock<std::mutex> & lock,
     DataPartsVector * out_covered_parts,
     MergeTreeDeduplicationLog * deduplication_log,
-    std::string_view deduplication_token)
+    std::string_view deduplication_token,
+    UniqueEngineDataWriterPtr uniq_engine_data_writer)
 {
     if (out_transaction && &out_transaction->data != this)
         throw Exception("MergeTreeData::Transaction for one table cannot be used with another. It is a bug.",
@@ -2612,7 +2680,7 @@ bool MergeTreeData::renameTempPartAndReplace(
 
     if (out_transaction)
     {
-        out_transaction->precommitted_parts.insert(part);
+        out_transaction->enrollDataPart(part);
     }
     else
     {
@@ -2620,6 +2688,13 @@ bool MergeTreeData::renameTempPartAndReplace(
         size_t reduce_rows = 0;
         size_t reduce_parts = 0;
         auto current_time = time(nullptr);
+
+        if (uniq_engine_data_writer)
+        {
+            uniq_engine_data_writer->commit();
+            uniq_engine_data_writer->clearTempDirs();
+        }
+
         for (const DataPartPtr & covered_part : covered_parts)
         {
             covered_part->remove_time.store(current_time, std::memory_order_relaxed);
@@ -2672,8 +2747,18 @@ MergeTreeData::DataPartsVector MergeTreeData::renameTempPartAndReplace(
 
     DataPartsVector covered_parts;
     {
+        UniqueEngineDataWriterPtr uniq_engine_data_writer;
+        UniqueEngineWriteLock uniq_engine_write_lock;
+        if (merging_params.mode == MergingParams::Unique && !out_transaction)
+        {
+            /// TODO :: check if the part is covered/covering existing active data parts for non-replicated unique engine table as well.?
+            uniq_engine_write_lock = lockUniqueEngineForWrite();
+            uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
+            uniq_engine_data_writer->prepare();
+        }
         auto lock = lockParts();
-        renameTempPartAndReplace(part, increment, out_transaction, lock, &covered_parts, deduplication_log);
+        renameTempPartAndReplace(part, increment, out_transaction, lock, &covered_parts, deduplication_log, std::string_view(), uniq_engine_data_writer);
+
     }
     return covered_parts;
 }
@@ -3208,6 +3293,17 @@ MergeTreeData::DataPartPtr MergeTreeData::getActiveContainingPart(
 
 void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy)
 {
+    UniqueEngineDataWriterPtr uniq_engine_data_writer;
+    UniqueEngineWriteLock uniq_engine_write_lock;
+    if (merging_params.mode == MergingParams::Unique)
+    {
+        MutableDataPartPtr mu_part_copy = const_pointer_cast<DataPart>(part_copy);
+        mu_part_copy->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MOVE;
+        uniq_engine_write_lock = lockUniqueEngineForWrite();
+        uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(mu_part_copy);
+        uniq_engine_data_writer->prepare();
+    }
+
     auto lock = lockParts();
     for (auto original_active_part : getDataPartsStateRange(DataPartState::Active)) // NOLINT (copy is intended)
     {
@@ -3228,6 +3324,12 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy)
             {
                 /// May be when several volumes use the same S3/HDFS storage
                 original_active_part->force_keep_shared_data = true;
+            }
+
+            if (uniq_engine_data_writer)
+            {
+                uniq_engine_data_writer->commit();
+                uniq_engine_data_writer->clearTempDirs();
             }
 
             modifyPartState(original_active_part, DataPartState::DeleteOnDestroy);
@@ -4393,12 +4495,38 @@ void MergeTreeData::Transaction::rollback()
     clear();
 }
 
+void MergeTreeData::Transaction::prepareForUniqueEngineWrite()
+{
+    for (const auto & pair : unique_engine_data_writers)
+    {
+        const auto & uniq_engine_data_writer = pair.second;
+        const auto & uniq_engine_write_part = uniq_engine_data_writer->part_to_write;
+
+        auto parts_lock = MergeTreeData::DataPartsLock();
+        DataPartPtr covering_part;
+        DataPartsVector covered_parts
+            = data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, parts_lock);
+        if (covering_part)
+            continue;
+        else
+            uniq_engine_data_writer->prepare();
+    }
+}
+
 MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData::DataPartsLock * acquired_parts_lock)
 {
     DataPartsVector total_covered_parts;
 
     if (!isEmpty())
     {
+        UniqueEngineWriteLock uniq_engine_write_lock;
+        if (data.merging_params.mode == MergingParams::Unique)
+        {
+            /// TODO :: make sure the `MergeTreeData::unique_engine_write_mutex` can block drop_part/drop_partition operators as well.
+            uniq_engine_write_lock = data.lockUniqueEngineForWrite();
+            prepareForUniqueEngineWrite();
+        }
+
         auto parts_lock = acquired_parts_lock ? MergeTreeData::DataPartsLock() : data.lockParts();
         auto * owing_parts_lock = acquired_parts_lock ? acquired_parts_lock : &parts_lock;
 
@@ -4426,6 +4554,17 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
             else
             {
                 total_covered_parts.insert(total_covered_parts.end(), covered_parts.begin(), covered_parts.end());
+
+                if (data.merging_params.mode == MergingParams::Unique)
+                {
+                    for (const auto & pair : unique_engine_data_writers)
+                    {
+                        const auto & uniq_engine_data_writer = pair.second;
+                        uniq_engine_data_writer->commit();
+                        uniq_engine_data_writer->clearTempDirs();
+                    }
+                }
+
                 for (const auto & covered_part : covered_parts)
                 {
                     covered_part->remove_time.store(current_time, std::memory_order_relaxed);
@@ -4465,6 +4604,16 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
     clear();
 
     return total_covered_parts;
+}
+
+void MergeTreeData::Transaction::enrollDataPart(MutableDataPartPtr & part)
+{
+    precommitted_parts.insert(part);
+    if (data.merging_params.mode == MergingParams::Unique)
+    {
+        UniqueEngineDataWriterPtr unique_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
+        unique_engine_data_writers.emplace(part->name, unique_engine_data_writer);
+    }
 }
 
 bool MergeTreeData::isPrimaryOrMinMaxKeyColumnPossiblyWrappedInFunctions(
@@ -5868,6 +6017,9 @@ bool MergeTreeData::moveParts(const CurrentlyMovingPartsTaggerPtr & moving_tagge
             if (cloned_part)
                 cloned_part->remove();
 
+            if (changePartMergeUpdateStatus(moving_part.part, IMergeTreeDataPart::MergeUpdateStatus::MOVING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL))
+                LOG_ERROR(log, "part {} move error, rollback part MERGE_UPDATE_STATUS from moving to normal error.", moving_part.part->name);
+
             throw;
         }
     }
@@ -6238,6 +6390,609 @@ CurrentlySubmergingEmergingTagger::~CurrentlySubmergingEmergingTagger()
             storage.currently_submerging_big_parts.erase(part);
     }
     storage.currently_emerging_big_parts.erase(emerging_part_name);
+}
+
+MergeTreeData::UniqueEngineDataWriter::~UniqueEngineDataWriter()
+{
+    if (has_temp_dir)
+        clearTempDirs();
+}
+
+void MergeTreeData::UniqueEngineDataWriter::prepare()
+{
+    if (part_to_write->effective_rows_count)
+    {
+        if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::NORMAL_INSERT)
+            prepareForNewPart();
+        else if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
+            prepareForMergeResultPart();
+        else if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::MERGE_BY_FETCH)
+            prepareForMergeByFetchPart();
+        else
+            prepareForMoveResultPart();
+    }
+
+    part_to_write->merge_source_parts.clear();
+    part_to_write->move_source_part = nullptr;
+
+    if (!storage.getSettings()->unique_key_index_resident_in_memory)
+        part_to_write->clearUniqueKeyIndex();
+}
+
+void MergeTreeData::UniqueEngineDataWriter::dedupFunctionByPart(
+    const ActiveDataPartPtrs & data_parts,
+    const UniqueKeyIndexPtr & current_key_index,
+    const UniqueDeleteBitmapPtr & current_delete_bitmap,
+    size_t begin,
+    size_t end)
+{
+    std::map<String, VersionAndRow> to_update_current;
+    std::map<MutableDataPartPtr, std::vector<size_t>> to_update_normal;
+    std::map<MutableDataPartPtr, DeletedKeysPtr> to_update_merging_moving;
+
+    LOG_DEBUG(storage.log, "[UniqueEngineDataWriter] current thread processes data part [{}, {}).", begin, end);
+
+    /// Collect the data parts and corresponding data to update into to_update_current, to_update_normal and to_update_merging_moving.
+    for (auto index = begin; index < end; ++index)
+    {
+        const auto & active_part = data_parts[index];
+        if (active_part->effective_rows_count == 0)
+        {
+            LOG_DEBUG(storage.log, "part {} effective_rows_count equal to zero, will skip directly.", active_part->name);
+            continue;
+        }
+
+        /// pre check unique key minmax
+        if (part_to_write->getUniqueKeyMinMaxIndex()->getMin() > active_part->getUniqueKeyMinMaxIndex()->getMax()
+            || part_to_write->getUniqueKeyMinMaxIndex()->getMax() < active_part->getUniqueKeyMinMaxIndex()->getMin())
+        {
+            LOG_DEBUG(
+                storage.log,
+                "part_to_write {} compare with active_part {}, min_idx greater than max_idx "
+                "or max_idx less than min_idx, will skip directly.",
+                part_to_write->name,
+                active_part->name);
+            continue;
+        }
+
+        /// pre confirm loading bucket range.
+        BucketIndexRangePtr bucket_range;
+        if (!storage.getSettings()->unique_key_index_resident_in_memory && storage.getSettings()->enable_unique_key_bucket)
+        {
+            const auto & bucket_index = active_part->getUniqueKeyBucketIndex();
+            if (bucket_index->getBucketNum() > 1)
+            {
+                const auto & target_bucket_range = current_key_index->calculateTargetBuckets(bucket_index->getBucketNum());
+
+                if (target_bucket_range.empty())
+                {
+                    LOG_DEBUG(storage.log, "part {} bucket_index_range is empty, will skip directly.", active_part->name);
+                    continue;
+                }
+
+                bucket_range = std::make_shared<std::vector<size_t>>(target_bucket_range);
+            }
+        }
+
+        const auto & delete_bitmap = active_part->getUniqueDeleteBitmap();
+        current_key_index->forEach(
+            [&](const StringRef & key, const VersionAndRow & mapped)
+            {
+                String key_str = key.toString();
+                const UInt64 & current_version = std::get<0>(mapped);
+                const size_t & current_row_num = std::get<1>(mapped);
+
+                /// if new part is fetched from another replica, current row maybe already deleted by another replica, because delete bitmap is realtime updating.
+                if (current_delete_bitmap->isDeleted(current_row_num))
+                    return;
+
+                auto key_index = active_part->getUniqueKeyIndex(true, loading_bucket_pool, bucket_range);
+                const auto & existing_version_row_num = key_index->get(key_str);
+                if (existing_version_row_num)
+                {
+                    auto existing_row_num = std::get<1>(existing_version_row_num.value());
+                    if (delete_bitmap->isDeleted(existing_row_num))
+                        return;
+
+                    auto existing_version = std::get<0>(existing_version_row_num.value());
+
+                    /// if version in existing part is same as version of part being written, then always delete duplicate row in the part being written.
+                    if (existing_version >= current_version)
+                    {
+                        size_t pos = current_key_index->getRowNumber(key_str).value();
+                        to_update_current.insert(std::make_pair(key_str, std::make_pair(current_version, pos)));
+                    }
+                    else
+                    {
+                        /// Part is being merged or being moved.
+                        if (IMergeTreeDataPart::MERGING == active_part->merge_update_status.load()
+                            || IMergeTreeDataPart::MOVING == active_part->merge_update_status.load())
+                        {
+                            if (!to_update_merging_moving.contains(active_part))
+                                to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
+                            to_update_merging_moving[active_part]->insert(std::make_pair(key_str, existing_version));
+                        }
+                        else
+                        {
+                            auto expect = IMergeTreeDataPart::NORMAL;
+                            auto to = IMergeTreeDataPart::UPDATING;
+                            /// Thanks to MergeTreeData::commit_lock, the merge_update_status can not be UPDATING here.
+                            if (!active_part->merge_update_status.compare_exchange_strong(expect, to))
+                            {
+                                if (active_part->merge_update_status == IMergeTreeDataPart::MERGING
+                                    || active_part->merge_update_status == IMergeTreeDataPart::MOVING)
+                                {
+                                    if (!to_update_merging_moving.contains(active_part))
+                                        to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
+                                    to_update_merging_moving[active_part]->insert(std::make_pair(key_str, existing_version));
+                                }
+                            }
+                        }
+
+                        to_update_normal[active_part].emplace_back(existing_row_num);
+                    }
+                }
+            });
+
+        if (!storage.getSettings()->unique_key_index_resident_in_memory)
+            active_part->clearUniqueKeyIndex();
+    }
+
+    /// Delete the duplicate rows in part_to_write and cache the updated data in delete_bitmap_map and key_indicies_map.
+    /// Please note that the deleted rows still exist in part_to_write, they are only truly deleted after commit() finished.
+    if (!to_update_current.empty())
+    {
+        enrollDataPart(part_to_write);
+        PartToWriteLock part_to_write_lock = lockPartToWrite();
+        for (auto & key_version_row : to_update_current)
+        {
+            const auto & pw_delete_bitmap = getDeleteBitmap(part_to_write);
+            pw_delete_bitmap->deleteRow(std::get<1>(key_version_row.second));
+        }
+    }
+
+    /// Delete the duplicate rows in every active data part and cache the updated data in delete_bitmap_map and key_indicies_map.
+    /// Also please note that the deleted rows still exist in corresponding active data part, they are only truly deleted after commit() finished.
+    for (const auto & pair : to_update_normal)
+    {
+        enrollDataPart(pair.first);
+        for (const auto & row_to_delete : pair.second)
+        {
+            const auto & normal_delete_bitmap = getDeleteBitmap(pair.first);
+            normal_delete_bitmap->deleteRow(row_to_delete);
+        }
+    }
+
+    /// Flush all the deleted keys of the data parts being merged to corresponding temporary files.
+    for (const auto & pair : to_update_merging_moving)
+        enrollDataPart(pair.first, pair.second);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::scheduleDedupTask(
+    UniqueEngineDataWriter * uniq_engine_writer,
+    const ActiveDataPartPtrs & data_parts,
+    const UniqueKeyIndexPtr & current_key_index,
+    const UniqueDeleteBitmapPtr & current_delete_bitmap,
+    size_t begin,
+    size_t end)
+{
+    auto max_running_update_task = uniq_engine_writer->storage.getContext()->getSettingsRef().background_unique_engine_update_pool_size;
+    size_t timeout_in_sec = uniq_engine_writer->storage.getContext()->getSettingsRef().background_unique_engine_update_schedule_timeout;
+    size_t waited_secs = 0;
+    while (waited_secs <= timeout_in_sec)
+    {
+        size_t busy_threads_in_pool
+            = CurrentMetrics::values[CurrentMetrics::BackgroundUniqueEngineUpdateTask].load(std::memory_order_relaxed);
+        if (busy_threads_in_pool >= max_running_update_task)
+        {
+            sleepForSeconds(1);
+            ++waited_secs;
+        }
+        else
+        {
+            pool.scheduleOrThrowOnError(
+                [uniq_engine_writer, data_parts, current_key_index, current_delete_bitmap, begin, end]
+                {
+                    setThreadName("dedupFunctionByPart");
+                    CurrentMetrics::values[CurrentMetrics::BackgroundUniqueEngineUpdateTask]++;
+                    try
+                    {
+                        uniq_engine_writer->dedupFunctionByPart(data_parts, current_key_index, current_delete_bitmap, begin, end);
+                        CurrentMetrics::values[CurrentMetrics::BackgroundUniqueEngineUpdateTask]--;
+                    }
+                    catch (std::exception const & ex)
+                    {
+                        CurrentMetrics::values[CurrentMetrics::BackgroundUniqueEngineUpdateTask]--;
+                        throw ex;
+                    }
+                });
+            return;
+        }
+    }
+    throw Exception(
+        "Timeout while scheduling deduplication task of unique engine to thread pool, timeout is " + std::to_string(timeout_in_sec)
+            + " seconds.",
+        ErrorCodes::TIMEOUT_EXCEEDED);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::executeParallelDedupByPart(
+    const ActiveDataPartPtrs & data_parts, const UniqueKeyIndexPtr & current_key_index, const UniqueDeleteBitmapPtr & current_delete_bitmap)
+{
+    size_t bucket_size = std::ceil(data_parts.size() * 1.0 / storage.getSettings()->unique_key_update_parallelism);
+
+    LOG_DEBUG(
+        storage.log,
+        "totally {} data parts,"
+        "the parallelism for updating unique key is {}, and the bucket size is {}.",
+        data_parts.size(),
+        storage.getSettings()->unique_key_update_parallelism,
+        bucket_size);
+
+    if (!bucket_size)
+        throw Exception("zero bucket size for parallel deduplication task by part.", ErrorCodes::LOGICAL_ERROR);
+
+    size_t begin = 0, end = 0;
+    for (; end < data_parts.size(); ++end)
+    {
+        if (end - begin == bucket_size)
+        {
+            scheduleDedupTask(this, data_parts, current_key_index, current_delete_bitmap, begin, end);
+            begin = end;
+        }
+    }
+    scheduleDedupTask(this, data_parts, current_key_index, current_delete_bitmap, begin, end);
+    pool.wait();
+    for (const auto & pair : unique_delete_bitmap_map)
+        flushToTempFiles(pair.first);
+    for (const auto & pair : unique_deleted_keys_map)
+        flushToTempFiles(pair.first, pair.second);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::prepareForNewPart(bool is_merge_by_fetch)
+{
+    MergeTreeData::DataPartsVector active_parts_range;
+    if (storage.getSettings()->unique_key_deduplicate_level == 0)
+        active_parts_range = storage.getDataPartsVector({DataPartState::Active});
+    else if (storage.getSettings()->unique_key_deduplicate_level == 1)
+        active_parts_range = storage.getDataPartsVectorInPartition(DataPartState::Active, part_to_write->info.partition_id);
+    else
+        throw Exception(
+            "Invalid level " + std::to_string(storage.getSettings()->unique_key_deduplicate_level)
+                + " for setting unique_key_deduplicate_level.",
+            ErrorCodes::BAD_ARGUMENTS);
+
+    if (active_parts_range.empty())
+        return;
+
+    ActiveDataPartPtrs parts_to_dedup;
+    for (const auto & item : active_parts_range)
+    {
+        if (is_merge_by_fetch && item->info.partition_id == part_to_write->info.partition_id
+            && item->info.min_block >= part_to_write->info.min_block && item->info.max_block <= part_to_write->info.max_block)
+            continue;
+        parts_to_dedup.emplace_back(const_pointer_cast<DataPart>(item));
+    }
+
+    if (parts_to_dedup.empty())
+        return;
+
+    /// if unique_key_index_resident_in_memory = 1 and unique_key_bucket = 1, unique key of part that fetched from another replica need to be loading thoroughly.
+    auto current_unique_key_index = part_to_write->getUniqueKeyIndex(true, loading_bucket_pool);
+    const auto & current_unique_delete_bitmap = part_to_write->getUniqueDeleteBitmap();
+    if (storage.getSettings()->unique_key_update_parallel_type == 0)
+        executeParallelDedupByPart(parts_to_dedup, current_unique_key_index, current_unique_delete_bitmap);
+    else if (storage.getSettings()->unique_key_update_parallel_type == 1)
+        throw Exception("The parallel preparation by key for unique engine is not implemented yet.", ErrorCodes::NOT_IMPLEMENTED);
+    else
+        throw Exception(
+            "Invalid value " + std::to_string(storage.getSettings()->unique_key_update_parallel_type)
+                + " for setting unique_key_update_parallel_type.",
+            ErrorCodes::BAD_ARGUMENTS);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::prepareForMergeResultPart()
+{
+    std::map<String, VersionAndRow> to_update_current;
+
+    for (const auto & source_part : part_to_write->merge_source_parts)
+    {
+        const auto deleted_keys_dir_path = fs::path(source_part->getFullPath(false) + MERGING_MOVING_DIR_SUFFIX);
+        const auto deleted_keys_file_path = deleted_keys_dir_path / DELETED_KEYS_FILE_NAME;
+        const auto & disk = source_part->volume->getDisk();
+
+        if (disk->exists(deleted_keys_file_path))
+        {
+            auto in = disk->readFile(deleted_keys_file_path);
+            auto unique_key_index = part_to_write->getUniqueKeyIndex();
+            const auto & unique_key_delete_bitmap = part_to_write->getUniqueDeleteBitmap();
+
+            while (!in->eof())
+            {
+                DeletedKeys deleted_keys;
+                deleted_keys.deserializeBinary(*in);
+                for (const auto & deleted_key_and_version : deleted_keys)
+                {
+                    const auto & deleted_key = deleted_key_and_version.first;
+                    const auto & deleted_version = deleted_key_and_version.second;
+
+                    const auto & current_version_and_row = unique_key_index->get(deleted_key);
+
+                    if (current_version_and_row)
+                    {
+                        const auto current_version = std::get<0>(current_version_and_row.value());
+                        const auto current_row_num = std::get<1>(current_version_and_row.value());
+
+                        if (deleted_version == current_version && !unique_key_delete_bitmap->isDeleted(current_row_num))
+                            to_update_current.insert(std::make_pair(deleted_key, std::make_pair(current_version, current_row_num)));
+                    }
+                }
+            }
+
+            disk->removeRecursive(deleted_keys_dir_path);
+        }
+    }
+
+    /// Delete the duplicate rows in part_to_write and cache the updated data in unique_delete_bitmap_map.
+    /// Please note that the deleted rows still exist in part_to_write, they are only truly deleted after commit() finished.
+    if (!to_update_current.empty())
+    {
+        enrollDataPart(part_to_write);
+        for (auto & key_version_row : to_update_current)
+            unique_delete_bitmap_map[part_to_write]->deleteRow(std::get<1>(key_version_row.second));
+        flushToTempFiles(part_to_write);
+    }
+}
+
+void MergeTreeData::UniqueEngineDataWriter::prepareForMoveResultPart()
+{
+    std::map<String, VersionAndRow> to_update_current;
+
+    const auto & source_part = part_to_write->move_source_part;
+    const auto deleted_keys_dir_path = fs::path(source_part->getFullPath(false) + MERGING_MOVING_DIR_SUFFIX);
+    const auto deleted_keys_file_path = deleted_keys_dir_path / DELETED_KEYS_FILE_NAME;
+    const auto & disk = source_part->volume->getDisk();
+
+    if (disk->exists(deleted_keys_file_path))
+    {
+        auto in = disk->readFile(deleted_keys_file_path);
+        auto unique_key_index = part_to_write->getUniqueKeyIndex(false, loading_bucket_pool);
+        const auto & unique_key_delete_bitmap = part_to_write->getUniqueDeleteBitmap();
+
+        while (!in->eof())
+        {
+            DeletedKeys deleted_keys;
+            deleted_keys.deserializeBinary(*in);
+            for (const auto & deleted_key_and_version : deleted_keys)
+            {
+                const auto & deleted_key = deleted_key_and_version.first;
+                const auto & deleted_version = deleted_key_and_version.second;
+
+                const auto & current_version_and_row = unique_key_index->get(deleted_key);
+
+                if (current_version_and_row)
+                {
+                    const auto current_version = std::get<0>(current_version_and_row.value());
+                    const auto current_row_num = std::get<1>(current_version_and_row.value());
+
+                    if (deleted_version == current_version && !unique_key_delete_bitmap->isDeleted(current_row_num))
+                        to_update_current.insert(std::make_pair(deleted_key, std::make_pair(current_version, current_row_num)));
+                }
+            }
+        }
+
+        disk->removeRecursive(deleted_keys_dir_path);
+    }
+
+    /// Delete the duplicate rows in part_to_write and cache the updated data in unique_delete_bitmap_map.
+    /// Please note that the deleted rows still exist in part_to_write, they are only truly deleted after commit() finished.
+    if (!to_update_current.empty())
+    {
+        enrollDataPart(part_to_write);
+        for (auto & key_version_row : to_update_current)
+            unique_delete_bitmap_map[part_to_write]->deleteRow(std::get<1>(key_version_row.second));
+        flushToTempFiles(part_to_write);
+    }
+}
+
+void MergeTreeData::UniqueEngineDataWriter::prepareForMergeByFetchPart()
+{
+    /// TODO ::: optimize to avoid the heavy key search and check in this function.
+    prepareForNewPart(true);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::enrollDataPart(const MutableDataPartPtr & data_part, DeletedKeysPtr deleted_keys)
+{
+    if (containDeleteBitmap(data_part) && (!deleted_keys || containDeletedKeys(data_part)))
+        return;
+
+    addDeleteBitmap(data_part);
+
+    if (deleted_keys)
+        addDeletedKeys(data_part, deleted_keys);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::commit()
+{
+    for (const auto & pair : unique_delete_bitmap_map)
+    {
+        auto tmp_delete_bitmap_file = fs::path(pair.first->getFullPath(false) + TEMP_DIR_SUFFIX + "/" + UNIQUE_ENGINE_DELETE_BITMAP);
+        auto tmp_merging_moving_deleted_keys_file
+            = fs::path(pair.first->getFullPath(false) + TEMP_MERGING_MOVING_DIR_SUFFIX + "/" + DELETED_KEYS_FILE_NAME);
+        const auto & disk = pair.first->volume->getDisk();
+
+        if (disk->exists(tmp_delete_bitmap_file))
+        {
+            auto delete_bitmap_file = fs::path(pair.first->getFullPath(false) + "/" + UNIQUE_ENGINE_DELETE_BITMAP);
+            disk->replaceFile(tmp_delete_bitmap_file, delete_bitmap_file);
+        }
+        if (disk->exists(tmp_merging_moving_deleted_keys_file))
+        {
+            auto merging_moving_deleted_keys_dir = fs::path(pair.first->getFullPath(false) + MERGING_MOVING_DIR_SUFFIX);
+            auto merging_moving_deleted_keys_file = fs::path(merging_moving_deleted_keys_dir) / DELETED_KEYS_FILE_NAME;
+            if (!disk->exists(merging_moving_deleted_keys_dir))
+            {
+                disk->createDirectory(merging_moving_deleted_keys_dir);
+                disk->moveFile(tmp_merging_moving_deleted_keys_file, merging_moving_deleted_keys_file);
+            }
+            else
+                disk->replaceFile(tmp_merging_moving_deleted_keys_file, merging_moving_deleted_keys_file);
+        }
+
+        pair.first->setUniqueDeleteBitmap(unique_delete_bitmap_map[pair.first]);
+        pair.first->loadRowsCount();
+
+        /// Change its merge_update_status back to NORMAL after persisting the unique data to files.
+        auto expect = IMergeTreeDataPart::UPDATING;
+        auto to = IMergeTreeDataPart::NORMAL;
+        pair.first->merge_update_status.compare_exchange_strong(expect, to);
+    }
+}
+
+void MergeTreeData::UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_part)
+{
+    auto tmp_dir_to_write = fs::path(data_part->getFullPath(false) + TEMP_DIR_SUFFIX);
+    const auto & disk = data_part->volume->getDisk();
+
+    LOG_INFO(storage.log, "temp part dir for flushing unique data is {}", data_part->getFullPath(false) + TEMP_DIR_SUFFIX);
+
+    if (!disk->exists(tmp_dir_to_write))
+    {
+        disk->createDirectory(tmp_dir_to_write);
+        has_temp_dir = true;
+    }
+
+    auto unique_delete_bitmap_out = disk->writeFile(tmp_dir_to_write / UNIQUE_ENGINE_DELETE_BITMAP);
+
+    unique_delete_bitmap_map[data_part]->serializeBinary(*unique_delete_bitmap_out);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_part, const DeletedKeysPtr & deleted_keys)
+{
+    if (!deleted_keys)
+        return;
+
+    auto temp_dir_to_write = fs::path(data_part->getFullPath(false) + TEMP_MERGING_MOVING_DIR_SUFFIX);
+    auto deleted_keys_path = fs::path(data_part->getFullPath(false) + MERGING_MOVING_DIR_SUFFIX) / DELETED_KEYS_FILE_NAME;
+    const auto & disk = data_part->volume->getDisk();
+    auto disk_v2 = data_part->volume->getDisk();
+    const auto disk_v3 = data_part->volume->getDisk();
+
+    LOG_INFO(
+        storage.log,
+        "temp part dir for flushing deleted keys of merging parts is {}",
+        data_part->getFullPath(false) + TEMP_MERGING_MOVING_DIR_SUFFIX);
+
+    if (!disk->exists(temp_dir_to_write))
+    {
+        disk->createDirectory(temp_dir_to_write);
+        has_temp_dir = true;
+    }
+
+    if (disk->exists(deleted_keys_path))
+    {
+        disk->copy(
+            data_part->getFullPath(false) + MERGING_MOVING_DIR_SUFFIX + "/" + DELETED_KEYS_FILE_NAME,
+            disk,
+            data_part->getFullPath(false) + TEMP_MERGING_MOVING_DIR_SUFFIX);
+    }
+
+    auto out = disk->writeFile(temp_dir_to_write / DELETED_KEYS_FILE_NAME, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Append);
+    deleted_keys->serializeBinary(*out);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::clearTempDirs()
+{
+    for (const auto & pair : unique_delete_bitmap_map)
+    {
+        const auto & disk = pair.first->volume->getDisk();
+        const auto tmp_dir = fs::path(pair.first->getFullPath(false) + TEMP_DIR_SUFFIX);
+        const auto tmp_merging_dir = fs::path(pair.first->getFullPath(false) + TEMP_MERGING_MOVING_DIR_SUFFIX);
+        if (disk->exists(tmp_dir))
+            disk->removeRecursive(tmp_dir);
+        if (disk->exists(tmp_merging_dir))
+            disk->removeRecursive(tmp_merging_dir);
+    }
+    has_temp_dir = false;
+}
+
+
+bool MergeTreeData::UniqueEngineDataWriter::containDeleteBitmap(const MutableDataPartPtr & part_)
+{
+    std::shared_lock<std::shared_mutex> lock(unique_delete_bitmap_map_rw_lock);
+    return unique_delete_bitmap_map.contains(part_);
+}
+
+UniqueDeleteBitmapPtr & MergeTreeData::UniqueEngineDataWriter::getDeleteBitmap(const MutableDataPartPtr & part_)
+{
+    std::shared_lock<std::shared_mutex> lock(unique_delete_bitmap_map_rw_lock);
+    return unique_delete_bitmap_map[part_];
+}
+
+void MergeTreeData::UniqueEngineDataWriter::addDeleteBitmap(const MutableDataPartPtr & part_)
+{
+    std::unique_lock<std::shared_mutex> lock(unique_delete_bitmap_map_rw_lock);
+
+    if (unique_delete_bitmap_map.contains(part_))
+        return;
+
+    const auto & current_unique_delete_bitmap = part_->getUniqueDeleteBitmap();
+
+    if (current_unique_delete_bitmap)
+    {
+        switch (storage.getSettings()->unique_delete_bitmap_type)
+        {
+            case 0: {
+                unique_delete_bitmap_map[part_] = std::make_shared<Roaring64UniqueDeleteBitmap>(
+                    dynamic_cast<Roaring64UniqueDeleteBitmap &>(*current_unique_delete_bitmap));
+                break;
+            }
+            case 1: {
+                unique_delete_bitmap_map[part_] = std::make_shared<Roaring32UniqueDeleteBitmap>(
+                    dynamic_cast<Roaring32UniqueDeleteBitmap &>(*current_unique_delete_bitmap));
+                break;
+            }
+            default: {
+                throw Exception(
+                    "Invalid type(" + std::to_string(storage.getSettings()->unique_delete_bitmap_type) + ") for unique delete bitmap.",
+                    ErrorCodes::BAD_ARGUMENTS);
+            }
+        }
+    }
+    else
+    {
+        switch (storage.getSettings()->unique_delete_bitmap_type)
+        {
+            case 0: {
+                unique_delete_bitmap_map[part_] = std::make_shared<Roaring64UniqueDeleteBitmap>();
+                break;
+            }
+            case 1: {
+                unique_delete_bitmap_map[part_] = std::make_shared<Roaring32UniqueDeleteBitmap>();
+                break;
+            }
+            default: {
+                throw Exception(
+                    "Invalid type(" + std::to_string(storage.getSettings()->unique_delete_bitmap_type) + ") for unique delete bitmap.",
+                    ErrorCodes::BAD_ARGUMENTS);
+            }
+        }
+    }
+}
+
+bool MergeTreeData::UniqueEngineDataWriter::containDeletedKeys(const MutableDataPartPtr & part_)
+{
+    std::shared_lock<std::shared_mutex> lock(unique_deleted_keys_map_rw_lock);
+    return unique_deleted_keys_map.contains(part_);
+}
+
+void MergeTreeData::UniqueEngineDataWriter::addDeletedKeys(const MutableDataPartPtr & part_, const DeletedKeysPtr & deleted_keys_)
+{
+    std::unique_lock<std::shared_mutex> lock(unique_deleted_keys_map_rw_lock);
+
+    if (unique_deleted_keys_map.contains(part_))
+        return;
+
+    unique_deleted_keys_map[part_] = deleted_keys_;
 }
 
 }

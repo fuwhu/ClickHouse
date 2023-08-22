@@ -222,6 +222,22 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Perm
 
     Block skip_indexes_block = getBlockAndPermute(block, getSkipIndicesColumns(), permutation);
 
+    Block unique_key_version_block;
+    if (settings.rewrite_unique_key && data_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        // We need to checkou primary keys while creating table
+        // To make sure we only have one primary key
+        Names unique_key_version_names;
+        const auto & unique_key_names = metadata_snapshot->unique_key.column_names;
+        unique_key_version_names.insert(unique_key_version_names.end(), unique_key_names.begin(), unique_key_names.end());
+
+        const auto & version_name = data_part->storage.merging_params.version_column;
+        unique_key_version_names.emplace_back(version_name);
+
+        unique_key_version_block = getBlockAndPermute(block, unique_key_version_names, permutation);
+    }
+
+
     auto it = columns_list.begin();
     for (size_t i = 0; i < columns_list.size(); ++i, ++it)
     {
@@ -242,6 +258,11 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Perm
                 const auto & index_column = *skip_indexes_block.getByName(it->name).column;
                 writeColumn(*it, index_column, offset_columns, granules_to_write);
             }
+            else if (unique_key_version_block.has(it->name))
+            {
+                const auto & unique_key_version_column = *unique_key_version_block.getByName(it->name).column;
+                writeColumn(*it, unique_key_version_column, offset_columns, granules_to_write);
+            }
             else
             {
                 /// We rearrange the columns that are not included in the primary key here; Then the result is released - to save RAM.
@@ -257,6 +278,9 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Perm
 
     if (settings.rewrite_primary_key)
         calculateAndSerializePrimaryIndex(primary_key_block, granules_to_write);
+
+    if (unique_key_version_block)
+        calculateUniqueData(unique_key_version_block, granules_to_write);
 
     calculateAndSerializeSkipIndices(skip_indexes_block, granules_to_write);
 
@@ -611,6 +635,9 @@ void MergeTreeDataPartWriterWide::fillChecksums(IMergeTreeDataPart::Checksums & 
     if (settings.rewrite_primary_key)
         fillPrimaryIndexChecksums(checksums);
 
+    if (settings.rewrite_unique_key)
+        fillUniqueDataChecksums(checksums);
+
     fillSkipIndicesChecksums(checksums);
 }
 
@@ -622,6 +649,9 @@ void MergeTreeDataPartWriterWide::finish(bool sync)
 
     if (settings.rewrite_primary_key)
         finishPrimaryIndexSerialization(sync);
+
+    if (settings.rewrite_unique_key)
+        finishUniqueDataSerialization(sync);
 
     finishSkipIndicesSerialization(sync);
 }

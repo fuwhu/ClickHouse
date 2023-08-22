@@ -120,6 +120,8 @@ public:
         size_t numPendingGranules() const { return last_mark - current_mark; }
         size_t numPendingRows() const;
         size_t currentMark() const { return current_mark; }
+        UInt64 currentPartOffset() const;
+        UInt64 lastPartOffset() const;
 
         size_t current_mark = 0;
         /// Invariant: offset_after_current_mark + skipped_rows_after_offset < index_granularity
@@ -200,6 +202,9 @@ public:
         Block block_before_prewhere;
 
     private:
+        /// Only MergeTreeRangeReader is supposed to access ReadResult internals.
+        friend class MergeTreeRangeReader;
+
         RangesInfo started_ranges;
         /// The number of rows read from each granule.
         /// Granule here is not number of rows between two marks
@@ -217,6 +222,8 @@ public:
         /// nullptr if prev reader hasn't prewhere_actions. Otherwise filter.size() >= total_rows_per_granule.
         ColumnPtr filter_holder;
         ColumnPtr filter_holder_original;
+        /// delete bitmap filter for unique engine
+        ColumnPtr unique_key_dedup_filter;
         const ColumnUInt8 * filter = nullptr;
         const ColumnUInt8 * filter_original = nullptr;
 
@@ -235,7 +242,10 @@ private:
 
     ReadResult startReadingChain(size_t max_rows, MarkRanges & ranges);
     Columns continueReadingChain(ReadResult & result, size_t & num_rows);
+    // Columns continueReadingChain(ReadResult & result, size_t & effective_row_count);
     void executePrewhereActionsAndFilterColumns(ReadResult & result);
+    ColumnPtr getPartOffsetColumn(const ReadResult & result, UInt64 leading_begin_part_offset, UInt64 leading_end_part_offset);
+    ColumnPtr getUniqueKeyDedupFilter(const ColumnPtr & part_offset_col);
 
     IMergeTreeReader * merge_tree_reader = nullptr;
     const MergeTreeIndexGranularity * index_granularity = nullptr;

@@ -31,6 +31,7 @@ struct MergeTreeWriterSettings
         const MergeTreeSettingsPtr & storage_settings,
         bool can_use_adaptive_granularity_,
         bool rewrite_primary_key_,
+        bool rewrite_unique_key_,
         bool blocks_are_granules_size_ = false)
         : min_compress_block_size(
             storage_settings->min_compress_block_size ? storage_settings->min_compress_block_size : global_settings.min_compress_block_size)
@@ -39,6 +40,7 @@ struct MergeTreeWriterSettings
                                                         : global_settings.max_compress_block_size)
         , can_use_adaptive_granularity(can_use_adaptive_granularity_)
         , rewrite_primary_key(rewrite_primary_key_)
+        , rewrite_unique_key(rewrite_unique_key_)
         , blocks_are_granules_size(blocks_are_granules_size_)
     {
     }
@@ -47,6 +49,7 @@ struct MergeTreeWriterSettings
     size_t max_compress_block_size;
     bool can_use_adaptive_granularity;
     bool rewrite_primary_key;
+    bool rewrite_unique_key;
     bool blocks_are_granules_size;
 };
 

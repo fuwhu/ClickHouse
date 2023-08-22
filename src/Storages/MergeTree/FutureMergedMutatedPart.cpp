@@ -89,4 +89,16 @@ void FutureMergedMutatedPart::updatePath(const MergeTreeData & storage, const IR
     path = storage.getFullPathOnDisk(reservation->getDisk()) + name + "/";
 }
 
+void FutureMergedMutatedPart::setUniqueDeleteBitmaps()
+{
+    if (!parts.empty())
+    {
+        for(const auto & part_item : parts)
+        {
+            const auto & delete_bitmap = const_cast<MergeTreeData::DataPart *>(part_item.get())->getUniqueDeleteBitmap();
+            unique_delete_bitmaps.emplace_back(delete_bitmap);            
+        }
+    }
+}
+
 }

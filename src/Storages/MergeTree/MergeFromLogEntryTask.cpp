@@ -25,6 +25,14 @@ std::pair<bool, ReplicatedMergeMutateTaskBase::PartLogWriter> MergeFromLogEntryT
     LOG_TRACE(log, "Executing log entry to merge parts {} to {}",
         fmt::join(entry.source_parts, ", "), entry.new_part_name);
 
+    /// For replicated unique engine tables, due to the realtime data updating to each data part, the result data parts of executing same merge-type log entry on different replicas may have different file checksums, which may lead to the failure of checksum validation. 
+    /// So we only execute each merge-type log entry on one replica, and then fetch the merged result on other replicas.
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique && storage.replica_name != entry.source_replica)
+    {
+        LOG_INFO(log, "Will fetch part {} because engine is unique.", entry.new_part_name);
+        return {false, {}};
+    }
+
     const auto storage_settings_ptr = storage.getSettings();
 
     if (storage_settings_ptr->always_fetch_merged_part)

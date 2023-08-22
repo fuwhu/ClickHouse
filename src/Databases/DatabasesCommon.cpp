@@ -62,7 +62,8 @@ void applyMetadataChangesToCreateQuery(const ASTPtr & query, const StorageInMemo
         ASTStorage & storage_ast = *ast_create_query.storage;
 
         bool is_extended_storage_def
-            = storage_ast.partition_by || storage_ast.primary_key || storage_ast.order_by || storage_ast.sample_by || storage_ast.settings;
+            = storage_ast.partition_by || storage_ast.primary_key || storage_ast.order_by || storage_ast.unique_key || storage_ast.sample_by
+            || storage_ast.settings;
 
         if (is_extended_storage_def)
         {

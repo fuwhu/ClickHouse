@@ -251,6 +251,24 @@ std::optional<UInt64> StorageMergeTree::totalRows(const Settings &) const
     return getTotalActiveSizeInRows();
 }
 
+std::optional<UInt64> StorageMergeTree::totalEffectiveRows(const Settings &) const
+{
+    size_t total_active_rows = getTotalActiveSizeInRows();
+
+    if (merging_params.mode != MergeTreeData::MergingParams::Unique) {
+        return total_active_rows;
+    }
+
+    auto parts = getDataPartsVector({DataPartState::Active});
+
+    size_t delete_rows = 0;
+    for (const auto & part : parts) {
+        delete_rows += const_cast<MergeTreeData::DataPart *>(part.get())->getUniqueDeleteBitmap()->deleteRowsSize();
+    }
+
+    return total_active_rows - delete_rows;
+}
+
 std::optional<UInt64> StorageMergeTree::totalRowsByPartitionPredicate(const SelectQueryInfo & query_info, ContextPtr local_context) const
 {
     auto parts = getDataPartsVector({DataPartState::Active});

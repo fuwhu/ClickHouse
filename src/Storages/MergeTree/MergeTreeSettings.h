@@ -25,6 +25,15 @@ struct Settings;
     M(UInt64, min_compress_block_size, 0, "When granule is written, compress the data in buffer if the size of pending uncompressed data is larger or equal than the specified threshold. If this setting is not set, the corresponding global setting is used.", 0) \
     M(UInt64, max_compress_block_size, 0, "Compress the pending uncompressed data in buffer if its size is larger or equal than the specified threshold. Block of data will be compressed even if the current granule is not finished. If this setting is not set, the corresponding global setting is used.", 0) \
     M(UInt64, index_granularity, 8192, "How many rows correspond to one primary key value.", 0) \
+    M(UInt64, unique_delete_bitmap_type, 0, "The type of delete bitmap used by unique engine. 0 - RoaringBitmap64; 1 - RoaringBitmap32.", 0) \
+    M(UInt64, unique_key_index_type, 0, "The type of index used by unique engine for unique key. 0 - StandardMapUniqueKeyIndex; 1 - StandardUnOrderedMapUniqueKeyIndex; 2 - StringHashMapUniqueKeyIndex.", 0) \
+    M(UInt64, unique_key_update_parallelism, 8, "The parallelism of checking and deleting the duplicate keys for single unique engine table, this should not be bigger than 'background_unique_engine_update_pool_size'.", 0) \
+    M(UInt64, unique_key_update_parallel_type, 0, "Control how to parallelize the process of checking and deleting the duplicate keys for unique engine tables. 0 - parallelize by data part; 1 - parallelize by keys.", 0) \
+    M(Bool, unique_key_index_resident_in_memory, false, "Control if the unique key index of unique engine table should be resident in memory.", 0) \
+    M(Bool, unique_key_deduplicate_level, 0, "The level of deduplicate rows for unique engine. 0 - table level; 1 - partition level", 0) \
+    M(Bool, enable_unique_key_bucket, 0, "Control whether the unique key of unique engine table is divided into buckets. 0 - no, 1 - yes.", 0) \
+    M(UInt64, unique_key_bucket_size, 131072, "The number of unique keys that each bucket can store at most for unique engine.", 0) \
+    M(UInt64, unique_key_bucket_load_parallelism, 8, "The parallelism of loading unique key buckets for single unique engine table, this should not be bigger than 'background_unique_engine_load_pool_size'.", 0) \
     \
     /** Data storing format settings. */ \
     M(UInt64, min_bytes_for_wide_part, 10485760, "Minimal uncompressed size in bytes to create part in wide format instead of compact", 0) \

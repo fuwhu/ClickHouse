@@ -613,12 +613,15 @@ String IMergeTreeDataPart::getColumnNameWithMinimumCompressedSize(
     return *minimum_size_column;
 }
 
-String IMergeTreeDataPart::getFullPath() const
+String IMergeTreeDataPart::getFullPath(bool with_last_slash) const
 {
     if (relative_path.empty())
         throw Exception("Part relative_path cannot be empty. It's bug.", ErrorCodes::LOGICAL_ERROR);
 
-    return fs::path(storage.getFullPathOnDisk(volume->getDisk())) / (parent_part ? parent_part->relative_path : "") / relative_path / "";
+    if (with_last_slash)
+        return fs::path(storage.getFullPathOnDisk(volume->getDisk())) / (parent_part ? parent_part->relative_path : "") / relative_path / "";
+    else
+        return fs::path(storage.getFullPathOnDisk(volume->getDisk())) / (parent_part ? parent_part->relative_path : "") / relative_path;
 }
 
 String IMergeTreeDataPart::getFullRelativePath() const
@@ -640,6 +643,16 @@ void IMergeTreeDataPart::loadColumnsChecksumsIndexes(bool require_columns_checks
 
     loadUUID();
     loadColumns(require_columns_checksums);
+
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        if (storage.getSettings()->enable_unique_key_bucket)
+            loadUniqueKeyBucketIndex();
+
+        loadUniqueDeleteBitmap();
+        loadUniqueKeyMinMaxIndex();
+    }
+
     loadChecksums(require_columns_checksums);
     loadIndexGranularity();
     calculateColumnsAndSecondaryIndicesSizesOnDisk();
@@ -752,6 +765,9 @@ NameSet IMergeTreeDataPart::getFileNamesWithoutChecksums() const
 
     if (volume->getDisk()->exists(default_codec_path))
         result.emplace(DEFAULT_COMPRESSION_CODEC_FILE_NAME);
+
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        result.emplace(UNIQUE_ENGINE_DELETE_BITMAP);
 
     return result;
 }
@@ -924,6 +940,9 @@ void IMergeTreeDataPart::loadChecksums(bool require)
 void IMergeTreeDataPart::loadRowsCount()
 {
     String path = fs::path(getFullRelativePath()) / "count.txt";
+    size_t deleted_size = 0;
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        deleted_size = getUniqueDeleteBitmap()->deleteRowsSize();
 
     auto read_rows_count = [&]()
     {
@@ -991,6 +1010,7 @@ void IMergeTreeDataPart::loadRowsCount()
             }
         }
 #endif
+        effective_rows_count = rows_count - deleted_size;
     }
     else
     {
@@ -1029,6 +1049,7 @@ void IMergeTreeDataPart::loadRowsCount()
                     + toString(rows_approx) + "+-" + toString(last_mark_index_granularity) + " rows according to the index",
                     ErrorCodes::LOGICAL_ERROR);
 
+            effective_rows_count = rows_count - deleted_size;
             return;
         }
 
@@ -1074,6 +1095,102 @@ void IMergeTreeDataPart::loadUUID()
         if (uuid == UUIDHelpers::Nil)
             throw Exception("Unexpected empty " + String(UUID_FILE_NAME) + " in part: " + name, ErrorCodes::LOGICAL_ERROR);
     }
+}
+
+UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
+{
+    UniqueKeyIndexPtr unique_key_index_load;
+    switch (storage.getSettings()->unique_key_index_type)
+    {
+        case 0: {
+            unique_key_index_load = std::make_shared<StandardMapUniqueKeyIndex>();
+            break;
+        }
+        case 1: {
+            unique_key_index_load = std::make_shared<StandardUnOrderedMapUniqueKeyIndex>();
+            break;
+        }
+        case 2: {
+            unique_key_index_load = std::make_shared<StringHashMapUniqueKeyIndex>();
+            break;
+        }
+        default: {
+            throw Exception(
+                "Invalid type(" + std::to_string(storage.getSettings()->unique_key_index_type) + ") for unique key index.",
+                ErrorCodes::BAD_ARGUMENTS);
+        }
+    }
+
+    const auto & disk = volume->getDisk();
+    const auto & unique_key_index_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_INDEX;
+
+    if (storage.getSettings()->enable_unique_key_bucket)
+    {
+        if (!loading_bucket_pool)
+            throw Exception(
+                "Loading unique key bucket must depend on thread pool, so loading_bucket_pool cannot be null", ErrorCodes::LOGICAL_ERROR);
+
+        const auto & bucket_index = getUniqueKeyBucketIndex();
+        const auto & bucket_num = bucket_index->getBucketNum();
+        unique_key_index_load->initBucket(bucket_num);
+        unique_key_index_load->deserializeBinary(
+            disk,
+            unique_key_index_path,
+            bucket_index,
+            loading_bucket_pool,
+            bucket_range,
+            storage.getContext()->getSettingsRef().background_unique_engine_load_pool_size,
+            storage.getContext()->getSettingsRef().background_unique_engine_load_schedule_timeout);
+    }
+    else
+        unique_key_index_load->deserializeBinary(disk, unique_key_index_path);
+
+    return unique_key_index_load;
+}
+
+void IMergeTreeDataPart::loadUniqueKeyBucketIndex()
+{
+    const auto & unique_key_bucket_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_BUCKET_INDEX;
+    UniqueKeyBucketIndexPtr unique_key_bucket_load = std::make_shared<UniqueKeyBucketIndex>();
+    const auto & disk = volume->getDisk();
+    unique_key_bucket_load->deserializeBinary(*disk->readFile(unique_key_bucket_path));
+    setUniqueKeyBucketIndex(unique_key_bucket_load);
+}
+
+void IMergeTreeDataPart::loadUniqueDeleteBitmap()
+{
+    const auto & unique_delete_bitmap_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_DELETE_BITMAP;
+
+    UniqueDeleteBitmapPtr unique_delete_bitmap_load;
+    switch (storage.getSettings()->unique_delete_bitmap_type)
+    {
+        case 0: {
+            unique_delete_bitmap_load = std::make_shared<Roaring64UniqueDeleteBitmap>();
+            break;
+        }
+        case 1: {
+            unique_delete_bitmap_load = std::make_shared<Roaring32UniqueDeleteBitmap>();
+            break;
+        }
+        default: {
+            throw Exception(
+                "Invalid type(" + std::to_string(storage.getSettings()->unique_delete_bitmap_type) + ") for unique delete bitmap.",
+                ErrorCodes::BAD_ARGUMENTS);
+        }
+    }
+
+    const auto & disk = volume->getDisk();
+    unique_delete_bitmap_load->deserializeBinary(*disk->readFile(unique_delete_bitmap_path));
+    setUniqueDeleteBitmap(unique_delete_bitmap_load);
+}
+
+void IMergeTreeDataPart::loadUniqueKeyMinMaxIndex()
+{
+    const auto & unique_key_minmax_index_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_MINMAX_INDEX;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index_load = std::make_shared<UniqueKeyMinMaxIndex>();
+    const auto & disk = volume->getDisk();
+    unique_key_minmax_index_load->deserializeBinary(*disk->readFile(unique_key_minmax_index_path));
+    setUniqueKeyMinMaxIndex(unique_key_minmax_index_load);
 }
 
 void IMergeTreeDataPart::loadColumns(bool require)
@@ -1206,6 +1323,10 @@ try
 
     volume->getDisk()->setLastModified(from, Poco::Timestamp::fromEpochTime(time(nullptr)));
     volume->getDisk()->moveDirectory(from, to);
+
+    /// rename _uniq_tmp directory as like part directory for new part.
+    renameUniqueTempDir(new_relative_path, remove_new_dir_if_exists);
+
     relative_path = new_relative_path;
 
     SyncGuardPtr sync_guard;
@@ -1233,6 +1354,46 @@ void IMergeTreeDataPart::cleanupOldName(const String & old_part_name) const
         return;
 
     storage.unlockSharedData(*this, old_part_name);
+}
+
+void IMergeTreeDataPart::renameUniqueTempDir(const String & new_relative_path, bool remove_new_dir_if_exists) const
+{
+    if (storage.merging_params.mode != MergeTreeData::MergingParams::Unique)
+        return;
+
+    String uniq_tmp_prefix = fs::path(storage.relative_data_path) / (parent_part ? parent_part->relative_path : "");
+    String uniq_tmp_from = fs::path(uniq_tmp_prefix + "/" + relative_path + MergeTreeData::UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
+
+    if (volume->getDisk()->exists(uniq_tmp_from))
+    {
+        String uniq_tmp_to = fs::path(uniq_tmp_prefix + "/" + new_relative_path + MergeTreeData::UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
+
+        if (volume->getDisk()->exists(uniq_tmp_to))
+        {
+            if (remove_new_dir_if_exists)
+            {
+                Names files;
+                volume->getDisk()->listFiles(uniq_tmp_to, files);
+
+                LOG_WARNING(
+                    storage.log,
+                    "Part uniq tmp directory {} already exists and contains {} files. Removing it.",
+                    fullPath(volume->getDisk(), uniq_tmp_to),
+                    files.size());
+
+                volume->getDisk()->removeRecursive(uniq_tmp_to);
+            }
+            else
+            {
+                throw Exception(
+                    "Part uniq tmp directory " + fullPath(volume->getDisk(), uniq_tmp_to) + " already exists",
+                    ErrorCodes::DIRECTORY_ALREADY_EXISTS);
+            }
+        }
+
+        volume->getDisk()->setLastModified(uniq_tmp_from, Poco::Timestamp::fromEpochTime(time(nullptr)));
+        volume->getDisk()->moveDirectory(uniq_tmp_from, uniq_tmp_to);
+    }
 }
 
 std::optional<bool> IMergeTreeDataPart::keepSharedDataInDecoupledStorage() const
@@ -1347,6 +1508,13 @@ void IMergeTreeDataPart::remove() const
 
             for (const auto & file : {"checksums.txt", "columns.txt"})
                 request.emplace_back(fs::path(to) / file);
+
+            /// remove the files generated for unique engine.
+            if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+            {
+                for (const auto & file : {UNIQUE_ENGINE_DELETE_BITMAP})
+                    request.emplace_back(fs::path(to) / file);
+            }
 
             request.emplace_back(fs::path(to) / DEFAULT_COMPRESSION_CODEC_FILE_NAME, true);
             request.emplace_back(fs::path(to) / DELETE_ON_DESTROY_MARKER_FILE_NAME, true);
@@ -1713,6 +1881,23 @@ String IMergeTreeDataPart::getZeroLevelPartBlockID(std::string_view token) const
     hash.get128(hash_value.bytes);
 
     return info.partition_id + "_" + toString(hash_value.words[0]) + "_" + toString(hash_value.words[1]);
+}
+
+UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
+    bool keep_loaded_in_memory, LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
+{
+    if (unique_key_index)
+        return unique_key_index;
+
+    Stopwatch total_stopwatch{CLOCK_MONOTONIC_COARSE};
+    auto uniq_key_index = loadUniqueIndex(loading_bucket_pool, bucket_range);
+    double ms = total_stopwatch.elapsedMilliseconds();
+    LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "part {} load unique cost {} ms", name, ms);
+
+    if (keep_loaded_in_memory)
+        setUniqueKeyIndex(uniq_key_index);
+
+    return uniq_key_index;
 }
 
 bool isCompactPart(const MergeTreeDataPartPtr & data_part)

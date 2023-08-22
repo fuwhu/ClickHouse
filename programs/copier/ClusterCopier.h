@@ -65,10 +65,6 @@ public:
         experimental_use_sample_offset = value;
     }
 
-    void setProcessId(const String & process_id_){
-        process_id = process_id_;
-    }
-
     void setMaxTableTries(UInt64 tries)
     {
         max_table_tries = tries;
@@ -98,11 +94,6 @@ protected:
         return getWorkersPath() + "_version";
     }
 
-    String getProcessId() const
-    {
-        return process_id;
-    }
-
     String getCurrentWorkerNodePath() const
     {
         return getWorkersPath() + "/" + host_id;
@@ -112,9 +103,6 @@ protected:
             const zkutil::ZooKeeperPtr & zookeeper,
             const String & description,
             bool unprioritized);
-
-    void signProcessStatus(
-        const ProcessState & process_status_sign,const std::string & info);
 
     /*
      * Checks that partition piece or some other entity is clean.
@@ -216,15 +204,12 @@ protected:
             const String & query,
             const Settings & current_settings,
             ClusterExecutionMode execution_mode = ClusterExecutionMode::ON_EACH_SHARD) const;
-    
-    void optimizeWhereCondition(const TaskTable & task_table, const std::string & partition_quoted_name , std::string & query);
 
 private:
     String task_zookeeper_path;
     String task_description_path;
     String host_id;
     String working_database_name;
-    String process_id;
 
     /// Auto update config stuff
     UInt64 task_description_current_version = 1;

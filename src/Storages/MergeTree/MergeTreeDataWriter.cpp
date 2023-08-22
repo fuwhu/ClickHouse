@@ -247,6 +247,8 @@ Block MergeTreeDataWriter::mergeBlock(
             case MergeTreeData::MergingParams::Graphite:
                 return std::make_shared<GraphiteRollupSortedAlgorithm>(
                     block, 1, sort_description, block_size + 1, merging_params.graphite_params, time(nullptr));
+            case MergeTreeData::MergingParams::Unique:
+                return nullptr;
         }
 
         __builtin_unreachable();
@@ -371,6 +373,10 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     /// If we need to calculate some columns to sort.
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
         data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot)->execute(block);
+
+    /// If we need to calculate some columns to deduplicate for unique engine.
+    if (metadata_snapshot->hasUniqueKey())
+        data.getUniqueKeyExpression(metadata_snapshot)->execute(block);
 
     Names sort_columns = metadata_snapshot->getSortingKeyColumns();
     SortDescription sort_description;

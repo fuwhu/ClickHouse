@@ -156,6 +156,8 @@ bool MergeTreePartsMover::selectPartsForMove(
 {
     unsigned parts_to_move_by_policy_rules = 0;
     unsigned parts_to_move_by_ttl_rules = 0;
+    std::vector<String> parts_to_move_by_policy_rules_v;
+    std::vector<String> parts_to_move_by_ttl_rules_v;
     double parts_to_move_total_size_bytes = 0.0;
 
     MergeTreeData::DataPartsVector data_parts = data->getDataPartsVector();
@@ -194,6 +196,7 @@ bool MergeTreePartsMover::selectPartsForMove(
     if (need_to_move.empty() && !metadata_snapshot->hasAnyMoveTTL())
         return false;
 
+    MergeTreeMovingParts parts_to_move_tmp;
     for (const auto & part : data_parts)
     {
         String reason;
@@ -214,7 +217,7 @@ bool MergeTreePartsMover::selectPartsForMove(
 
         if (reservation) /// Found reservation by TTL rule.
         {
-            parts_to_move.emplace_back(part, std::move(reservation));
+            parts_to_move_tmp.emplace_back(part, std::move(reservation));
             /// If table TTL rule satisfies on this part, won't apply policy rules on it.
             /// In order to not over-move, we need to "release" required space on this disk,
             /// possibly to zero.
@@ -223,6 +226,7 @@ bool MergeTreePartsMover::selectPartsForMove(
                 to_insert->second.decreaseRequiredSizeAndRemoveRedundantParts(part->getBytesOnDisk());
             }
             ++parts_to_move_by_ttl_rules;
+            parts_to_move_by_ttl_rules_v.emplace_back(part->name);
             parts_to_move_total_size_bytes += part->getBytesOnDisk();
         }
         else
@@ -245,19 +249,72 @@ bool MergeTreePartsMover::selectPartsForMove(
                 /// But it can be possible to move data from other disks.
                 break;
             }
-            parts_to_move.emplace_back(part, std::move(reservation));
+            parts_to_move_tmp.emplace_back(part, std::move(reservation));
             ++parts_to_move_by_policy_rules;
+            parts_to_move_by_policy_rules_v.emplace_back(part->name);
             parts_to_move_total_size_bytes += part->getBytesOnDisk();
         }
     }
 
-    if (!parts_to_move.empty())
+    if (parts_to_move_tmp.empty())
+        return false;
+
+    if (data->merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
-        LOG_DEBUG(log, "Selected {} parts to move according to storage policy rules and {} parts according to TTL rules, {} total", parts_to_move_by_policy_rules, parts_to_move_by_ttl_rules, ReadableSize(parts_to_move_total_size_bytes));
-        return true;
+        for (auto & part_reservation : parts_to_move_tmp)
+        {
+            const auto & part_info = part_reservation.part;
+
+            if (IMergeTreeDataPart::MOVING == part_info->merge_update_status.load())
+            {
+                LOG_WARNING(
+                    log,
+                    "the merge_update_status of part {} is already MOVING, this may be caused by the failure of last move.",
+                    part_info->name);
+                parts_to_move.emplace_back(std::move(part_reservation));
+            }
+            else
+            {
+                if (data->changePartMergeUpdateStatus(part_info, IMergeTreeDataPart::NORMAL, IMergeTreeDataPart::MOVING))
+                    parts_to_move.emplace_back(std::move(part_reservation));
+                else
+                {
+                    const auto & part_find_by_ttl
+                        = std::find(begin(parts_to_move_by_ttl_rules_v), end(parts_to_move_by_ttl_rules_v), part_info->name);
+
+                    if (part_find_by_ttl != std::end(parts_to_move_by_ttl_rules_v))
+                        --parts_to_move_by_ttl_rules;
+
+                    const auto & part_find_by_policy
+                        = std::find(begin(parts_to_move_by_policy_rules_v), end(parts_to_move_by_policy_rules_v), part_info->name);
+
+                    if (part_find_by_policy != std::end(parts_to_move_by_policy_rules_v))
+                        --parts_to_move_by_policy_rules;
+
+                    parts_to_move_total_size_bytes -= part_info->getBytesOnDisk();
+                }
+            }
+        }
+
+        if (parts_to_move.empty())
+        {
+            LOG_DEBUG(log, "parts_to_move is empty due to unique engine");
+            return false;
+        }
     }
     else
-        return false;
+    {
+        for (auto & part_reservation : parts_to_move_tmp)
+            parts_to_move.emplace_back(std::move(part_reservation));
+    }
+
+    LOG_DEBUG(
+        log,
+        "Selected {} parts to move according to storage policy rules and {} parts according to TTL rules, {} total",
+        parts_to_move_by_policy_rules,
+        parts_to_move_by_ttl_rules,
+        ReadableSize(parts_to_move_total_size_bytes));
+    return true;
 }
 
 MergeTreeData::DataPartPtr MergeTreePartsMover::clonePart(const MergeTreeMoveEntry & moving_part) const
@@ -300,6 +357,10 @@ MergeTreeData::DataPartPtr MergeTreePartsMover::clonePart(const MergeTreeMoveEnt
 
     cloned_part->loadColumnsChecksumsIndexes(true, true);
     cloned_part->modification_time = disk->getLastModified(cloned_part->getFullRelativePath()).epochTime();
+
+    if (data->merging_params.mode == MergeTreeData::MergingParams::Unique)
+        cloned_part->move_source_part = part;
+
     return cloned_part;
 
 }

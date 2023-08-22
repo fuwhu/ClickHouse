@@ -66,6 +66,9 @@ public:
         ActionBlocker * ttl_merges_blocker_)
         {
             global_ctx = std::make_shared<GlobalRuntimeContext>();
+            
+            if (merging_params_.mode == MergeTreeData::MergingParams::Unique)
+                future_part_->setUniqueDeleteBitmaps();
 
             global_ctx->future_part = std::move(future_part_);
             global_ctx->metadata_snapshot = std::move(metadata_snapshot_);
@@ -246,6 +249,7 @@ private:
     struct VerticalMergeRuntimeContext : public IStageRuntimeContext //-V730
     {
         /// Begin dependencies from previous stage
+        MergeTreeData::MergingParams merging_params{};
         std::unique_ptr<WriteBuffer> rows_sources_write_buf{nullptr};
         std::unique_ptr<WriteBufferFromFileBase> rows_sources_uncompressed_write_buf{nullptr};
         std::unique_ptr<TemporaryFile> rows_sources_file;

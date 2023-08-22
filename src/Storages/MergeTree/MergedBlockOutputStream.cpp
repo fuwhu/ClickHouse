@@ -29,6 +29,7 @@ MergedBlockOutputStream::MergedBlockOutputStream(
         storage.getSettings(),
         data_part->index_granularity_info.is_adaptive,
         /* rewrite_primary_key = */ true,
+        /* rewrite_unique_key = */ true,
         blocks_are_granules_size);
 
     if (!part_path.empty())
@@ -159,6 +160,12 @@ MergedBlockOutputStream::Finalizer MergedBlockOutputStream::finalizePartAsync(
        finalizer->written_files = finalizePartOnDisk(new_part, checksums);
 
     new_part->rows_count = rows_count;
+
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        new_part->effective_rows_count = rows_count - new_part->getUniqueDeleteBitmap()->deleteRowsSize();
+    else
+        new_part->effective_rows_count = rows_count;
+
     new_part->modification_time = time(nullptr);
     new_part->index = writer->releaseIndexColumns();
     new_part->checksums = checksums;

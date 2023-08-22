@@ -91,6 +91,52 @@ MergeTreeDataPartWriterOnDisk::MergeTreeDataPartWriterOnDisk(
     , default_codec(default_codec_)
     , compute_granularity(index_granularity.empty())
 {
+    if (settings.rewrite_unique_key && storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        switch (storage.getSettings()->unique_key_index_type)
+        {
+            case 0: {
+                unique_key_index = std::make_shared<StandardMapUniqueKeyIndex>();
+                break;
+            }
+            case 1: {
+                unique_key_index = std::make_shared<StandardUnOrderedMapUniqueKeyIndex>();
+                break;
+            }
+            case 2: {
+                unique_key_index = std::make_shared<StringHashMapUniqueKeyIndex>();
+                break;
+            }
+            default: {
+                throw Exception(
+                    "Invalid type(" + std::to_string(storage.getSettings()->unique_key_index_type) + ") for unique key index.",
+                    ErrorCodes::BAD_ARGUMENTS);
+            }
+        }
+
+        if (storage.getSettings()->enable_unique_key_bucket)
+            unique_key_bucket_index = std::make_shared<UniqueKeyBucketIndex>();
+
+        switch (storage.getSettings()->unique_delete_bitmap_type)
+        {
+            case 0: {
+                unique_delete_bitmap = std::make_shared<Roaring64UniqueDeleteBitmap>();
+                break;
+            }
+            case 1: {
+                unique_delete_bitmap = std::make_shared<Roaring32UniqueDeleteBitmap>();
+                break;
+            }
+            default: {
+                throw Exception(
+                    "Invalid type(" + std::to_string(storage.getSettings()->unique_delete_bitmap_type) + ") for unique delete bitmap.",
+                    ErrorCodes::BAD_ARGUMENTS);
+            }
+        }
+
+        unique_key_minmax_index = std::make_shared<UniqueKeyMinMaxIndex>();
+    }
+
     if (settings.blocks_are_granules_size && !index_granularity.empty())
         throw Exception("Can't take information about index granularity from blocks, when non empty index_granularity array specified", ErrorCodes::LOGICAL_ERROR);
 
@@ -100,6 +146,10 @@ MergeTreeDataPartWriterOnDisk::MergeTreeDataPartWriterOnDisk(
 
     if (settings.rewrite_primary_key)
         initPrimaryIndex();
+
+    if (settings.rewrite_unique_key && storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        initUniqueIndex();
+
     initSkipIndices();
 }
 
@@ -158,6 +208,31 @@ void MergeTreeDataPartWriterOnDisk::initPrimaryIndex()
     {
         index_file_stream = data_part->volume->getDisk()->writeFile(part_path + "primary.idx", DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
         index_stream = std::make_unique<HashingWriteBuffer>(*index_file_stream);
+    }
+}
+
+void MergeTreeDataPartWriterOnDisk::initUniqueIndex()
+{
+    if (metadata_snapshot->hasUniqueKey())
+    {
+        const DiskPtr disk_ptr = data_part->volume->getDisk();
+        unique_key_index_file_stream
+            = disk_ptr->writeFile(part_path + UNIQUE_ENGINE_KEY_INDEX, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
+        unique_key_index_stream = std::make_unique<HashingWriteBuffer>(*unique_key_index_file_stream);
+
+        if (storage.getSettings()->enable_unique_key_bucket)
+        {
+            unique_key_bucket_index_file_stream
+                = disk_ptr->writeFile(part_path + UNIQUE_ENGINE_KEY_BUCKET_INDEX, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
+            unique_key_bucket_index_stream = std::make_unique<HashingWriteBuffer>(*unique_key_bucket_index_file_stream);
+        }
+
+        unique_key_minmax_index_file_stream
+            = disk_ptr->writeFile(part_path + UNIQUE_ENGINE_KEY_MINMAX_INDEX, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
+        unique_key_minmax_index_stream = std::make_unique<HashingWriteBuffer>(*unique_key_minmax_index_file_stream);
+
+        unique_delete_bitmap_file_stream
+            = disk_ptr->writeFile(part_path + UNIQUE_ENGINE_DELETE_BITMAP, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
     }
 }
 
@@ -257,6 +332,99 @@ void MergeTreeDataPartWriterOnDisk::calculateAndSerializeSkipIndices(const Block
     }
 }
 
+void MergeTreeDataPartWriterOnDisk::calculateUniqueData(const Block & unique_key_version_block, const Granules & granules_to_write)
+{
+    if (unique_key_version_block.columns() < 1)
+        throw Exception("UniqueMergeTree must have uniq key.", ErrorCodes::LOGICAL_ERROR);
+
+    const auto & unique_key_names = metadata_snapshot->unique_key.column_names;
+    ColumnRawPtrs unique_key_columns;
+    for (const auto & unique_key_name : unique_key_names)
+        unique_key_columns.emplace_back(unique_key_version_block.getByName(unique_key_name).column.get());
+
+    const auto & version_name = data_part->storage.merging_params.version_column;
+    const auto & version_column = unique_key_version_block.getByName(version_name).column;
+
+    auto unique_keys_combine_column = DataTypeString{}.createColumn();
+
+    for (size_t i = 0; i < unique_key_version_block.rows(); ++i)
+    {
+        Arena pool;
+        auto encoded_value = serializeKeysToPoolContiguous(i, unique_key_names.size(), unique_key_columns, pool);
+        unique_keys_combine_column->insertData(encoded_value.data, encoded_value.size);
+    }
+
+    FieldRef unique_key_min_field;
+    FieldRef unique_key_max_field;
+    unique_keys_combine_column->getExtremes(unique_key_min_field, unique_key_max_field);
+    String unique_key_min_value = unique_key_min_field.get<String>();
+    String unique_key_max_value = unique_key_max_field.get<String>();
+
+    size_t last_row_count = 0;
+    if (!unique_key_index->empty())
+    {
+        last_row_count = unique_key_index->size() + unique_delete_bitmap->deleteRowsSize();
+
+        String exists_min = unique_key_minmax_index->getMin();
+        String exists_max = unique_key_minmax_index->getMax();
+
+        String final_min = exists_min <= unique_key_min_value ? exists_min : unique_key_min_value;
+        String final_max = exists_max >= unique_key_max_value ? exists_max : unique_key_max_value;
+
+        unique_key_minmax_index->setMinMax(final_min, final_max);
+    }
+    else
+    {
+        auto * current_data_part = const_cast<MergeTreeData::DataPart *>(data_part.get());
+        current_data_part->setUniqueKeyIndex(unique_key_index);
+        current_data_part->setUniqueDeleteBitmap(unique_delete_bitmap);
+        current_data_part->setUniqueKeyMinMaxIndex(unique_key_minmax_index);
+
+        if (storage.getSettings()->enable_unique_key_bucket)
+        {
+            unique_key_bucket_index->init(storage.getSettings()->unique_key_bucket_size, current_data_part->rows_count);
+            current_data_part->setUniqueKeyBucketIndex(unique_key_bucket_index);
+            unique_key_index->initBucket(unique_key_bucket_index->getBucketNum());
+        }
+
+        unique_key_minmax_index->setMinMax(unique_key_min_value, unique_key_max_value);
+    }
+
+    for (const auto & granule : granules_to_write)
+    {
+        size_t pos = granule.start_row;
+
+        size_t rows_read = std::min(granule.rows_to_write, unique_key_version_block.rows() - pos);
+
+        for (size_t index = 0; index < rows_read; ++index)
+        {
+            size_t row_number = pos + index;
+            UInt64 version_field = version_column.get()->getUInt(row_number);
+
+            Field key_field;
+            unique_keys_combine_column->get(row_number, key_field);
+            String key = key_field.get<String>();
+
+            auto version_and_row = unique_key_index->get(key);
+            if (version_and_row)
+            {
+                const auto & pre_version_field = std::get<0>(version_and_row.value());
+                const auto & pre_row_number = std::get<1>(version_and_row.value());
+
+                if (pre_version_field >= version_field)
+                    unique_delete_bitmap->deleteRow(row_number + last_row_count);
+                else
+                {
+                    unique_delete_bitmap->deleteRow(pre_row_number);
+                    unique_key_index->add(key, std::make_tuple(version_field, row_number + last_row_count));
+                }
+            }
+            else
+                unique_key_index->add(key, std::make_tuple(version_field, row_number + last_row_count));
+        }
+    }
+}
+
 void MergeTreeDataPartWriterOnDisk::fillPrimaryIndexChecksums(MergeTreeData::DataPart::Checksums & checksums)
 {
     bool write_final_mark = (with_final_mark && data_written);
@@ -292,6 +460,87 @@ void MergeTreeDataPartWriterOnDisk::finishPrimaryIndexSerialization(bool sync)
         if (sync)
             index_file_stream->sync();
         index_stream = nullptr;
+    }
+}
+
+void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataPart::Checksums & checksums)
+{
+    if (data_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        auto * new_data_part = const_cast<IMergeTreeDataPart *>(data_part.get());
+
+        /// the effective_rows of merge part may be equal to zero.
+        /// if effective_rows = 0, set the empty unique key index, unique_delete_bitmap and unique_key_bucket_index to avoid null pointer.
+        new_data_part->setUniqueKeyIndex(unique_key_index);
+        new_data_part->setUniqueDeleteBitmap(unique_delete_bitmap);
+        new_data_part->setUniqueKeyMinMaxIndex(unique_key_minmax_index);
+
+        if (storage.getSettings()->enable_unique_key_bucket)
+            new_data_part->setUniqueKeyBucketIndex(unique_key_bucket_index);
+
+        if (!unique_key_bucket_index_stream)
+            unique_key_index->serializeBinary(*unique_key_index_stream);
+        else
+        {
+            unique_key_index->serializeBinary(*unique_key_index_stream, unique_key_bucket_index);
+            unique_key_bucket_index->serializeBinary(*unique_key_bucket_index_stream);
+
+            unique_key_bucket_index_stream->next();
+            checksums.files[UNIQUE_ENGINE_KEY_BUCKET_INDEX].file_size = unique_key_bucket_index_stream->count();
+            checksums.files[UNIQUE_ENGINE_KEY_BUCKET_INDEX].file_hash = unique_key_bucket_index_stream->getHash();
+            unique_key_bucket_index_file_stream->preFinalize();
+        }
+
+        unique_key_index_stream->next();
+        checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_size = unique_key_index_stream->count();
+        checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_hash = unique_key_index_stream->getHash();
+        unique_key_index_file_stream->preFinalize();
+
+        unique_key_minmax_index->serializeBinary(*unique_key_minmax_index_stream);
+        unique_key_minmax_index_stream->next();
+        checksums.files[UNIQUE_ENGINE_KEY_MINMAX_INDEX].file_size = unique_key_minmax_index_stream->count();
+        checksums.files[UNIQUE_ENGINE_KEY_MINMAX_INDEX].file_hash = unique_key_minmax_index_stream->getHash();
+        unique_key_minmax_index_file_stream->preFinalize();
+
+        unique_delete_bitmap->serializeBinary(*unique_delete_bitmap_file_stream);
+        unique_delete_bitmap_file_stream->preFinalize();
+    }
+}
+
+void MergeTreeDataPartWriterOnDisk::finishUniqueDataSerialization(bool sync)
+{
+    if (data_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        if (unique_key_index_stream)
+        {
+            unique_key_index_file_stream->finalize();
+            if (sync)
+                unique_key_index_file_stream->sync();
+            unique_key_index_stream = nullptr;
+        }
+
+        if (unique_key_bucket_index_stream)
+        {
+            unique_key_bucket_index_file_stream->finalize();
+            if (sync)
+                unique_key_bucket_index_file_stream->sync();
+            unique_key_bucket_index_stream = nullptr;
+        }
+
+        if (unique_key_minmax_index_stream)
+        {
+            unique_key_minmax_index_file_stream->finalize();
+            if (sync)
+                unique_key_minmax_index_file_stream->sync();
+            unique_key_minmax_index_stream = nullptr;
+        }
+
+        if (unique_delete_bitmap_file_stream)
+        {
+            unique_delete_bitmap_file_stream->finalize();
+            if (sync)
+                unique_delete_bitmap_file_stream->sync();
+        }
     }
 }
 

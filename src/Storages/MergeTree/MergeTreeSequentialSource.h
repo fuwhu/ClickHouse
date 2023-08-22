@@ -3,6 +3,7 @@
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/IMergeTreeReader.h>
 #include <Storages/MergeTree/MarkRange.h>
+#include "Storages/MergeTree/UniqueMergeTreeIndex.h"
 #include <memory>
 
 namespace DB
@@ -29,6 +30,8 @@ public:
 
     size_t getCurrentRow() const { return current_row; }
 
+    void setUniqueDeleteBitmap(UniqueDeleteBitmapPtr unique_delete_bitmap_);
+
 protected:
     Chunk generate() override;
 
@@ -39,6 +42,8 @@ private:
 
     /// Data part will not be removed if the pointer owns it
     MergeTreeData::DataPartPtr data_part;
+
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
 
     /// Columns we have to read (each Block from read will contain them)
     Names columns_to_read;
