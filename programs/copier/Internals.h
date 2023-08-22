@@ -149,6 +149,14 @@ enum class TaskStatus
     Error,
 };
 
+/// Execution status of a process
+enum class ProcessState
+{
+    Running = 0,
+    Finished,
+    Failed
+};
+
 struct MultiTransactionInfo
 {
     int32_t code;

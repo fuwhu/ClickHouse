@@ -2,6 +2,7 @@
 
 #include "Internals.h"
 #include "StatusAccumulator.h"
+#include "StatusProcesses.h"
 
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/ZooKeeper/KeeperException.h>
@@ -65,6 +66,9 @@ void ClusterCopier::init()
     zookeeper->createAncestors(getWorkersPath() + "/");
     /// Init status node
     zookeeper->createIfNotExists(task_zookeeper_path + "/status", "{}");
+    //  Init process_status node
+    zookeeper->createIfNotExists(task_zookeeper_path + "/processes_status", "{}");
+    zookeeper->createIfNotExists(task_zookeeper_path + "/processes_status" + "/" + host_id, "{}");
 }
 
 template <typename T>
@@ -226,6 +230,20 @@ void ClusterCopier::uploadTaskDescription(const std::string & task_path, const s
         ((code != Coordination::Error::ZOK && !force) ? "not " : ""), local_task_description_path, code, Coordination::errorMessage(code));
 }
 
+void ClusterCopier::signProcessStatus(const ProcessState & process_status_sign,const std::string & info)
+{
+    //  Set the infomations of current process to 'process_status' node in Zookeeper.
+    //  Provides process status for third-party monitors.
+    auto zookeeper = getContext()->getZooKeeper();
+
+    auto statuses = std::make_shared<StatusProcesses::ProcessStatus>();
+    statuses->info = info;
+    statuses->process_status_sign = static_cast<size_t>(process_status_sign);
+    
+    auto statuses_to_commit = StatusProcesses::serializeToJSON(statuses);
+    zookeeper->set(task_zookeeper_path + "/processes_status" + "/" + host_id,statuses_to_commit);
+}
+
 void ClusterCopier::reloadTaskDescription()
 {
     auto zookeeper = getContext()->getZooKeeper();
@@ -261,6 +279,7 @@ void ClusterCopier::updateConfigIfNeeded()
 
 void ClusterCopier::process(const ConnectionTimeouts & timeouts)
 {
+    signProcessStatus(ProcessState::Running,"Start running");
     for (TaskTable & task_table : task_cluster->table_tasks)
     {
         LOG_INFO(log, "Process table task {} with {} shards, {} of them are local ones", task_table.table_id, task_table.all_shards.size(), task_table.local_shards.size());
@@ -321,9 +340,11 @@ void ClusterCopier::process(const ConnectionTimeouts & timeouts)
 
         if (!table_is_done)
         {
-            throw Exception("Too many tries to process table " + task_table.table_id + ". Abort remaining execution",
-                            ErrorCodes::UNFINISHED);
+            std::string err_str = "Too many tries to process table " + task_table.table_id + ". Abort remaining execution";
+            signProcessStatus(ProcessState::Failed ,err_str);
+            throw Exception(err_str,ErrorCodes::UNFINISHED);
         }
+        signProcessStatus(ProcessState::Finished,"Finished");
     }
 }
 
