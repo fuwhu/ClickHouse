@@ -41,7 +41,7 @@ def test_create_insert_select(started_cluster):
         node.query(
             """
                 CREATE TABLE test_unique_engine (id UInt64, name String, version DateTime)
-                ENGINE = ReplicatedMergeTree('/clickhouse/tables/0/test_unique_engine', '{replica}', version)
+                ENGINE = ReplicatedUniqueMergeTree('/clickhouse/tables/0/test_unique_engine', '{replica}', version)
                 ORDER BY id
                 UNIQUE KEY name
                 SETTINGS unique_key_index_type = 1;

@@ -1,3 +1,14 @@
+### ClickHouse release v22.3.15.1-bili-1.0.1, 2023-08-22
+#### New Feature
+
+* Added unique engine which supports data upsert. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#314](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/314)
+* Added Smart encoding for zcurve sorting. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#306](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/306)
+* Added new version of grouping sets which group the data with grouping sets locally and then merge aggregated data on initiate node. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#311](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/311)
+
+#### Improvement
+
+* add process status for clickhouse copier on zookeeper. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#331](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/331)
+
 ### ClickHouse release v22.3-lts, 2022-03-17
 
 #### Backward Incompatible Change
