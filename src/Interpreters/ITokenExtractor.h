@@ -26,7 +26,7 @@ struct ITokenExtractor
 
     /// Special implementation for creating bloom filter for LIKE function.
     /// It skips unescaped `%` and `_` and supports escaping symbols, but it is less lightweight.
-    virtual bool nextInStringLike(const char * data, size_t length, size_t * pos, String & out) const = 0;
+    virtual bool nextInStringLike(const char * data, size_t length, size_t * pos, String & out, bool set_percent_separator = false) const = 0;
 
     virtual void stringToBloomFilter(const char * data, size_t length, BloomFilter & bloom_filter) const = 0;
 
@@ -35,7 +35,7 @@ struct ITokenExtractor
         return stringToBloomFilter(data, length, bloom_filter);
     }
 
-    virtual void stringLikeToBloomFilter(const char * data, size_t length, BloomFilter & bloom_filter) const = 0;
+    virtual void stringLikeToBloomFilter(const char * data, size_t length, BloomFilter & bloom_filter, bool set_percent_separator = false) const = 0;
 
 };
 
@@ -64,11 +64,11 @@ class ITokenExtractorHelper : public ITokenExtractor
             bloom_filter.add(data + token_start, token_len);
     }
 
-    void stringLikeToBloomFilter(const char * data, size_t length, BloomFilter & bloom_filter) const override
+    void stringLikeToBloomFilter(const char * data, size_t length, BloomFilter & bloom_filter, bool set_percent_separator) const override
     {
         size_t cur = 0;
         String token;
-        while (cur < length && static_cast<const Derived *>(this)->nextInStringLike(data, length, &cur, token))
+        while (cur < length && static_cast<const Derived *>(this)->nextInStringLike(data, length, &cur, token, set_percent_separator))
             bloom_filter.add(token.c_str(), token.size());
     }
 };
@@ -83,7 +83,7 @@ struct NgramTokenExtractor final : public ITokenExtractorHelper<NgramTokenExtrac
 
     bool nextInString(const char * data, size_t length, size_t *  __restrict pos, size_t * __restrict token_start, size_t * __restrict token_length) const override;
 
-    bool nextInStringLike(const char * data, size_t length, size_t * pos, String & token) const override;
+    bool nextInStringLike(const char * data, size_t length, size_t * pos, String & token, bool set_percent_separator = false) const override;
 
     size_t getN() const { return n; }
 
@@ -101,7 +101,7 @@ struct SplitTokenExtractor final : public ITokenExtractorHelper<SplitTokenExtrac
 
     bool nextInStringPadded(const char * data, size_t length, size_t * __restrict pos, size_t * __restrict token_start, size_t * __restrict token_length) const override;
 
-    bool nextInStringLike(const char * data, size_t length, size_t * __restrict pos, String & token) const override;
+    bool nextInStringLike(const char * data, size_t length, size_t * __restrict pos, String & token, bool set_percent_separator = false) const override;
 
 };
 

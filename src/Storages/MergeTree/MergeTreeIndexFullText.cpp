@@ -402,7 +402,8 @@ bool MergeTreeConditionFullText::traverseAtomAST(const ASTPtr & node, Block & bl
                  function->name == "hasToken" ||
                  function->name == "startsWith" ||
                  function->name == "endsWith" ||
-                 function->name == "multiSearchAny")
+                 function->name == "multiSearchAny" ||
+                 function->name == "tokenLike")
         {
             Field const_value;
             DataTypePtr const_type;
@@ -538,6 +539,15 @@ bool MergeTreeConditionFullText::traverseASTEquals(
         out.bloom_filter = std::make_unique<BloomFilter>(params);
         const auto & value = const_value.get<String>();
         token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter);
+        return true;
+    }
+    else if (function_name == "tokenLike")
+    {
+        out.key_column = key_column_num;
+        out.function = RPNElement::FUNCTION_EQUALS;
+        out.bloom_filter = std::make_unique<BloomFilter>(params);
+        const auto & value = const_value.get<String>();
+        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter, true);
         return true;
     }
     else if (function_name == "notLike")

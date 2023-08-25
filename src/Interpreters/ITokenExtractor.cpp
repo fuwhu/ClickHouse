@@ -32,7 +32,7 @@ bool NgramTokenExtractor::nextInString(const char * data, size_t length, size_t 
     return code_points == n;
 }
 
-bool NgramTokenExtractor::nextInStringLike(const char * data, size_t length, size_t * pos, String & token) const
+bool NgramTokenExtractor::nextInStringLike(const char * data, size_t length, size_t * pos, String & token, bool /* set_percent_separator */) const
 {
     token.clear();
 
@@ -196,14 +196,20 @@ bool SplitTokenExtractor::nextInStringPadded(const char * data, size_t length, s
     return *token_length > 0;
 }
 
-bool SplitTokenExtractor::nextInStringLike(const char * data, size_t length, size_t * pos, String & token) const
+bool SplitTokenExtractor::nextInStringLike(const char * data, size_t length, size_t * pos, String & token, bool set_percent_separator) const
 {
     token.clear();
     bool bad_token = false; // % or _ before token
     bool escaped = false;
     while (*pos < length)
     {
-        if (!escaped && (data[*pos] == '%' || data[*pos] == '_'))
+        if (!escaped && !set_percent_separator && (data[*pos] == '%' || data[*pos] == '_'))
+        {
+            token.clear();
+            bad_token = true;
+            ++*pos;
+        }
+        else if (!escaped && set_percent_separator && data[*pos] == '_') 
         {
             token.clear();
             bad_token = true;
