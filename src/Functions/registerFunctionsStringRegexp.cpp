@@ -7,6 +7,7 @@ void registerFunctionLike(FunctionFactory &);
 void registerFunctionILike(FunctionFactory &);
 void registerFunctionNotLike(FunctionFactory &);
 void registerFunctionNotILike(FunctionFactory &);
+void registerFunctionTokenLike(FunctionFactory &);
 void registerFunctionMatch(FunctionFactory &);
 void registerFunctionExtract(FunctionFactory &);
 void registerFunctionReplaceOne(FunctionFactory &);
@@ -44,5 +45,6 @@ void registerFunctionsStringRegexp(FunctionFactory & factory)
     registerFunctionExtractGroups(factory);
     registerFunctionExtractAllGroupsVertical(factory);
     registerFunctionExtractAllGroupsHorizontal(factory);
+    registerFunctionTokenLike(factory);
 }
 }
