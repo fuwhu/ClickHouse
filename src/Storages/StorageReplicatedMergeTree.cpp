@@ -6364,6 +6364,7 @@ void StorageReplicatedMergeTree::replacePartitionFrom(
 
         String drop_range_fake_part_name = getPartNamePossiblyFake(format_version, drop_range);
 
+        std::set<String> src_parts_checksums;
         for (const auto & src_part : src_all_parts)
         {
             /// We also make some kind of deduplication to avoid duplicated parts in case of ATTACH PARTITION
@@ -6376,13 +6377,16 @@ void StorageReplicatedMergeTree::replacePartitionFrom(
                     ErrorCodes::LOGICAL_ERROR);
 
             String hash_hex = src_part->checksums.getTotalChecksumHex();
+            bool is_duplicated_part = src_parts_checksums.contains(hash_hex);
 
             if (replace)
                 LOG_INFO(log, "Trying to replace {} with hash_hex {}", src_part->name, hash_hex);
             else
                 LOG_INFO(log, "Trying to attach {} with hash_hex {}", src_part->name, hash_hex);
 
-            String block_id_path = replace ? "" : (fs::path(zookeeper_path) / "blocks" / (partition_id + "_replace_from_" + hash_hex));
+            String block_id_path = (replace || is_duplicated_part)
+                ? ""
+                : (fs::path(zookeeper_path) / "blocks" / (partition_id + "_replace_from_" + hash_hex));
 
             auto lock = allocateBlockNumber(partition_id, zookeeper, block_id_path);
             if (!lock)
@@ -6390,6 +6394,7 @@ void StorageReplicatedMergeTree::replacePartitionFrom(
                 LOG_INFO(log, "Part {} (hash {}) has been already attached", src_part->name, hash_hex);
                 continue;
             }
+            src_parts_checksums.insert(hash_hex);
 
             UInt64 index = lock->getNumber();
             MergeTreePartInfo dst_part_info(partition_id, index, index, src_part->info.level);
