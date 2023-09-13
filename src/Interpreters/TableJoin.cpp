@@ -15,6 +15,8 @@
 
 #include <Interpreters/DictionaryReader.h>
 #include <Interpreters/ExternalDictionariesLoader.h>
+#include <Interpreters/TreeRewriter.h>
+#include <Interpreters/ExpressionAnalyzer.h>
 
 #include <Parsers/ASTExpressionList.h>
 #include <Parsers/ASTFunction.h>
@@ -773,6 +775,13 @@ void TableJoin::resetToCross()
 {
     this->resetKeys();
     this->table_join.kind = ASTTableJoin::Kind::Cross;
+}
+
+ActionsDAGPtr TableJoin::createJoinedBlockActions(ContextPtr context) const
+{
+    ASTPtr expression_list = rightKeysList();
+    auto syntax_result = TreeRewriter(context).analyze(expression_list, columnsFromJoinedTable());
+    return ExpressionAnalyzer(expression_list, syntax_result, context).getActionsDAG(true, false);
 }
 
 }

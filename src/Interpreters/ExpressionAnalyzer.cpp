@@ -472,7 +472,7 @@ void ExpressionAnalyzer::initGlobalSubqueriesAndExternalTables(bool do_global)
     if (do_global)
     {
         GlobalSubqueriesVisitor::Data subqueries_data(
-            getContext(), subquery_depth, isRemoteStorage(), external_tables, subqueries_for_sets, has_global_subqueries);
+            getContext(), subquery_depth, isRemoteStorage(), external_tables, subqueries_for_sets, has_global_subqueries, syntax->analyzed_join.get());
         GlobalSubqueriesVisitor(subqueries_data).visit(query);
     }
 }
@@ -994,13 +994,6 @@ JoinPtr SelectQueryExpressionAnalyzer::appendJoin(ExpressionActionsChain & chain
     return table_join;
 }
 
-static ActionsDAGPtr createJoinedBlockActions(ContextPtr context, const TableJoin & analyzed_join)
-{
-    ASTPtr expression_list = analyzed_join.rightKeysList();
-    auto syntax_result = TreeRewriter(context).analyze(expression_list, analyzed_join.columnsFromJoinedTable());
-    return ExpressionAnalyzer(expression_list, syntax_result, context).getActionsDAG(true, false);
-}
-
 static std::shared_ptr<IJoin> chooseJoinAlgorithm(std::shared_ptr<TableJoin> analyzed_join, const Block & sample_block, ContextPtr context)
 {
     /// HashJoin with Dictionary optimisation
@@ -1022,7 +1015,7 @@ static std::unique_ptr<QueryPlan> buildJoinedPlan(
     SelectQueryOptions query_options)
 {
     /// Actions which need to be calculated on joined block.
-    auto joined_block_actions = createJoinedBlockActions(context, analyzed_join);
+    auto joined_block_actions = analyzed_join.createJoinedBlockActions(context);
     Names original_right_columns;
 
     NamesWithAliases required_columns_with_aliases = analyzed_join.getRequiredColumns(
