@@ -21,12 +21,19 @@ struct MarkRange
     MarkRange() = default;
     MarkRange(const size_t begin_, const size_t end_) : begin{begin_}, end{end_} {}
 
+    size_t getNumberOfMarks() const;
+
     bool operator==(const MarkRange & rhs) const;
 
     bool operator<(const MarkRange & rhs) const;
 };
 
-using MarkRanges = std::deque<MarkRange>;
+struct MarkRanges : public std::deque<MarkRange>
+{
+    using std::deque<MarkRange>::deque;
+
+    size_t getNumberOfMarks() const;
+};
 
 /** Get max range.end from ranges.
  */

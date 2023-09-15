@@ -911,8 +911,9 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipInd
 
                 index_and_condition.stat.total_parts.fetch_add(1, std::memory_order_relaxed);
 
-                size_t total_granules = 0;
-                size_t granules_dropped = 0;
+                size_t total_granules = ranges.ranges.getNumberOfMarks();
+                index_and_condition.stat.total_granules.fetch_add(total_granules, std::memory_order_relaxed);
+                
                 ranges.ranges = filterMarksUsingIndex(
                     index_and_condition.index,
                     index_and_condition.condition,
@@ -920,14 +921,11 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipInd
                     ranges.ranges,
                     settings,
                     reader_settings,
-                    total_granules,
-                    granules_dropped,
                     mark_cache.get(),
                     uncompressed_cache.get(),
                     log);
 
-                index_and_condition.stat.total_granules.fetch_add(total_granules, std::memory_order_relaxed);
-                index_and_condition.stat.granules_dropped.fetch_add(granules_dropped, std::memory_order_relaxed);
+                index_and_condition.stat.granules_dropped.fetch_add(total_granules - ranges.ranges.getNumberOfMarks(), std::memory_order_relaxed);
 
                 if (ranges.ranges.empty())
                     index_and_condition.stat.parts_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -940,17 +938,15 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipInd
 
                 indices_and_condition.stat.total_parts.fetch_add(1, std::memory_order_relaxed);
 
-                size_t total_granules = 0;
-                size_t granules_dropped = 0;
+                size_t total_granules = ranges.ranges.getNumberOfMarks();
                 ranges.ranges = filterMarksUsingMergedIndex(
                     indices_and_condition.indices, indices_and_condition.condition,
                     part, ranges.ranges,
                     settings, reader_settings,
-                    total_granules, granules_dropped,
                     mark_cache.get(), uncompressed_cache.get(), log);
 
                 indices_and_condition.stat.total_granules.fetch_add(total_granules, std::memory_order_relaxed);
-                indices_and_condition.stat.granules_dropped.fetch_add(granules_dropped, std::memory_order_relaxed);
+                indices_and_condition.stat.granules_dropped.fetch_add(total_granules - ranges.ranges.getNumberOfMarks(), std::memory_order_relaxed);
 
                 if (ranges.ranges.empty())
                     indices_and_condition.stat.parts_dropped.fetch_add(1, std::memory_order_relaxed);
@@ -1500,8 +1496,6 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingIndex(
     const MarkRanges & ranges,
     const Settings & settings,
     const MergeTreeReaderSettings & reader_settings,
-    size_t & total_granules,
-    size_t & granules_dropped,
     MarkCache * mark_cache,
     UncompressedCache * uncompressed_cache,
     Poco::Logger * log)
@@ -1555,8 +1549,6 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingIndex(
         if (last_index_mark != index_range.begin || !granule)
             reader.seek(index_range.begin);
 
-        total_granules += index_range.end - index_range.begin;
-
         for (size_t index_mark = index_range.begin; index_mark < index_range.end; ++index_mark)
         {
             if (index_mark != index_range.begin || !granule || last_index_mark != index_range.begin)
@@ -1567,10 +1559,7 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingIndex(
                     std::min(ranges[i].end, (index_mark + 1) * index_granularity));
 
             if (!condition->mayBeTrueOnGranule(granule))
-            {
-                ++granules_dropped;
                 continue;
-            }
 
             if (res.empty() || res.back().end - data_range.begin > min_marks_for_seek)
                 res.push_back(data_range);
@@ -1591,8 +1580,6 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingMergedIndex(
     const MarkRanges & ranges,
     const Settings & settings,
     const MergeTreeReaderSettings & reader_settings,
-    size_t & total_granules,
-    size_t & granules_dropped,
     MarkCache * mark_cache,
     UncompressedCache * uncompressed_cache,
     Poco::Logger * log)
@@ -1649,8 +1636,6 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingMergedIndex(
             for (auto & reader : readers)
                 reader->seek(index_range.begin);
 
-        total_granules += index_range.end - index_range.begin;
-
         for (size_t index_mark = index_range.begin; index_mark < index_range.end; ++index_mark)
         {
             if (index_mark != index_range.begin || !granules_filled || last_index_mark != index_range.begin)
@@ -1667,10 +1652,7 @@ MarkRanges MergeTreeDataSelectExecutor::filterMarksUsingMergedIndex(
                 std::min(range.end, (index_mark + 1) * index_granularity));
 
             if (!condition->mayBeTrueOnGranule(granules))
-            {
-                ++granules_dropped;
                 continue;
-            }
 
             if (res.empty() || res.back().end - data_range.begin > min_marks_for_seek)
                 res.push_back(data_range);

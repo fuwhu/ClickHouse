@@ -24,7 +24,7 @@
           Name: t_minmax
           Description: minmax GRANULARITY 2
           Parts: 1/2
-          Granules: 2/6
+          Granules: 3/6
         Skip
           Name: t_set
           Description: set GRANULARITY 2
