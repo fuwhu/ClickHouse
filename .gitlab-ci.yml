@@ -56,7 +56,7 @@ build:
     - echo "gitlab runner path " $GITLAB_RUNNER_PATH
     - echo "change to local ck path " $LOCAL_CK_PATH
     - cd $LOCAL_CK_PATH
-    - git fetch https://gitlab-ci-token:$CI_JOB_TOKEN@git.bilibili.co/datacenter/clickhouse.git $CI_COMMIT_SHA
+    - git fetch origin $CI_COMMIT_SHA
     - git checkout $CI_COMMIT_SHA
     - git submodule update --init --recursive
     - echo "check local build dir is exist"
