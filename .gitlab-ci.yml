@@ -34,6 +34,7 @@ code_scan:
   resource_group: devide
   only:
     - dev-22
+    - /release.*$/
   script:
     - echo "code_scan begin"
     - ./utils/check-style/check-duplicate-includes.sh
@@ -46,7 +47,7 @@ build:
   resource_group: devide
   only:
     - dev-22
-    - tags
+    - /release.*$/
   before_script:
     - echo "exec git before_script"
     - echo "git branch bef name " $CI_COMMIT_REF_NAME
@@ -87,6 +88,7 @@ functional_tests:
   stage: functional_tests
   only:
     - dev-22
+    - /release.*$/
   before_script:
     - systemctl stop clickhouse-server-ci.service
     - echo "replace clickhouse binary begin"
@@ -117,6 +119,7 @@ integration_tests:
   stage: integration_tests
   only:
     - dev-22
+    - /release.*$/
   script:
     - echo "integration_tests begin"
     - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_repliacted_storage_unique_engine -ss'
@@ -124,65 +127,65 @@ integration_tests:
   dependencies:
     - build
 
-upload:
-  stage: upload
-  resource_group: devide
-  only:
-    - tags
-  script:
-    - export START_BUILD_TIME=`date "+%Y-%m-%d %H:%M:%S"`
-    - export DEST_FILE_NAME="clickhouse"
-    - export DEST_FILE_LOCAL_PATH=build/programs/clickhouse
-    - export DEST_FILE_REMOTE_PATH=$CI_PROJECT_PATH/$CI_BUILD_ID/$DEST_FILE_NAME
-    - export DEST_FILE_MD5=`alterctl md5 $DEST_FILE_LOCAL_PATH`
-    - alterctl fs upload $DEST_FILE_LOCAL_PATH $DEST_FILE_REMOTE_PATH --debug
-    - |
-      curl -v -X POST 'http://alter.bilibili.co/api/alter/metadata/pack/ci/open/add/one' \
-      --header 'Content-Type: application/json' \
-      --header 'Accept: application/json' \
-      --header 'Alter-tenant: alter-ci' \
-      --header 'Alter-Token: 5VOi3w6J0CGYmL0t' \
-      --data '{
-          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
-          "ciBranch": "'"$CI_COMMIT_BRANCH"'",
-          "ciId": "'"$CI_BUILD_ID"'",
-          "ciTag":"'"$CI_COMMIT_TAG"'",
-          "ciTime":"'"$START_BUILD_TIME"'",
-          "ciUser":"'"$GITLAB_USER_LOGIN"'",
-          "commitId":"'"$CI_COMMIT_SHA"'",
-          "commitMsg":"'"$CI_COMMIT_TITLE"'",
-          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
-          "gitRepo": "'"$CI_PROJECT_NAME"'",
-          "packMd5":"'"$DEST_FILE_MD5"'",
-          "packName":"'"$DEST_FILE_NAME"'",
-          "packType": 0,
-          "packSize": 0
-      }'
-    - |
-      curl -x 172.22.21.111:80 -X POST 'http://pre-cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
-      --header 'Content-Type: application/json' \
-      --header 'Accept: application/json' \
-      --data '{
-          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
-          "ciTag":"'"$CI_COMMIT_TAG"'",
-          "commitId":"'"$CI_COMMIT_SHA"'",
-          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
-          "gitRepo": "'"$CI_PROJECT_NAME"'",
-          "packMd5":"'"$DEST_FILE_MD5"'",
-          "packName":"'"$DEST_FILE_NAME"'"
-      }'
-    - |
-      curl -vik --resolve cloud-bm.bilibili.co:443:172.22.21.10 -X POST 'https://cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
-      --header 'Content-Type: application/json' \
-      --header 'Accept: application/json' \
-      --data '{
-          "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
-          "ciTag":"'"$CI_COMMIT_TAG"'",
-          "commitId":"'"$CI_COMMIT_SHA"'",
-          "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
-          "gitRepo": "'"$CI_PROJECT_NAME"'",
-          "packMd5":"'"$DEST_FILE_MD5"'",
-          "packName":"'"$DEST_FILE_NAME"'"
-      }'
-  dependencies:
-    - build
+# upload:
+#   stage: upload
+#   resource_group: devide
+#   only:
+#     - tags
+#   script:
+#     - export START_BUILD_TIME=`date "+%Y-%m-%d %H:%M:%S"`
+#     - export DEST_FILE_NAME="clickhouse"
+#     - export DEST_FILE_LOCAL_PATH=build/programs/clickhouse
+#     - export DEST_FILE_REMOTE_PATH=$CI_PROJECT_PATH/$CI_BUILD_ID/$DEST_FILE_NAME
+#     - export DEST_FILE_MD5=`alterctl md5 $DEST_FILE_LOCAL_PATH`
+#     - alterctl fs upload $DEST_FILE_LOCAL_PATH $DEST_FILE_REMOTE_PATH --debug
+#     - |
+#       curl -v -X POST 'http://alter.bilibili.co/api/alter/metadata/pack/ci/open/add/one' \
+#       --header 'Content-Type: application/json' \
+#       --header 'Accept: application/json' \
+#       --header 'Alter-tenant: alter-ci' \
+#       --header 'Alter-Token: 5VOi3w6J0CGYmL0t' \
+#       --data '{
+#           "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+#           "ciBranch": "'"$CI_COMMIT_BRANCH"'",
+#           "ciId": "'"$CI_BUILD_ID"'",
+#           "ciTag":"'"$CI_COMMIT_TAG"'",
+#           "ciTime":"'"$START_BUILD_TIME"'",
+#           "ciUser":"'"$GITLAB_USER_LOGIN"'",
+#           "commitId":"'"$CI_COMMIT_SHA"'",
+#           "commitMsg":"'"$CI_COMMIT_TITLE"'",
+#           "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+#           "gitRepo": "'"$CI_PROJECT_NAME"'",
+#           "packMd5":"'"$DEST_FILE_MD5"'",
+#           "packName":"'"$DEST_FILE_NAME"'",
+#           "packType": 0,
+#           "packSize": 0
+#       }'
+#     - |
+#       curl -x 172.22.21.111:80 -X POST 'http://pre-cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
+#       --header 'Content-Type: application/json' \
+#       --header 'Accept: application/json' \
+#       --data '{
+#           "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+#           "ciTag":"'"$CI_COMMIT_TAG"'",
+#           "commitId":"'"$CI_COMMIT_SHA"'",
+#           "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+#           "gitRepo": "'"$CI_PROJECT_NAME"'",
+#           "packMd5":"'"$DEST_FILE_MD5"'",
+#           "packName":"'"$DEST_FILE_NAME"'"
+#       }'
+#     - |
+#       curl -vik --resolve cloud-bm.bilibili.co:443:172.22.21.10 -X POST 'https://cloud-bm.bilibili.co/bmr-cluster-metadata/app/api/bmr/installationPackage/update/installationPackage/tag' \
+#       --header 'Content-Type: application/json' \
+#       --header 'Accept: application/json' \
+#       --data '{
+#           "bossPath":"'"$DEST_FILE_REMOTE_PATH"'",
+#           "ciTag":"'"$CI_COMMIT_TAG"'",
+#           "commitId":"'"$CI_COMMIT_SHA"'",
+#           "gitGroup":"'"$CI_PROJECT_NAMESPACE"'",
+#           "gitRepo": "'"$CI_PROJECT_NAME"'",
+#           "packMd5":"'"$DEST_FILE_MD5"'",
+#           "packName":"'"$DEST_FILE_NAME"'"
+#       }'
+#   dependencies:
+#     - build
