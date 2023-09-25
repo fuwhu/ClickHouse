@@ -50,7 +50,7 @@ IMergeTreeReader::IMergeTreeReader(
         part_columns = Nested::collect(part_columns);
     }
 
-    if (!storage.getSettings()->implicit_map_duplication)
+    if (!data_part->isProjectionPart() && !storage.getSettings()->implicit_map_duplication)
     {
         Names mapv2_columns;
 
