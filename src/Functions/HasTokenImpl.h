@@ -33,6 +33,12 @@ struct HasTokenImpl
         if (start_pos != nullptr)
             throw Exception(ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT, "Function '{}' does not support start_pos argument", name);
 
+        if (pattern.empty())
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Needle cannot be empty, because empty string isn't a token");
+
+        if (!std::none_of(pattern.begin(), pattern.end(), isTokenSeparator))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Needle must not contain whitespace or separator characters");
+
         if (offsets.empty())
             return;
 
