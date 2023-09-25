@@ -4128,6 +4128,7 @@ void StorageReplicatedMergeTree::startup()
     {
         since_metadata_err_incr_readonly_metric = false;
         CurrentMetrics::sub(CurrentMetrics::ReadonlyReplica);
+        assert(CurrentMetrics::get(CurrentMetrics::ReadonlyReplica) >= 0);
     }
 
     try
