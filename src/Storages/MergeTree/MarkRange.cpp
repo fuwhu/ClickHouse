@@ -8,6 +8,11 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
 }
 
+size_t MarkRange::getNumberOfMarks() const
+{
+    return end - begin;
+}
+
 bool MarkRange::operator==(const MarkRange & rhs) const
 {
     return begin == rhs.begin && end == rhs.end;
@@ -34,6 +39,14 @@ size_t getLastMark(const MarkRanges & ranges)
     for (const auto & mark_range : ranges)
         current_task_last_mark = std::max(current_task_last_mark, mark_range.end);
     return current_task_last_mark;
+}
+
+size_t MarkRanges::getNumberOfMarks() const
+{
+    size_t result = 0;
+    for (const auto & mark : *this)
+        result += mark.getNumberOfMarks();
+    return result;
 }
 
 }
