@@ -21,7 +21,7 @@ variables:
   ACCESS_KEY_ID: '7df5c4dc25027e7e'
   SECRET_ACCESS_KEY: 'b1366ca38d65975a1f7f37628fce511b'
   BUCKET: datacenter-alter
-  LOCAL_CK_PATH: /mnt/storage13/ck_package_ci_22/clickhouse
+  LOCAL_CK_PATH: /mnt/storage00/ck_package_ci_22/clickhouse
 
 include:
   - project: 'xuneng/datacenter-ci-script'
@@ -58,11 +58,12 @@ build:
     - cd $LOCAL_CK_PATH
     - git fetch origin $CI_COMMIT_SHA
     - git checkout $CI_COMMIT_SHA
+    - git submodule sync --recursive
     - git submodule update --init --recursive
     - echo "check local build dir is exist"
     - if [[ ! -d "$BUILD_PATH" ]]; then echo "build dir is not exist" && mkdir -p $BUILD_PATH; else echo "build dir is exist" && rm -rf $BUILD_PATH/*; fi
     - echo "cmake begin"
-    - cd $BUILD_PATH && cmake .. -DCMAKE_C_COMPILER=`which clang` -DCMAKE_CXX_COMPILER=`which clang++` -DCMAKE_BUILD_TYPE=Release
+    - cd $BUILD_PATH && cmake .. -DCMAKE_C_COMPILER=`which clang-14` -DCMAKE_CXX_COMPILER=`which clang++-14` -DCMAKE_BUILD_TYPE=Release
     - echo "cmake end"
     - echo "ninja begin"
     - ninja
