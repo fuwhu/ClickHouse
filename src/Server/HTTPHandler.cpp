@@ -103,6 +103,8 @@ namespace ErrorCodes
     extern const int INVALID_SESSION_TIMEOUT;
     extern const int HTTP_LENGTH_REQUIRED;
     extern const int SUPPORT_IS_DISABLED;
+
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
 }
 
 namespace
@@ -832,6 +834,16 @@ void HTTPHandler::processQuery(
     {
         /// TODO: set Content-Length if possible
         pushDelayedResults(used_output);
+    }
+    
+    auto remote_query_timeout_count = context->getRemoteQueryTimeoutCount();
+    if (remote_query_timeout_count > 0 && context->getSettings().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+    {
+        auto total_child_query_count = context->getTotalChildQueryCount();
+        throw Exception(fmt::format("remote query timeout happened for some shard of the distributed query, {}/{} shards timed out, the result data may be incomplete.",
+                    std::to_string(remote_query_timeout_count),
+                    std::to_string(total_child_query_count)),
+                    ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED);
     }
 
     /// Send HTTP headers with code 200 if no exception happened and the data is still not sent to the client.

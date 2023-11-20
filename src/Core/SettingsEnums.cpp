@@ -13,6 +13,7 @@ namespace ErrorCodes
     extern const int BAD_ARGUMENTS;
     extern const int UNKNOWN_MYSQL_DATATYPES_SUPPORT_LEVEL;
     extern const int UNKNOWN_UNION;
+    extern const int UNKNOWN_REMOTE_QUERY_TIMEOUT_MODE;
 }
 
 
@@ -148,5 +149,10 @@ IMPLEMENT_SETTING_ENUM(MsgPackUUIDRepresentation , ErrorCodes::BAD_ARGUMENTS,
                        {{"bin", FormatSettings::MsgPackUUIDRepresentation::BIN},
                         {"str", FormatSettings::MsgPackUUIDRepresentation::STR},
                         {"ext", FormatSettings::MsgPackUUIDRepresentation::EXT}})
+
+IMPLEMENT_SETTING_ENUM(RemoteQueryTimeOutMode, ErrorCodes::UNKNOWN_REMOTE_QUERY_TIMEOUT_MODE,
+    {{"immediate_throw", RemoteQueryTimeOutMode::IMMEDIATE_THROW},
+     {"afterwards_throw", RemoteQueryTimeOutMode::AFTERWARDS_THROW},
+     {"ignore", RemoteQueryTimeOutMode::IGNORE}})
 
 }

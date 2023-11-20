@@ -302,6 +302,11 @@ private:
     /// A flag, used to distinguish between user query and internal query to a database engine (MaterializedPostgreSQL).
     bool is_internal_query = false;
 
+    /// A counter indicating how many remote query executions failed due to remote query timeout exceeded. this is only for query context.
+    mutable std::shared_ptr<UInt32> remote_query_timeout_count_ptr = nullptr;
+
+    /// Total number of child local/remote queries generated for a distributed query (may involve multiple distributed tables), and subquery does not count here. this is only for query context.
+    mutable std::shared_ptr<UInt32> total_child_query_count_ptr = nullptr;
 
 public:
     // Top-level OpenTelemetry trace context for the query. Makes sense only for a query context.
@@ -893,6 +898,18 @@ public:
 
     /** Get settings for reading from filesystem. */
     ReadSettings getReadSettings() const;
+
+    void initRemoteQueryTimeoutCount() const;
+
+    UInt32 getRemoteQueryTimeoutCount() const;
+
+    void incrementRemoteQueryTimeoutCount() const;
+
+    void initTotalChildQueryCount() const;
+
+    UInt32 getTotalChildQueryCount() const;
+
+    void incrementTotalChildQueryCount(UInt32 cnt) const;
 
 private:
     std::unique_lock<std::recursive_mutex> getLock() const;

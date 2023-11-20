@@ -116,6 +116,7 @@ ReadFromRemote::ReadFromRemote(
     , log(log_)
     , shard_count(shard_count_)
 {
+    context->incrementTotalChildQueryCount(shard_count);
 }
 
 void ReadFromRemote::addLazyPipe(Pipes & pipes, const ClusterProxy::IStreamFactory::Shard & shard,

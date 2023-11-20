@@ -496,6 +496,9 @@ ContextMutablePtr Session::makeQueryContextImpl(const ClientInfo * client_info_t
         }
     }
 
+    query_context->initRemoteQueryTimeoutCount();
+    query_context->initTotalChildQueryCount();
+
     return query_context;
 }
 
