@@ -82,7 +82,8 @@ namespace Protocol
                                             /// And client returns back response
             ProfileEvents = 14,             /// Packet with profile events from server.
             MergeTreeReadTaskRequest = 15,  /// Request from a MergeTree replica to a coordinator
-            MAX = MergeTreeReadTaskRequest,
+            RemoteQueryTimeout = 16,        /// Packet generated due to remote query timeout.
+            MAX = RemoteQueryTimeout,
 
         };
 

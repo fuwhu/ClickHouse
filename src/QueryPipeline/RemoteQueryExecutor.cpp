@@ -445,6 +445,11 @@ std::optional<Block> RemoteQueryExecutor::processPacket(Packet packet)
                     throw Exception(ErrorCodes::SYSTEM_ERROR, "Could not push into profile queue");
             break;
 
+        case Protocol::Server::RemoteQueryTimeout:
+            /// return an empty block indicating the end of the remote query execution in case of remote query timeout.
+            context->incrementRemoteQueryTimeoutCount();
+            return Block();
+
         default:
             got_unknown_packet_from_replica = true;
             throw Exception(ErrorCodes::UNKNOWN_PACKET_FROM_SERVER, "Unknown packet {} from one of the following replicas: {}",

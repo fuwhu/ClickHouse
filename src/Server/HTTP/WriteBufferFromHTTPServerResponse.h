@@ -72,6 +72,11 @@ public:
         send_progress_interval_ms = send_progress_interval_ms_;
     }
 
+    HTTPServerResponse & getHTTPResponse()
+    {
+        return response;
+    }
+
 private:
     /// Send at least HTTP headers if no data has been sent yet.
     /// Use after the data has possibly been sent and no error happened (and thus you do not plan

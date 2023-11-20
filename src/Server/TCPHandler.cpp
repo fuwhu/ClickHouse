@@ -3,6 +3,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 #include <string_view>
 #include <string.h>
@@ -79,6 +80,7 @@ namespace ErrorCodes
     extern const int UNEXPECTED_PACKET_FROM_CLIENT;
     extern const int SUPPORT_IS_DISABLED;
     extern const int UNKNOWN_PROTOCOL;
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
 }
 
 TCPHandler::TCPHandler(IServer & server_, TCPServer & tcp_server_, const Poco::Net::StreamSocket & socket_, bool parse_proxy_protocol_, std::string server_display_name_)
@@ -723,6 +725,14 @@ void TCPHandler::processOrdinaryQueryWithProcessors()
             sendLogs();
             sendProfileEvents();
         }
+
+        auto remote_query_timeout_count = query_context->getRemoteQueryTimeoutCount();
+        auto total_child_query_count = query_context->getTotalChildQueryCount();
+        if (remote_query_timeout_count > 0 && query_context->getSettings().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+            throw Exception(fmt::format("remote query timeout happened for some shard of the distributed query, {}/{} shards timed out, the result data may be incomplete.",
+                        std::to_string(remote_query_timeout_count),
+                        std::to_string(total_child_query_count)),
+                        ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED);
 
         if (state.is_connection_closed)
             return;

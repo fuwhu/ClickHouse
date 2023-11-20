@@ -188,4 +188,14 @@ DECLARE_SETTING_ENUM_WITH_RENAME(EscapingRule, FormatSettings::EscapingRule)
 
 DECLARE_SETTING_ENUM_WITH_RENAME(MsgPackUUIDRepresentation, FormatSettings::MsgPackUUIDRepresentation)
 
+/// What to do if remote query timed out.
+enum class RemoteQueryTimeOutMode
+{
+    IMMEDIATE_THROW     = 0,    /// When the remote query timeout happened, Throw exception immediately when the remote query timeout happened.
+    AFTERWARDS_THROW     = 1,    /// When the remote query timeout happened, Throw exception after finishing the distributed query execution and sending result data to client.
+    IGNORE       = 2,    /// Ignore the remote query timeout, the result data may be incomplete.
+};
+
+DECLARE_SETTING_ENUM(RemoteQueryTimeOutMode)
+
 }

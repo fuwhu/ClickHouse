@@ -3209,4 +3209,44 @@ ReadSettings Context::getReadSettings() const
     return res;
 }
 
+void Context::initRemoteQueryTimeoutCount() const
+{
+    auto lock = getLock();
+    if (remote_query_timeout_count_ptr == nullptr)
+        remote_query_timeout_count_ptr = std::make_shared<UInt32>(0);
+}
+
+UInt32 Context::getRemoteQueryTimeoutCount() const
+{
+    auto lock = getLock();
+    return *remote_query_timeout_count_ptr;
+}
+
+void Context::incrementRemoteQueryTimeoutCount() const
+{
+    auto lock = getLock();
+    if (remote_query_timeout_count_ptr != nullptr)
+        ++(*remote_query_timeout_count_ptr);
+}
+
+void Context::initTotalChildQueryCount() const
+{
+    auto lock = getLock();
+    if (total_child_query_count_ptr == nullptr)
+        total_child_query_count_ptr = std::make_shared<UInt32>(0);
+}
+
+UInt32 Context::getTotalChildQueryCount() const
+{
+    auto lock = getLock();
+    return *total_child_query_count_ptr;
+}
+
+void Context::incrementTotalChildQueryCount(UInt32 cnt) const
+{
+    auto lock = getLock();
+    if (total_child_query_count_ptr != nullptr)
+        *total_child_query_count_ptr += cnt;
+}
+
 }
