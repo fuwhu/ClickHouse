@@ -62,6 +62,7 @@
 #include <Common/escapeForFileName.h>
 #include <Common/quoteString.h>
 #include <Common/typeid_cast.h>
+#include "base/logger_useful.h"
 #include <Processors/QueryPlan/ReadFromMergeTree.h>
 #include <Processors/Formats/IInputFormat.h>
 #include <AggregateFunctions/AggregateFunctionCount.h>
@@ -5851,6 +5852,22 @@ MergeTreeData::CurrentlyMovingPartsTagger::~CurrentlyMovingPartsTagger()
         /// Something went completely wrong
         if (!data.currently_moving_parts.count(moving_part.part))
             std::terminate();
+
+        if (data.merging_params.mode == MergingParams::Unique)
+        {
+            if (moving_part.part->getState() == DataPartState::Active)
+            {
+                if (data.changePartMergeUpdateStatus(
+                        moving_part.part, IMergeTreeDataPart::MergeUpdateStatus::MOVING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL))
+                    LOG_WARNING(
+                        data.log,
+                        "part {} can't move for some reason, such as the move pool is full, or some other unknown problem, so rollback "
+                        "MERGE_UPDATE_STATUS of part "
+                        "from moving to normal.",
+                        moving_part.part->name);
+            }
+        }
+
         data.currently_moving_parts.erase(moving_part.part);
     }
 }
