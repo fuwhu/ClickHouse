@@ -383,7 +383,7 @@ bool MergeTreeWhereOptimizer::isConstant(const ASTPtr & expr) const
 bool MergeTreeWhereOptimizer::isSubsetOfTableColumns(const NameSet & identifiers) const
 {
     for (const auto & identifier : identifiers)
-        if (table_columns.count(identifier) == 0)
+        if (table_columns.count(identifier) == 0 && identifier.find(IMPLICIT_DELIMITER) == std::string::npos)
             return false;
 
     return true;
