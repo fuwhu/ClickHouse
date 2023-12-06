@@ -8,7 +8,7 @@
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/IMergeTreeDataPart.h>
 #include <Disks/IDisk.h>
-
+#include <rocksdb/db.h>
 
 namespace DB
 {
@@ -171,12 +171,35 @@ protected:
     /// Data is already written up to this mark.
     size_t current_mark = 0;
 
+    /// Unique engine
+    size_t rows_count = 0;
+
 private:
     void initSkipIndices();
     void initPrimaryIndex();
     void initUniqueIndex();
 
     virtual void fillIndexGranularity(size_t index_granularity_for_block, size_t rows_in_block) = 0;
+
+    /** ------------------ Unique Engine Only --------------------- **/
+
+    /// If the part contains only one block (normal insert case), we generate the key index file
+    /// directly from the buffered block, avoiding the overhead of "tmp_rocksdb_index_writer".
+    /// If the part contains more than one blocks (merge case), we only store first block into the buffered block.
+    Block buffered_unique_block;
+
+    /// If the part contains more than one blocks (merge case) and unique key is not a prefix of sorting key, 
+    /// we first use "tmp_rocksdb_index_writer" to sort and persist index entries, 
+    /// then generate the key index file from "tmp_rocksdb_index_writer"
+    String tmp_rocksdb_index_dir;
+    rocksdb::DB * tmp_rocksdb_index_writer = nullptr;
+
+    /// If the part contains more than one blocks (merge case) and unique key is a prefix of sorting key, 
+    /// we store unique key directly into levelDB.
+    IndexFile::IndexFileWriterPtr leveldb_index_writer;
+
+    /// Write block to tmp_rocksdb_index_writer or leveldb_index_writer.
+    void writeToUniqueKeyIndex(Block & block);
 };
 
 }

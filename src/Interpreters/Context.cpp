@@ -26,6 +26,7 @@
 #include <Storages/MergeTree/ReplicatedFetchList.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
+#include <Storages/MergeTree/UniqueKeyIndexCache.h>
 #include <Storages/CompressionCodecSelector.h>
 #include <Storages/StorageS3Settings.h>
 #include <Disks/DiskLocal.h>
@@ -259,6 +260,9 @@ struct ContextSharedPart
     ConfigurationPtr clusters_config;                        /// Stores updated configs
     mutable std::mutex clusters_mutex;                       /// Guards clusters and clusters_config
     std::unique_ptr<ClusterDiscovery> cluster_discovery;
+
+    mutable UniqueKeyIndexCachePtr unique_key_index_cache;              /// Shared object cache of unique key indexes
+    mutable UniqueKeyIndexBlockCachePtr unique_key_index_block_cache;   /// Shared block cache of unique key indexes
 
     std::shared_ptr<AsynchronousInsertQueue> async_insert_queue;
     std::map<String, UInt16> server_ports;
@@ -3048,6 +3052,34 @@ ReadTaskCallback Context::getReadTaskCallback() const
 void Context::setReadTaskCallback(ReadTaskCallback && callback)
 {
     next_task_callback = callback;
+}
+
+void Context::setUniqueKeyIndexCache(size_t cache_size_in_bytes)
+{
+    auto lock = getLock();
+    if (shared->unique_key_index_cache)
+        throw Exception("Unique key index cache has been already created", ErrorCodes::LOGICAL_ERROR);
+    shared->unique_key_index_cache = std::make_shared<UniqueKeyIndexCache>(cache_size_in_bytes);
+}
+
+UniqueKeyIndexCachePtr Context::getUniqueKeyIndexCache() const
+{
+    auto lock = getLock();
+    return shared->unique_key_index_cache;
+}
+
+void Context::setUniqueKeyIndexBlockCache(size_t cache_size_in_bytes)
+{
+    auto lock = getLock();
+    if (shared->unique_key_index_block_cache)
+        throw Exception("Unique key index block cache has been already created", ErrorCodes::LOGICAL_ERROR);
+    shared->unique_key_index_block_cache = IndexFile::NewLRUCache(cache_size_in_bytes);
+}
+
+UniqueKeyIndexBlockCachePtr Context::getUniqueKeyIndexBlockCache() const
+{
+    auto lock = getLock();
+    return shared->unique_key_index_block_cache;
 }
 
 

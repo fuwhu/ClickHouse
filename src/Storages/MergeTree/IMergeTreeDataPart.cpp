@@ -646,9 +646,7 @@ void IMergeTreeDataPart::loadColumnsChecksumsIndexes(bool require_columns_checks
 
     if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
-        if (storage.getSettings()->enable_unique_key_bucket)
-            loadUniqueKeyBucketIndex();
-
+        loadUniqueKeyBucketIndex();
         loadUniqueDeleteBitmap();
         loadUniqueKeyMinMaxIndex();
     }
@@ -1097,78 +1095,47 @@ void IMergeTreeDataPart::loadUUID()
     }
 }
 
-UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
+UniqueKeyIndexPtr IMergeTreeDataPart::createUniqueIndex(const size_t & unique_key_index_type) const
 {
     UniqueKeyIndexPtr unique_key_index_load;
-    switch (storage.getSettings()->unique_key_index_type)
+
+    switch (unique_key_index_type)
     {
-        case 0: {
+        case IUniqueKeyIndex::Type::STANDARD_MAP: {
             unique_key_index_load = std::make_shared<StandardMapUniqueKeyIndex>();
             break;
         }
-        case 1: {
+        case IUniqueKeyIndex::Type::STANDARD_UNORDERED_MAP: {
             unique_key_index_load = std::make_shared<StandardUnOrderedMapUniqueKeyIndex>();
             break;
         }
-        case 2: {
+        case IUniqueKeyIndex::Type::STRING_HASH_MAP: {
             unique_key_index_load = std::make_shared<StringHashMapUniqueKeyIndex>();
             break;
         }
+        case IUniqueKeyIndex::Type::LEVEL_DB: {
+            unique_key_index_load = std::make_shared<LevelDBUniqueKeyIndex>();
+            break;
+        }
         default: {
-            throw Exception(
-                "Invalid type(" + std::to_string(storage.getSettings()->unique_key_index_type) + ") for unique key index.",
-                ErrorCodes::BAD_ARGUMENTS);
+            throw Exception("Invalid type(" + std::to_string(unique_key_index_type) + ") for unique key index.", ErrorCodes::BAD_ARGUMENTS);
         }
     }
-
-    const auto & disk = volume->getDisk();
-    const auto & unique_key_index_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_INDEX;
-
-    if (storage.getSettings()->enable_unique_key_bucket)
-    {
-        if (!loading_bucket_pool)
-            throw Exception(
-                "Loading unique key bucket must depend on thread pool, so loading_bucket_pool cannot be null", ErrorCodes::LOGICAL_ERROR);
-
-        const auto & bucket_index = getUniqueKeyBucketIndex();
-        const auto & bucket_num = bucket_index->getBucketNum();
-        unique_key_index_load->initBucket(bucket_num);
-        unique_key_index_load->deserializeBinary(
-            disk,
-            unique_key_index_path,
-            bucket_index,
-            loading_bucket_pool,
-            bucket_range,
-            storage.getContext()->getSettingsRef().background_unique_engine_load_pool_size,
-            storage.getContext()->getSettingsRef().background_unique_engine_load_schedule_timeout);
-    }
-    else
-        unique_key_index_load->deserializeBinary(disk, unique_key_index_path);
 
     return unique_key_index_load;
 }
 
-void IMergeTreeDataPart::loadUniqueKeyBucketIndex()
+UniqueDeleteBitmapPtr IMergeTreeDataPart::createUniqueDeleteBitmap(const size_t & unique_delete_bitmap_type) const
 {
-    const auto & unique_key_bucket_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_BUCKET_INDEX;
-    UniqueKeyBucketIndexPtr unique_key_bucket_load = std::make_shared<UniqueKeyBucketIndex>();
-    const auto & disk = volume->getDisk();
-    unique_key_bucket_load->deserializeBinary(*disk->readFile(unique_key_bucket_path));
-    setUniqueKeyBucketIndex(unique_key_bucket_load);
-}
-
-void IMergeTreeDataPart::loadUniqueDeleteBitmap()
-{
-    const auto & unique_delete_bitmap_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_DELETE_BITMAP;
-
     UniqueDeleteBitmapPtr unique_delete_bitmap_load;
-    switch (storage.getSettings()->unique_delete_bitmap_type)
+
+    switch (unique_delete_bitmap_type)
     {
-        case 0: {
+        case IUniqueDeleteBitmap::Type::ROARING_64_BITMAP: {
             unique_delete_bitmap_load = std::make_shared<Roaring64UniqueDeleteBitmap>();
             break;
         }
-        case 1: {
+        case IUniqueDeleteBitmap::Type::ROARING_32_BITMAP: {
             unique_delete_bitmap_load = std::make_shared<Roaring32UniqueDeleteBitmap>();
             break;
         }
@@ -1179,6 +1146,69 @@ void IMergeTreeDataPart::loadUniqueDeleteBitmap()
         }
     }
 
+    return unique_delete_bitmap_load;
+}
+
+
+UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
+{
+    const auto & unique_key_index_type = storage.getSettings()->unique_key_index_type;
+
+    UniqueKeyIndexPtr unique_key_index_load = createUniqueIndex(unique_key_index_type);
+
+    const auto & disk = volume->getDisk();
+    const auto & unique_key_index_path = fs::path(getFullPath(false)) / UNIQUE_ENGINE_KEY_INDEX;
+
+    if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+    {
+        if (storage.getSettings()->enable_unique_key_bucket)
+        {
+            if (!loading_bucket_pool)
+                throw Exception(
+                    "Loading unique key bucket must depend on thread pool, so loading_bucket_pool cannot be null",
+                    ErrorCodes::LOGICAL_ERROR);
+
+            const auto & bucket_index = getUniqueKeyBucketIndex();
+            const auto & bucket_num = bucket_index->getBucketNum();
+            unique_key_index_load->initBucket(bucket_num);
+            unique_key_index_load->deserializeBinary(
+                disk,
+                unique_key_index_path,
+                bucket_index,
+                loading_bucket_pool,
+                bucket_range,
+                storage.getContext()->getSettingsRef().background_unique_engine_load_pool_size,
+                storage.getContext()->getSettingsRef().background_unique_engine_load_schedule_timeout);
+        }
+        else
+            unique_key_index_load->deserializeBinary(disk, unique_key_index_path);
+    }
+    else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
+        unique_key_index_load->deserializeBinary(unique_key_index_path, storage.getContext()->getUniqueKeyIndexBlockCache());
+    else
+        throw Exception("Invalid type(" + std::to_string(unique_key_index_type) + ") for unique key index.", ErrorCodes::BAD_ARGUMENTS);
+
+    return unique_key_index_load;
+}
+
+void IMergeTreeDataPart::loadUniqueKeyBucketIndex()
+{
+    const auto & unique_key_bucket_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_BUCKET_INDEX;
+    if (volume->getDisk()->exists(unique_key_bucket_path))
+    {
+        UniqueKeyBucketIndexPtr unique_key_bucket_load = std::make_shared<UniqueKeyBucketIndex>();
+        const auto & disk = volume->getDisk();
+        unique_key_bucket_load->deserializeBinary(*disk->readFile(unique_key_bucket_path));
+        setUniqueKeyBucketIndex(unique_key_bucket_load);
+    }
+}
+
+void IMergeTreeDataPart::loadUniqueDeleteBitmap()
+{
+    const auto & unique_delete_bitmap_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_DELETE_BITMAP;
+
+    UniqueDeleteBitmapPtr unique_delete_bitmap_load = createUniqueDeleteBitmap(storage.getSettings()->unique_delete_bitmap_type);
+
     const auto & disk = volume->getDisk();
     unique_delete_bitmap_load->deserializeBinary(*disk->readFile(unique_delete_bitmap_path));
     setUniqueDeleteBitmap(unique_delete_bitmap_load);
@@ -1187,10 +1217,13 @@ void IMergeTreeDataPart::loadUniqueDeleteBitmap()
 void IMergeTreeDataPart::loadUniqueKeyMinMaxIndex()
 {
     const auto & unique_key_minmax_index_path = fs::path(getFullRelativePath()) / UNIQUE_ENGINE_KEY_MINMAX_INDEX;
-    UniqueKeyMinMaxIndexPtr unique_key_minmax_index_load = std::make_shared<UniqueKeyMinMaxIndex>();
-    const auto & disk = volume->getDisk();
-    unique_key_minmax_index_load->deserializeBinary(*disk->readFile(unique_key_minmax_index_path));
-    setUniqueKeyMinMaxIndex(unique_key_minmax_index_load);
+    if (volume->getDisk()->exists(unique_key_minmax_index_path))
+    {
+        UniqueKeyMinMaxIndexPtr unique_key_minmax_index_load = std::make_shared<UniqueKeyMinMaxIndex>();
+        const auto & disk = volume->getDisk();
+        unique_key_minmax_index_load->deserializeBinary(*disk->readFile(unique_key_minmax_index_path));
+        setUniqueKeyMinMaxIndex(unique_key_minmax_index_load);
+    }
 }
 
 void IMergeTreeDataPart::loadColumns(bool require)
@@ -1362,11 +1395,11 @@ void IMergeTreeDataPart::renameUniqueTempDir(const String & new_relative_path, b
         return;
 
     String uniq_tmp_prefix = fs::path(storage.relative_data_path) / (parent_part ? parent_part->relative_path : "");
-    String uniq_tmp_from = fs::path(uniq_tmp_prefix + "/" + relative_path + MergeTreeData::UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
+    String uniq_tmp_from = fs::path(uniq_tmp_prefix + "/" + relative_path + UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
 
     if (volume->getDisk()->exists(uniq_tmp_from))
     {
-        String uniq_tmp_to = fs::path(uniq_tmp_prefix + "/" + new_relative_path + MergeTreeData::UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
+        String uniq_tmp_to = fs::path(uniq_tmp_prefix + "/" + new_relative_path + UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
 
         if (volume->getDisk()->exists(uniq_tmp_to))
         {
@@ -1886,18 +1919,32 @@ String IMergeTreeDataPart::getZeroLevelPartBlockID(std::string_view token) const
 UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
     bool keep_loaded_in_memory, LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
 {
-    if (unique_key_index)
-        return unique_key_index;
+    const auto & unique_key_index_type = storage.getSettings()->unique_key_index_type;
+    if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+    {
+        if (unique_key_index)
+            return unique_key_index;
 
-    Stopwatch total_stopwatch{CLOCK_MONOTONIC_COARSE};
-    auto uniq_key_index = loadUniqueIndex(loading_bucket_pool, bucket_range);
-    double ms = total_stopwatch.elapsedMilliseconds();
-    LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "part {} load unique cost {} ms", name, ms);
+        Stopwatch total_stopwatch{CLOCK_MONOTONIC_COARSE};
+        auto uniq_key_index = loadUniqueIndex(loading_bucket_pool, bucket_range);
+        double ms = total_stopwatch.elapsedMilliseconds();
+        LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "part {} load unique cost {} ms", name, ms);
 
-    if (keep_loaded_in_memory)
-        setUniqueKeyIndex(uniq_key_index);
 
-    return uniq_key_index;
+        if (keep_loaded_in_memory)
+            setUniqueKeyIndex(uniq_key_index);
+
+        return uniq_key_index;
+    }
+    else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
+    {
+        UUIDAndPartName key(storage.getStorageID().uuid, info.getPartName());
+        auto load_func = [&]() { return loadUniqueIndex(); };
+        return storage.getContext()->getUniqueKeyIndexCache()->getOrSet(key, load_func).first;
+    }
+    else
+        throw Exception(
+            "Invalid type(" + std::to_string(unique_key_index_type) + ") for unique key index.", ErrorCodes::BAD_ARGUMENTS);
 }
 
 bool isCompactPart(const MergeTreeDataPartPtr & data_part)

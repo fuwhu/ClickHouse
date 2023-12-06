@@ -1,33 +1,65 @@
 #include <Storages/MergeTree/UniqueMergeTreeIndexCommon.h>
 
+
 namespace DB
 {
-void DeletedKeys::serializeBinary(WriteBuffer & ostr) const
+void DeletedKeys::serializeBinary(WriteBuffer & ostr, const bool & is_write_binary) const
 {
     size_t map_size = size();
     if (!map_size)
         return;
-    DB::writeBinary(map_size, ostr);
 
-    for (const auto & it : *this)
+    if (!is_write_binary)
     {
-        writeStringBinary(it.first, ostr);
-        writeVarUInt(it.second, ostr);
+        DB::writeBinary(map_size, ostr);
+
+        for (const auto & it : *this)
+        {
+            writeStringBinary(it.first, ostr);
+            writeVarUInt(it.second, ostr);
+        }
+    }
+    else
+    {
+        writeBinary(map_size, ostr);
+
+        for (const auto & it : *this)
+        {
+            writeBinary(it.first, ostr);
+            writeBinary(it.second, ostr);
+        }
     }
 }
 
-void DeletedKeys::deserializeBinary(ReadBuffer & istr)
+void DeletedKeys::deserializeBinary(ReadBuffer & istr, const bool & is_read_binary)
 {
     size_t size;
-    DB::readBinary(size, istr);
 
-    for (size_t index = 0; index < size; ++index)
+    if (!is_read_binary)
     {
-        String key;
-        readStringBinary(key, istr);
-        UInt64 version;
-        readVarUInt(version, istr);
-        insert(std::make_pair(key, version));
+        DB::readBinary(size, istr);
+
+        for (size_t index = 0; index < size; ++index)
+        {
+            String key;
+            readStringBinary(key, istr);
+            UInt64 version;
+            readVarUInt(version, istr);
+            insert(std::make_pair(key, version));
+        }
+    }
+    else
+    {
+        readBinary(size, istr);
+
+        for (size_t index = 0; index < size; ++index)
+        {
+            String key;
+            readBinary(key, istr);
+            UInt64 version;
+            readBinary(version, istr);
+            insert(std::make_pair(key, version));
+        }
     }
 }
 
@@ -277,24 +309,6 @@ std::optional<VersionAndRow> StringHashMapUniqueKeyIndex::get(const String & key
     }
 
     return {};
-}
-
-std::optional<size_t> StringHashMapUniqueKeyIndex::getRowNumber(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<1>(version_row.value());
-    else
-        return {};
-}
-
-std::optional<UInt64> StringHashMapUniqueKeyIndex::getRowVersion(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<0>(version_row.value());
-    else
-        return {};
 }
 
 std::vector<size_t> StringHashMapUniqueKeyIndex::calculateTargetBuckets(const size_t & mod_bucket_num) const
@@ -568,24 +582,6 @@ std::optional<VersionAndRow> StandardMapUniqueKeyIndex::get(const String & key) 
     return {};
 }
 
-std::optional<size_t> StandardMapUniqueKeyIndex::getRowNumber(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<1>(version_row.value());
-    else
-        return {};
-}
-
-std::optional<UInt64> StandardMapUniqueKeyIndex::getRowVersion(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<0>(version_row.value());
-    else
-        return {};
-}
-
 std::vector<size_t> StandardMapUniqueKeyIndex::calculateTargetBuckets(const size_t & mod_bucket_num) const
 {
     std::vector<size_t> bucket_index_range;
@@ -855,24 +851,6 @@ std::optional<VersionAndRow> StandardUnOrderedMapUniqueKeyIndex::get(const Strin
     return {};
 }
 
-std::optional<size_t> StandardUnOrderedMapUniqueKeyIndex::getRowNumber(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<1>(version_row.value());
-    else
-        return {};
-}
-
-std::optional<UInt64> StandardUnOrderedMapUniqueKeyIndex::getRowVersion(const String & key) const
-{
-    const auto & version_row = get(key);
-    if (version_row)
-        return std::get<0>(version_row.value());
-    else
-        return {};
-}
-
 std::vector<size_t> StandardUnOrderedMapUniqueKeyIndex::calculateTargetBuckets(const size_t & mod_bucket_num) const
 {
     std::vector<size_t> bucket_index_range;
@@ -1060,4 +1038,232 @@ void StandardUnOrderedMapUniqueKeyIndex::deserializeBinary(
         count_down_latch.await();
     }
 }
+
+std::optional<VersionAndRow> LevelDBUniqueKeyIndex::get(const String & key, const bool & rowid_is_uinit32) const
+{
+    String value;
+    auto status = index_reader->Get(IndexFile::ReadOptions(), key, &value);
+    if (status.ok())
+    {
+        Slice input(value);
+        UInt64 rowid;
+
+        if (rowid_is_uinit32)
+        {
+            UInt32 rowid_u32;
+            decodeUInt32Rowid(input, rowid_u32);
+            rowid = rowid_u32;
+        }
+        else
+            decodeUInt64Rowid(input, rowid);
+
+        UInt64 version;
+        decodeVersion(input, version);
+        return VersionAndRow(version, rowid);
+    }
+    else if (status.IsNotFound())
+        return {};
+    else
+        throw Exception("Failed to lookup key: " + status.ToString(), ErrorCodes::UNKNOWN_EXCEPTION);
+}
+
+/// TODO refine, the serializeBinary function should be used to serialize this object.
+void LevelDBUniqueKeyIndex::serializeBinary(
+    const String & index_path,
+    Block & block,
+    const UniqueDeleteBitmapPtr & delete_bitmap,
+    IndexFile::IndexFileInfo & file_info,
+    const bool & rowid_is_uinit32,
+    const bool & is_same_key) const
+{
+    IndexFile::Options options;
+    options.filter_policy.reset(IndexFile::NewBloomFilterPolicy(10));
+    IndexFile::IndexFileWriterPtr index_writer = std::make_unique<IndexFile::IndexFileWriter>(options);
+    auto status = index_writer->Open(index_path);
+    if (!status.ok())
+        throw Exception(ErrorCodes::CANNOT_OPEN_FILE, "Error while opening file {}: {}", index_path, status.ToString());
+
+    size_t rows = block.rows();
+    if (rows == 0)
+    {
+        LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "index type LevelDBUniqueKeyIndex block rows is zero.");
+        return;
+    }
+
+    if (!is_same_key)
+    {
+        /// sort
+        SortDescription unique_sort_description;
+        unique_sort_description.emplace_back(block.getPositionByName(UNIQUE_VIRTUAL_KEY_COLUMN_NAME), 1, 1);
+        // unique_sort_description.emplace_back(block.getPositionByName(UNIQUE_VIRTUAL_VERSION_COLUMN_NAME), -1, 1);
+
+        IColumn::Permutation * perm_ptr = nullptr;
+        IColumn::Permutation perm;
+        if (!isAlreadySorted(block, unique_sort_description))
+        {
+            stableGetPermutation(block, unique_sort_description, perm);
+            perm_ptr = &perm;
+
+            for (size_t i = 0; i < block.columns(); ++i)
+            {
+                auto & column = block.getByPosition(i);
+                column.column = column.column->permute(*perm_ptr, 0);
+            }
+        }
+        else
+            LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "unique key is already sorted.");
+    }
+    else
+        LOG_DEBUG(&Poco::Logger::get("UniqueMergeTreeIndex"), "unique key is the same as order key and doesn't need to be sorted.");
+
+    /// dedup
+    const auto & unique_key_col = block.getByName(UNIQUE_VIRTUAL_KEY_COLUMN_NAME);
+    const auto & unique_rowid_col = block.getByName(UNIQUE_VIRTUAL_ROWID_COLUMN_NAME);
+    const auto & unique_version_col = block.getByName(UNIQUE_VIRTUAL_VERSION_COLUMN_NAME);
+
+    StringRef last_key;
+    UInt64 last_rowid = 0;
+    UInt64 last_version = 0;
+    for (size_t i = 0; i < rows; ++i)
+    {
+        const auto & key = unique_key_col.column->getDataAt(i);
+        const UInt64 & rowid = unique_rowid_col.column->getUInt(i);
+        const UInt64 & version = unique_version_col.column->getUInt(i);
+        if (i == 0 || last_key != key)
+        {
+            last_key = key;
+            last_rowid = rowid;
+            last_version = version;
+        }
+        else
+        {
+            if (version > last_version)
+            {
+                delete_bitmap->deleteRow(last_rowid);
+                last_rowid = rowid;
+                last_version = version;
+            }
+            else
+                delete_bitmap->deleteRow(rowid);
+        }
+    }
+
+    for (size_t i = 0; i < rows; ++i)
+    {
+        const UInt64 & rowid = unique_rowid_col.column->getUInt(i);
+        if (delete_bitmap->isDeleted(rowid))
+            continue;
+
+        auto key_ref = unique_key_col.column->getDataAt(i);
+        const String & key = key_ref.toString();
+        const UInt64 & version = unique_version_col.column->getUInt(i);
+
+        String value;
+
+        if (rowid_is_uinit32)
+            PutVarint32(&value, static_cast<UInt32>(rowid));
+        else
+            PutVarint64(&value, rowid);
+
+        /// Handle explicit version column
+        PutFixed64(&value, version); /// must use correct index, not rid
+
+        status = index_writer->Add(key, value);
+        if (!status.ok())
+            throw Exception("Error while adding key to " + index_path + ": " + status.ToString(), ErrorCodes::LOGICAL_ERROR);
+    }
+
+    /// TODO move this to finish* function.
+    status = index_writer->Finish(&file_info);
+    if (!status.ok())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Error while finishing file {}: {}", index_path, status.ToString());
+}
+
+void LevelDBUniqueKeyIndex::serializeBinary(
+    const String & index_path, 
+    IndexFile::IndexFileInfo & file_info, 
+    const String & tmp_rocksdb_index_dir,
+    rocksdb::DB & tmp_rocksdb_index_writer) const
+{
+    IndexFile::Options options;
+    options.filter_policy.reset(IndexFile::NewBloomFilterPolicy(10));
+    IndexFile::IndexFileWriterPtr index_writer = std::make_unique<IndexFile::IndexFileWriter>(options);
+    auto status = index_writer->Open(index_path);
+    if (!status.ok())
+        throw Exception(ErrorCodes::CANNOT_OPEN_FILE, "Error while opening file {}: {}", index_path, status.ToString());
+
+    /// merge case : create index file from temp index
+    std::unique_ptr<rocksdb::Iterator> iter(tmp_rocksdb_index_writer.NewIterator(rocksdb::ReadOptions()));
+    for (iter->SeekToFirst(); iter->Valid(); iter->Next())
+    {
+        auto key = iter->key();
+        auto val = iter->value();
+        status = index_writer->Add(Slice(key.data(), key.size()), Slice(val.data(), val.size()));
+        if (!status.ok())
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Error while adding key to {}: {}", index_path, status.ToString());
+    }
+
+    if (!iter->status().ok())
+        throw Exception(
+            ErrorCodes::LOGICAL_ERROR,
+            "Error while scanning temp key index file {}: {}",
+            tmp_rocksdb_index_dir,
+            iter->status().ToString());
+    iter.reset();
+
+    /// TODO move this to finish* function.
+    status = index_writer->Finish(&file_info);
+    if (!status.ok())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Error while finishing file {}: {}", index_path, status.ToString());
+}
+
+void LevelDBUniqueKeyIndex::deserializeBinary(const String & file_path, UniqueKeyIndexBlockCachePtr block_cache)
+{
+    IndexFile::Options options;
+    options.block_cache = std::move(block_cache);
+    auto local_reader = std::make_unique<IndexFile::IndexFileReader>(options);
+    auto status = local_reader->Open(file_path);
+    if (!status.ok())
+        throw Exception("Failed to open index file " + file_path + ": " + status.ToString(), ErrorCodes::UNKNOWN_EXCEPTION);
+    index_reader = std::move(local_reader);
+}
+
+UniqueKeyIterator LevelDBUniqueKeyIndex::newIterator(const IndexFile::ReadOptions & options) const
+{
+    if (!index_reader)
+        return std::unique_ptr<IndexFile::Iterator>(IndexFile::NewEmptyIterator());
+    std::unique_ptr<IndexFile::Iterator> res;
+    auto st = index_reader->NewIterator(options, &res);
+    if (!st.ok())
+        throw Exception("Failed to get iterator: " + st.ToString(), ErrorCodes::UNKNOWN_EXCEPTION);
+    return res;
+}
+
+size_t LevelDBUniqueKeyIndex::residentMemoryUsage() const
+{
+    return index_reader ? index_reader->ResidentMemoryUsage() : sizeof(LevelDBUniqueKeyIndex);
+}
+
+bool LevelDBUniqueKeyIndex::decodeUInt32Rowid(Slice & input, UInt32 & rowid)
+{
+    return GetVarint32(&input, &rowid);
+}
+
+bool LevelDBUniqueKeyIndex::decodeUInt64Rowid(Slice & input, UInt64 & rowid)
+{
+    return GetVarint64(&input, &rowid);
+}
+
+bool LevelDBUniqueKeyIndex::decodeVersion(Slice & input, UInt64 & version)
+{
+    if (input.size() >= sizeof(UInt64))
+    {
+        version = DecodeFixed64(input.data());
+        input.remove_prefix(sizeof(UInt64));
+        return true;
+    }
+
+    return false;
+}
+
 }

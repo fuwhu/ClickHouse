@@ -18,4 +18,12 @@ size_t UniqueKeyBucketInfo::getRows() const
     return rows;
 }
 
+bool IUniqueKeyIndex::isMapUniqueKeyIndex(const size_t & unique_key_index_type) {
+    return unique_key_index_type == Type::STANDARD_MAP || unique_key_index_type == Type::STANDARD_UNORDERED_MAP || unique_key_index_type == Type::STRING_HASH_MAP;
+}
+
+bool IUniqueKeyIndex::isLevelDBUniqueKeyIndex(const size_t & unique_key_index_type) {
+    return unique_key_index_type == Type::LEVEL_DB;
+}
+
 }

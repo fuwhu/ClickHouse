@@ -15,6 +15,8 @@
 #include <Storages/MergeTree/KeyCondition.h>
 #include <Storages/MergeTree/UniqueMergeTreeIndexCommon.h>
 #include <DataTypes/Serializations/SerializationInfo.h>
+#include "Storages/MergeTree/UUIDAndPartName.h"
+#include <Storages/MergeTree/UniqueKeyIndexCache.h>
 #include <Storages/MergeTree/MergeTreeDictionary.h>
 
 #include <shared_mutex>
@@ -549,6 +551,10 @@ public:
     /// Load rows count for this part from disk (for the newer storage format version).
     /// For the older format version calculates rows count from the size of a column with a fixed size.
     void loadRowsCount();
+
+    UniqueKeyIndexPtr createUniqueIndex(const size_t & unique_key_index_type) const;
+
+    UniqueDeleteBitmapPtr createUniqueDeleteBitmap(const size_t & unique_delete_bitmap_type) const;
 
     UniqueKeyIndexPtr loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool = nullptr, BucketIndexRangePtr bucket_range = nullptr);
 
