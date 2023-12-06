@@ -198,6 +198,7 @@ struct StorageInMemoryMetadata
     const KeyDescription & getUniqueKey() const;
     /// Storage has unique key. It means, that it contains at least one column for unique engine.
     bool hasUniqueKey() const;
+    bool isUniqueKeyPrefixToSortKey() const;
 
     /// Returns column names that need to be read for FINAL to work.
     Names getColumnsRequiredForFinal() const { return getColumnsRequiredForSortingKey(); }

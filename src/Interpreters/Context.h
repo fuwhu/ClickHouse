@@ -34,6 +34,11 @@ struct OvercommitTracker;
 namespace DB
 {
 
+namespace IndexFile
+{
+    class Cache;
+}
+
 struct ContextSharedPart;
 class ContextAccess;
 struct User;
@@ -149,6 +154,10 @@ using InputBlocksReader = std::function<Block(ContextPtr)>;
 
 /// Used in distributed task processing
 using ReadTaskCallback = std::function<String()>;
+
+class UniqueKeyIndexCache;
+using UniqueKeyIndexCachePtr = std::shared_ptr<UniqueKeyIndexCache>;
+using UniqueKeyIndexBlockCachePtr = std::shared_ptr<IndexFile::Cache>;
 
 using MergeTreeReadTaskCallback = std::function<std::optional<PartitionReadResponse>(PartitionReadRequest)>;
 
@@ -887,6 +896,14 @@ public:
 
     MergeTreeReadTaskCallback getMergeTreeReadTaskCallback() const;
     void setMergeTreeReadTaskCallback(MergeTreeReadTaskCallback && callback);
+
+    /// Create a cache of UniqueKeyIndex objects.
+    void setUniqueKeyIndexCache(size_t cache_size_in_bytes);
+    UniqueKeyIndexCachePtr getUniqueKeyIndexCache() const;
+    
+    /// Create a memory cache of data blocks reading from unique key index files.
+    void setUniqueKeyIndexBlockCache(size_t cache_size_in_bytes);
+    UniqueKeyIndexBlockCachePtr getUniqueKeyIndexBlockCache() const;
 
     /// Background executors related methods
     void initializeBackgroundExecutorsIfNeeded();

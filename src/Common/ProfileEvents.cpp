@@ -286,7 +286,10 @@
     \
     M(ScalarSubqueriesGlobalCacheHit, "Number of times a read from a scalar subquery was done using the global cache") \
     M(ScalarSubqueriesLocalCacheHit, "Number of times a read from a scalar subquery was done using the local cache") \
-    M(ScalarSubqueriesCacheMiss, "Number of times a read from a scalar subquery was not cached and had to be calculated completely")
+    M(ScalarSubqueriesCacheMiss, "Number of times a read from a scalar subquery was not cached and had to be calculated completely") \
+    \
+    M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache") \
+    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely")
 
 namespace ProfileEvents
 {
