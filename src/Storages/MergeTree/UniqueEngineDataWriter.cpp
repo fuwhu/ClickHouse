@@ -19,7 +19,7 @@ UniqueEngineDataWriter::UniqueEngineDataWriter(MutableDataPartPtr & data_part_)
     
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
-        update_parallelism_pool = std::make_shared<ThreadPool>(storage.getSettings()->unique_key_update_parallelism);
+        update_thread_pool = std::make_shared<ThreadPool>(storage.getSettings()->unique_key_update_parallelism);
         
         if (storage.getSettings()->enable_unique_key_bucket && data_part_->commit_type != IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
             loading_bucket_pool = std::make_shared<ThreadPool>(storage.getSettings()->unique_key_bucket_load_parallelism);
@@ -225,7 +225,7 @@ void UniqueEngineDataWriter::scheduleDedupTask(
         }
         else
         {
-            update_parallelism_pool->scheduleOrThrowOnError(
+            update_thread_pool->scheduleOrThrowOnError(
                 [uniq_engine_writer, data_parts, current_key_index, current_delete_bitmap, begin, end]
                 {
                     setThreadName("dedupFunctionByPart");
@@ -266,7 +266,7 @@ void UniqueEngineDataWriter::executeParallelDedupByPart(
     if (!bucket_size)
         throw Exception("zero bucket size for parallel deduplication task by part.", ErrorCodes::LOGICAL_ERROR);
     
-    if (!update_parallelism_pool)
+    if (!update_thread_pool)
         throw Exception("the update parallel pool was not initialized.", ErrorCodes::LOGICAL_ERROR);
 
     size_t begin = 0, end = 0;
@@ -279,7 +279,7 @@ void UniqueEngineDataWriter::executeParallelDedupByPart(
         }
     }
     scheduleDedupTask(this, data_parts, current_key_index, current_delete_bitmap, begin, end);
-    update_parallelism_pool->wait();
+    update_thread_pool->wait();
     for (const auto & pair : unique_delete_bitmap_map)
         flushToTempFiles(pair.first);
     for (const auto & pair : unique_deleted_keys_map)

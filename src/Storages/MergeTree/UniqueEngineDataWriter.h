@@ -112,7 +112,7 @@ private:
 
     bool has_temp_dir = false;
     mutable std::mutex part_to_write_mutex;
-    UpdateParallelismPoolPtr update_parallelism_pool;
+    UpdateThreadPoolPtr update_thread_pool;
     LoadingBucketPoolPtr loading_bucket_pool;
     Poco::Logger * log;
 };
