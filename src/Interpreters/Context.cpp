@@ -3251,7 +3251,7 @@ void Context::initRemoteQueryTimeoutCount() const
 UInt32 Context::getRemoteQueryTimeoutCount() const
 {
     auto lock = getLock();
-    return *remote_query_timeout_count_ptr;
+    return remote_query_timeout_count_ptr ? *remote_query_timeout_count_ptr : 0;
 }
 
 void Context::incrementRemoteQueryTimeoutCount() const
@@ -3271,7 +3271,7 @@ void Context::initTotalChildQueryCount() const
 UInt32 Context::getTotalChildQueryCount() const
 {
     auto lock = getLock();
-    return *total_child_query_count_ptr;
+    return total_child_query_count_ptr ? *total_child_query_count_ptr : 0;
 }
 
 void Context::incrementTotalChildQueryCount(UInt32 cnt) const
