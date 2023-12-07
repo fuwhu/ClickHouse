@@ -133,7 +133,7 @@ protected:
 };
 
 using UniqueKeyBucketIndexPtr = std::shared_ptr<IUniqueKeyBucketIndex>;
-using UpdateParallelismPoolPtr = std::shared_ptr<ThreadPool>;
+using UpdateThreadPoolPtr = std::shared_ptr<ThreadPool>;
 using LoadingBucketPoolPtr = std::shared_ptr<ThreadPool>;
 using BucketIndexRangePtr = std::shared_ptr<std::vector<size_t>>;
 

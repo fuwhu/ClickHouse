@@ -94,6 +94,50 @@ std::pair<bool, ReplicatedMergeMutateTaskBase::PartLogWriter> MergeFromLogEntryT
             return {false, {}};
         }
 
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        {
+            if (source_part_or_covering->merge_update_status == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
+            {
+                /// nothing, it's correct.
+            }
+            else if (source_part_or_covering->merge_update_status == IMergeTreeDataPart::MergeUpdateStatus::NORMAL)
+            {
+                LOG_WARNING(
+                    storage.log,
+                    "part {} has been selected to merge, but the merge_update_status of part is NORMAL, which may be caused by "
+                    "restart or other "
+                    "reasons, so change merge_update_status to merging to avoid the conflict between write and merge.",
+                    source_part_or_covering->name);
+
+                if (storage.changePartMergeUpdateStatus(
+                        source_part_or_covering,
+                        IMergeTreeDataPart::MergeUpdateStatus::NORMAL,
+                        IMergeTreeDataPart::MergeUpdateStatus::MERGING))
+                    LOG_WARNING(storage.log, "the merge_update_status of part {} is changed to MERGING.", source_part_or_covering->name);
+                else
+                {
+                    LOG_WARNING(
+                        storage.log,
+                        "failed to change merge_update_status of part {}, the part is probably being updated.",
+                        source_part_or_covering->name);
+                    return {false, {}};
+                }
+            }
+            else
+            {
+                LOG_WARNING(
+                    storage.log,
+                    "part {} has been selected to merge, but the merge_update_status of part is {}, which may be caused by "
+                    "restart or other "
+                    "reasons, so wait for write to complete and then change merge_update_status to merging to avoid the conflict between "
+                    "write and merge.",
+                    source_part_or_covering->name,
+                    source_part_or_covering->merge_update_status);
+                return {false, {}};
+            }
+        }
+
+
         parts.push_back(source_part_or_covering);
     }
 
