@@ -50,7 +50,8 @@ private:
     /// Lost replicas will use different strategy for repair.
     void markLostReplicas(const std::unordered_map<String, UInt32> & host_versions_lost_replicas,
                           const std::unordered_map<String, String> & log_pointers_candidate_lost_replicas,
-                          size_t replicas_count, const zkutil::ZooKeeperPtr & zookeeper);
+                          size_t replicas_count, const zkutil::ZooKeeperPtr & zookeeper,
+                          CurrentMetrics::Increment & metric_counter);
 
     /// Remove old block hashes from ZooKeeper. This is done by the leader replica.
     void clearOldBlocks();
@@ -63,7 +64,7 @@ private:
 
     struct NodeWithStat;
     /// Returns list of blocks (with their stat) sorted by ctime in descending order.
-    void getBlocksSortedByTime(zkutil::ZooKeeper & zookeeper, std::vector<NodeWithStat> & timed_blocks);
+    void getBlocksSortedByTime(zkutil::ZooKeeper & zookeeper, std::vector<NodeWithStat> & timed_blocks, CurrentMetrics::Increment & metric_counter);
 
     /// TODO Removing old quorum/failed_parts
 };

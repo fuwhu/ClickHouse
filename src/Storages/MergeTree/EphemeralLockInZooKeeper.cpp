@@ -13,8 +13,8 @@ namespace ErrorCodes
 }
 
 EphemeralLockInZooKeeper::EphemeralLockInZooKeeper(
-    const String & path_prefix_, const String & temp_path, zkutil::ZooKeeper & zookeeper_, Coordination::Requests * precheck_ops)
-    : zookeeper(&zookeeper_), path_prefix(path_prefix_)
+    const String & path_prefix_, const String & temp_path, zkutil::ZooKeeper & zookeeper_, CurrentMetrics::Increment & metric_counter_, Coordination::Requests * precheck_ops)
+    : zookeeper(&zookeeper_), path_prefix(path_prefix_), metric_counter(&metric_counter_)
 {
     /// The /abandonable_lock- name is for backward compatibility.
     String holder_path_prefix = temp_path + "/abandonable_lock-";
@@ -22,17 +22,23 @@ EphemeralLockInZooKeeper::EphemeralLockInZooKeeper(
     /// Let's create an secondary ephemeral node.
     if (!precheck_ops || precheck_ops->empty())
     {
+        metric_counter->add();
         holder_path = zookeeper->create(holder_path_prefix, "", zkutil::CreateMode::EphemeralSequential);
+        metric_counter->sub();
     }
     else
     {
         precheck_ops->emplace_back(zkutil::makeCreateRequest(holder_path_prefix, "", zkutil::CreateMode::EphemeralSequential));
+        metric_counter->add();
         Coordination::Responses op_results = zookeeper->multi(*precheck_ops);
+        metric_counter->sub();
         holder_path = dynamic_cast<const Coordination::CreateResponse &>(*op_results.back()).path_created;
     }
 
     /// Write the path to the secondary node in the main node.
+    metric_counter->add();
     path = zookeeper->create(path_prefix, holder_path, zkutil::CreateMode::EphemeralSequential);
+    metric_counter->sub();
 
     if (path.size() <= path_prefix.size())
         throw Exception("Logical error: name of the main node is shorter than prefix.", ErrorCodes::LOGICAL_ERROR);
@@ -42,7 +48,15 @@ void EphemeralLockInZooKeeper::unlock()
 {
     Coordination::Requests ops;
     getUnlockOps(ops);
+    
+    if (metric_counter)
+        metric_counter->add();
+    
     zookeeper->multi(ops);
+
+    if (metric_counter)
+        metric_counter->sub();
+
     holder_path = "";
 }
 

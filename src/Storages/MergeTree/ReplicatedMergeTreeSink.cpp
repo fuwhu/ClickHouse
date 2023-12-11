@@ -1,3 +1,4 @@
+#include <utility>
 #include <Storages/StorageReplicatedMergeTree.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeQuorumEntry.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeSink.h>
@@ -85,24 +86,37 @@ static void assertSessionIsNotExpired(zkutil::ZooKeeperPtr & zookeeper)
 }
 
 
-void ReplicatedMergeTreeSink::checkQuorumPrecondition(zkutil::ZooKeeperPtr & zookeeper)
+void ReplicatedMergeTreeSink::checkQuorumPrecondition(zkutil::ZooKeeperPtr & zookeeper, CurrentMetrics::Metric metric)
 {
     quorum_info.status_path = storage.zookeeper_path + "/quorum/status";
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+    metric_counter.add();
     Strings replicas = zookeeper->getChildren(fs::path(storage.zookeeper_path) / "replicas");
+    metric_counter.sub();
+
     std::vector<std::future<Coordination::ExistsResponse>> replicas_status_futures;
     replicas_status_futures.reserve(replicas.size());
+
     for (const auto & replica : replicas)
         if (replica != storage.replica_name)
+        {
+            metric_counter.add();
             replicas_status_futures.emplace_back(zookeeper->asyncExists(fs::path(storage.zookeeper_path) / "replicas" / replica / "is_active"));
+        }
 
+    metric_counter.add();        
     std::future<Coordination::GetResponse> is_active_future = zookeeper->asyncTryGet(storage.replica_path + "/is_active");
+    metric_counter.add();
     std::future<Coordination::GetResponse> host_future = zookeeper->asyncTryGet(storage.replica_path + "/host");
 
     size_t active_replicas = 1;     /// Assume current replica is active (will check below)
     for (auto & status : replicas_status_futures)
+    {
         if (status.get().error == Coordination::Error::ZOK)
             ++active_replicas;
+        metric_counter.sub();
+    }
 
     if (active_replicas < quorum)
         throw Exception(ErrorCodes::TOO_FEW_LIVE_REPLICAS, "Number of alive replicas ({}) is less than requested quorum ({}).",
@@ -117,14 +131,25 @@ void ReplicatedMergeTreeSink::checkQuorumPrecondition(zkutil::ZooKeeperPtr & zoo
         */
 
     String quorum_status;
-    if (!quorum_parallel && zookeeper->tryGet(quorum_info.status_path, quorum_status))
+
+    auto zk_try_get = [&]()
+    {
+        metric_counter.add();
+        auto status = zookeeper->tryGet(quorum_info.status_path, quorum_status);
+        metric_counter.sub();
+        return status;
+    };
+
+    if (!quorum_parallel && zk_try_get())
         throw Exception("Quorum for previous write has not been satisfied yet. Status: " + quorum_status,
                         ErrorCodes::UNSATISFIED_QUORUM_FOR_PREVIOUS_WRITE);
 
     /// Both checks are implicitly made also later (otherwise there would be a race condition).
 
     auto is_active = is_active_future.get();
+    metric_counter.sub();
     auto host = host_future.get();
+    metric_counter.sub();
 
     if (is_active.error == Coordination::Error::ZNONODE || host.error == Coordination::Error::ZNONODE)
         throw Exception("Replica is not active right now", ErrorCodes::READONLY);
@@ -148,7 +173,7 @@ void ReplicatedMergeTreeSink::consume(Chunk chunk)
       * TODO Too complex logic, you can do better.
       */
     if (quorum)
-        checkQuorumPrecondition(zookeeper);
+        checkQuorumPrecondition(zookeeper, CurrentMetrics::ZooKeeperRequests_INSERT);
 
     auto part_blocks = storage.writer.splitBlockIntoParts(block, max_parts_per_block, metadata_snapshot, context);
     std::vector<ReplicatedMergeTreeSink::DelayedChunk::Partition> partitions;
@@ -226,7 +251,7 @@ void ReplicatedMergeTreeSink::finishDelayedChunk(zkutil::ZooKeeperPtr & zookeepe
 
         try
         {
-            commitPart(zookeeper, part, partition.block_id);
+            commitPart(zookeeper, part, partition.block_id, CurrentMetrics::ZooKeeperRequests_INSERT);
 
             last_block_is_duplicate = last_block_is_duplicate || part->is_duplicate;
 
@@ -271,7 +296,7 @@ void ReplicatedMergeTreeSink::writeExistingPart(MergeTreeData::MutableDataPartPt
 
 
 void ReplicatedMergeTreeSink::commitPart(
-    zkutil::ZooKeeperPtr & zookeeper, MergeTreeData::MutableDataPartPtr & part, const String & block_id)
+    zkutil::ZooKeeperPtr & zookeeper, MergeTreeData::MutableDataPartPtr & part, const String & block_id, CurrentMetrics::Metric metric)
 {
     metadata_snapshot->check(part->getColumns());
     assertSessionIsNotExpired(zookeeper);
@@ -287,6 +312,8 @@ void ReplicatedMergeTreeSink::commitPart(
 
     String old_part_name = part->name;
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+
     while (true)
     {
         /// Obtain incremental block number and lock it. The lock holds our intention to add the block to the filesystem.
@@ -296,7 +323,7 @@ void ReplicatedMergeTreeSink::commitPart(
         /// Allocate new block number and check for duplicates
         bool deduplicate_block = !block_id.empty();
         String block_id_path = deduplicate_block ? storage.zookeeper_path + "/blocks/" + block_id : "";
-        auto block_number_lock = storage.allocateBlockNumber(part->info.partition_id, zookeeper, block_id_path);
+        auto block_number_lock = storage.allocateBlockNumber(part->info.partition_id, zookeeper, block_id_path, "", metric);
 
         /// Prepare transaction to ZooKeeper
         /// It will simultaneously add information about the part to all the necessary places in ZooKeeper and remove block_number_lock.
@@ -398,7 +425,9 @@ void ReplicatedMergeTreeSink::commitPart(
 
             /// This block was already written to some replica. Get the part name for it.
             /// Note: race condition with DROP PARTITION operation is possible. User will get "No node" exception and it is Ok.
+            metric_counter.add();
             existing_part_name = zookeeper->get(storage.zookeeper_path + "/blocks/" + block_id);
+            metric_counter.sub();
 
             /// If it exists on our replica, ignore it.
             if (storage.getActiveContainingPart(existing_part_name))
@@ -415,7 +444,7 @@ void ReplicatedMergeTreeSink::commitPart(
                     else
                         quorum_path = storage.zookeeper_path + "/quorum/status";
 
-                    waitForQuorum(zookeeper, existing_part_name, quorum_path, quorum_info.is_active_node_value);
+                    waitForQuorum(zookeeper, existing_part_name, quorum_path, quorum_info.is_active_node_value, metric_counter);
                 }
                 else
                 {
@@ -471,7 +500,9 @@ void ReplicatedMergeTreeSink::commitPart(
         }
 
         Coordination::Responses responses;
+        metric_counter.add();
         Coordination::Error multi_code = zookeeper->tryMultiNoThrow(ops, responses); /// 1 RTT
+        metric_counter.sub();
 
         if (multi_code == Coordination::Error::ZOK)
         {
@@ -558,13 +589,33 @@ void ReplicatedMergeTreeSink::commitPart(
         {
             /// We get duplicate part without fetch
             /// Check if this quorum insert is parallel or not
-            if (zookeeper->exists(storage.zookeeper_path + "/quorum/parallel/" + part->name))
+            auto zk_exists_quorum_parallel = [&]()
+            {
+                metric_counter.add();
+                auto status = zookeeper->exists(storage.zookeeper_path + "/quorum/parallel/" + part->name);
+                metric_counter.sub();
+                return status;
+            };
+
+
+            if (zk_exists_quorum_parallel())
                 storage.updateQuorum(part->name, true);
-            else if (zookeeper->exists(storage.zookeeper_path + "/quorum/status"))
-                storage.updateQuorum(part->name, false);
+            else 
+            {
+                auto zk_exists_quorum_status = [&]()
+                {
+                    metric_counter.add();
+                    auto status = zookeeper->exists(storage.zookeeper_path + "/quorum/status");
+                    metric_counter.sub();
+                    return status;
+                };
+
+                if (zk_exists_quorum_status())
+                    storage.updateQuorum(part->name, false);
+            }
         }
 
-        waitForQuorum(zookeeper, part->name, quorum_info.status_path, quorum_info.is_active_node_value);
+        waitForQuorum(zookeeper, part->name, quorum_info.status_path, quorum_info.is_active_node_value, metric_counter);
     }
 
     /// Cleanup shared locks made with old name
@@ -589,7 +640,8 @@ void ReplicatedMergeTreeSink::waitForQuorum(
     zkutil::ZooKeeperPtr & zookeeper,
     const std::string & part_name,
     const std::string & quorum_path,
-    const std::string & is_active_node_value) const
+    const std::string & is_active_node_value,
+    CurrentMetrics::Increment & metric_counter) const
 {
     /// We are waiting for quorum to be satisfied.
     LOG_TRACE(log, "Waiting for quorum");
@@ -602,7 +654,11 @@ void ReplicatedMergeTreeSink::waitForQuorum(
 
             std::string value;
             /// `get` instead of `exists` so that `watch` does not leak if the node is no longer there.
-            if (!zookeeper->tryGet(quorum_path, value, nullptr, event))
+            metric_counter.add();
+            bool zk_try_get = zookeeper->tryGet(quorum_path, value, nullptr, event);
+            metric_counter.sub();
+
+            if (!zk_try_get)
                 break;
 
             LOG_TRACE(log, "Quorum node {} still exists, will wait for updates", quorum_path);
@@ -622,8 +678,12 @@ void ReplicatedMergeTreeSink::waitForQuorum(
         /// And what if it is possible that the current replica at this time has ceased to be active
         /// and the quorum is marked as failed and deleted?
         String value;
-        if (!zookeeper->tryGet(storage.replica_path + "/is_active", value, nullptr)
-            || value != is_active_node_value)
+
+        metric_counter.add();
+        bool zk_try_get = zookeeper->tryGet(storage.replica_path + "/is_active", value, nullptr);
+        metric_counter.sub();
+
+        if (!zk_try_get || value != is_active_node_value)
             throw Exception("Replica become inactive while waiting for quorum", ErrorCodes::NO_ACTIVE_REPLICAS);
     }
     catch (...)
