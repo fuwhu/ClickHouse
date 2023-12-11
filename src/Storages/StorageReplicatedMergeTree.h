@@ -26,6 +26,7 @@
 #include <DataTypes/DataTypesNumber.h>
 #include <Interpreters/Cluster.h>
 #include <Interpreters/PartLog.h>
+#include "Common/CurrentMetrics.h"
 #include <Common/randomSeed.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/Throttler.h>
@@ -33,6 +34,17 @@
 #include <QueryPipeline/Pipe.h>
 #include <Storages/MergeTree/BackgroundJobsAssignee.h>
 
+
+namespace CurrentMetrics
+{
+  extern const Metric ZooKeeperRequests_DEFAULT;
+  extern const Metric ZooKeeperRequests_MERGE_SELECT;
+  extern const Metric ZooKeeperRequests_QUEUE_UPDATE;
+  extern const Metric ZooKeeperRequests_MUTATION_UPDATE;
+  extern const Metric ZooKeeperRequests_CLEAR_OLD_PARTS;
+  extern const Metric ZooKeeperRequests_CLEAR_OLD_LOGS;
+  extern const Metric ZooKeeperRequests_CLEAR_OLD_BLOCKS;
+}
 
 namespace DB
 {
@@ -585,7 +597,8 @@ private:
         const Names & deduplicate_by_columns,
         ReplicatedMergeTreeLogEntryData * out_log_entry,
         int32_t log_version,
-        MergeType merge_type);
+        MergeType merge_type,
+        CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_DEFAULT);
 
     CreateMergeEntryResult createLogEntryToMutatePart(
         const IMergeTreeDataPart & part,
@@ -661,7 +674,8 @@ private:
     /// (can be used if we want to allocate blocks on other replicas)
     std::optional<EphemeralLockInZooKeeper> allocateBlockNumber(
         const String & partition_id, const zkutil::ZooKeeperPtr & zookeeper,
-        const String & zookeeper_block_id_path = "", const String & zookeeper_path_prefix = "") const;
+        const String & zookeeper_block_id_path = "", const String & zookeeper_path_prefix = "", 
+        CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_DEFAULT) const;
 
     /** Wait until all replicas, including this, execute the specified action from the log.
       * If replicas are added at the same time, it can not wait the added replica.

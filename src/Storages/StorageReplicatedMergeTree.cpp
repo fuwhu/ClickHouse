@@ -1,5 +1,6 @@
 #include <Core/Defines.h>
 
+#include "Common/CurrentMetrics.h"
 #include "Common/hex.h"
 #include <Common/Macros.h>
 #include <Common/StringUtils/StringUtils.h>
@@ -2826,7 +2827,7 @@ void StorageReplicatedMergeTree::queueUpdatingTask()
     }
     try
     {
-        queue.pullLogsToQueue(getZooKeeperAndAssertNotReadonly(), queue_updating_task->getWatchCallback(), ReplicatedMergeTreeQueue::UPDATE);
+        queue.pullLogsToQueue(getZooKeeperAndAssertNotReadonly(), queue_updating_task->getWatchCallback(), ReplicatedMergeTreeQueue::UPDATE, CurrentMetrics::ZooKeeperRequests_QUEUE_UPDATE);
         last_queue_update_finish_time.store(time(nullptr));
         queue_update_in_progress = false;
     }
@@ -2861,7 +2862,10 @@ void StorageReplicatedMergeTree::mutationsUpdatingTask()
 {
     try
     {
-        queue.updateMutations(getZooKeeper(), mutations_updating_task->getWatchCallback());
+        CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_MUTATION_UPDATE;
+        CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+        
+        queue.updateMutations(getZooKeeper(), metric_counter, mutations_updating_task->getWatchCallback());
     }
     catch (const Coordination::Exception & e)
     {
@@ -3029,6 +3033,7 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
     const Names deduplicate_by_columns = {};
     CreateMergeEntryResult create_result = CreateMergeEntryResult::Other;
 
+    CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_MERGE_SELECT;
     MergeTreeData::DataPartsVector merging_parts;
     try
     {
@@ -3038,7 +3043,7 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
 
         auto zookeeper = getZooKeeperAndAssertNotReadonly();
 
-        ReplicatedMergeTreeMergePredicate merge_pred = queue.getMergePredicate(zookeeper);
+        ReplicatedMergeTreeMergePredicate merge_pred = queue.getMergePredicate(zookeeper, metric);
 
         /// If many merges is already queued, then will queue only small enough merges.
         /// Otherwise merge queue could be filled with only large merges,
@@ -3084,7 +3089,8 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
                     deduplicate_by_columns,
                     nullptr,
                     merge_pred.getVersion(),
-                    future_merged_part->merge_type);
+                    future_merged_part->merge_type,
+                    metric);
             }
             /// If there are many mutations in queue, it may happen, that we cannot enqueue enough merges to merge all new parts
             else if (max_source_part_size_for_mutation > 0 && queue.countMutations() > 0
@@ -3182,12 +3188,19 @@ StorageReplicatedMergeTree::CreateMergeEntryResult StorageReplicatedMergeTree::c
     const Names & deduplicate_by_columns,
     ReplicatedMergeTreeLogEntryData * out_log_entry,
     int32_t log_version,
-    MergeType merge_type)
+    MergeType merge_type,
+    CurrentMetrics::Metric metric)
 {
     std::vector<std::future<Coordination::ExistsResponse>> exists_futures;
     exists_futures.reserve(parts.size());
+
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+
     for (const auto & part : parts)
+    {
+        metric_counter.add();
         exists_futures.emplace_back(zookeeper->asyncExists(fs::path(replica_path) / "parts" / part->name));
+    }
 
     bool all_in_zk = true;
     for (size_t i = 0; i < parts.size(); ++i)
@@ -3204,6 +3217,7 @@ StorageReplicatedMergeTree::CreateMergeEntryResult StorageReplicatedMergeTree::c
                 enqueuePartForCheck(part->name);
             }
         }
+        metric_counter.sub();
     }
 
     if (!all_in_zk)
@@ -3233,7 +3247,9 @@ StorageReplicatedMergeTree::CreateMergeEntryResult StorageReplicatedMergeTree::c
     ops.emplace_back(zkutil::makeSetRequest(
         fs::path(zookeeper_path) / "log", "", log_version)); /// Check and update version.
 
+    metric_counter.add();
     Coordination::Error code = zookeeper->tryMulti(ops, responses);
+    metric_counter.sub();
 
     if (code == Coordination::Error::ZOK)
     {
@@ -5177,7 +5193,7 @@ bool StorageReplicatedMergeTree::existsNodeCached(const std::string & path) cons
 
 std::optional<EphemeralLockInZooKeeper>
 StorageReplicatedMergeTree::allocateBlockNumber(
-    const String & partition_id, const zkutil::ZooKeeperPtr & zookeeper, const String & zookeeper_block_id_path, const String & zookeeper_path_prefix) const
+    const String & partition_id, const zkutil::ZooKeeperPtr & zookeeper, const String & zookeeper_block_id_path, const String & zookeeper_path_prefix, CurrentMetrics::Metric metric) const
 {
     String zookeeper_table_path;
     if (zookeeper_path_prefix.empty())
@@ -5196,6 +5212,8 @@ StorageReplicatedMergeTree::allocateBlockNumber(
     String block_numbers_path = fs::path(zookeeper_table_path) / "block_numbers";
     String partition_path = fs::path(block_numbers_path) / partition_id;
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+
     if (!existsNodeCached(partition_path))
     {
         Coordination::Requests ops;
@@ -5206,7 +5224,11 @@ StorageReplicatedMergeTree::allocateBlockNumber(
         ops.push_back(zkutil::makeSetRequest(block_numbers_path, "", -1));
 
         Coordination::Responses responses;
+
+        metric_counter.add();
         Coordination::Error code = zookeeper->tryMulti(ops, responses);
+        metric_counter.sub();
+
         if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
             zkutil::KeeperMultiException::check(code, ops, responses);
     }
@@ -5216,7 +5238,7 @@ StorageReplicatedMergeTree::allocateBlockNumber(
     try
     {
         lock = EphemeralLockInZooKeeper(
-            fs::path(partition_path) / "block-", fs::path(zookeeper_table_path) / "temp", *zookeeper, &deduplication_check_ops);
+            fs::path(partition_path) / "block-", fs::path(zookeeper_table_path) / "temp", *zookeeper, metric_counter, &deduplication_check_ops);
     }
     catch (const zkutil::KeeperMultiException & e)
     {
@@ -6193,6 +6215,9 @@ void StorageReplicatedMergeTree::removePartsFromZooKeeper(
     std::vector<std::future<Coordination::MultiResponse>> remove_futures;
     exists_futures.reserve(part_names.size());
     remove_futures.reserve(part_names.size());
+
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(CurrentMetrics::ZooKeeperRequests_CLEAR_OLD_PARTS, 0);
+
     try
     {
         /// Exception can be thrown from loop
@@ -6200,16 +6225,19 @@ void StorageReplicatedMergeTree::removePartsFromZooKeeper(
         for (const String & part_name : part_names)
         {
             String part_path = fs::path(replica_path) / "parts" / part_name;
+            metric_counter.add();
             exists_futures.emplace_back(zookeeper->asyncExists(part_path));
         }
 
         for (size_t i = 0; i < part_names.size(); ++i)
         {
             Coordination::ExistsResponse exists_resp = exists_futures[i].get();
+            metric_counter.sub();
             if (exists_resp.error == Coordination::Error::ZOK)
             {
                 Coordination::Requests ops;
                 removePartFromZooKeeper(part_names[i], ops, exists_resp.stat.numChildren > 0);
+                metric_counter.add();
                 remove_futures.emplace_back(zookeeper->asyncTryMultiNoThrow(ops));
             }
             else
@@ -6230,6 +6258,7 @@ void StorageReplicatedMergeTree::removePartsFromZooKeeper(
     for (size_t i = 0; i < remove_futures.size(); ++i)
     {
         auto & future = remove_futures[i];
+        metric_counter.sub();
 
         if (!future.valid())
             continue;

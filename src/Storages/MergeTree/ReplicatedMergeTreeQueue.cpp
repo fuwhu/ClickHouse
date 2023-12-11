@@ -551,7 +551,7 @@ bool ReplicatedMergeTreeQueue::removeFailedQuorumPart(const MergeTreePartInfo & 
     return virtual_parts.remove(part_info);
 }
 
-int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper, Coordination::WatchCallback watch_callback, PullLogsReason reason)
+int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper, Coordination::WatchCallback watch_callback, PullLogsReason reason, CurrentMetrics::Metric metric)
 {
     std::lock_guard lock(pull_logs_to_queue_mutex);
 
@@ -573,24 +573,32 @@ int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper
     String index_str = zookeeper->get(fs::path(replica_path) / "log_pointer");
     UInt64 index;
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+
     /// The version of "/log" is modified when new entries to merge/mutate/drop appear.
     Coordination::Stat stat;
+    metric_counter.add();
     zookeeper->get(fs::path(zookeeper_path) / "log", &stat);
+    metric_counter.sub();
 
+    metric_counter.add();
     Strings log_entries = zookeeper->getChildrenWatch(fs::path(zookeeper_path) / "log", nullptr, watch_callback);
+    metric_counter.sub();
 
     /// We update mutations after we have loaded the list of log entries, but before we insert them
     /// in the queue.
     /// With this we ensure that if you read the log state L1 and then the state of mutations M1,
     /// then L1 "happened-before" M1.
-    updateMutations(zookeeper);
+    updateMutations(zookeeper, metric_counter);
 
     if (index_str.empty())
     {
         /// If we do not already have a pointer to the log, put a pointer to the first entry in it.
         index = log_entries.empty() ? 0 : parse<UInt64>(std::min_element(log_entries.begin(), log_entries.end())->substr(strlen("log-")));
 
+        metric_counter.add();
         zookeeper->set(fs::path(replica_path) / "log_pointer", toString(index));
+        metric_counter.sub();
     }
     else
     {
@@ -637,7 +645,10 @@ int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper
             futures.reserve(end - begin);
 
             for (auto it = begin; it != end; ++it)
+            {
+                metric_counter.add();
                 futures.emplace_back(*it, zookeeper->asyncGet(fs::path(zookeeper_path) / "log" / *it));
+            }
 
             /// Simultaneously add all new entries to the queue and move the pointer to the log.
 
@@ -650,6 +661,7 @@ int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper
             for (auto & future : futures)
             {
                 Coordination::GetResponse res = future.second.get();
+                metric_counter.sub();
 
                 copied_entries.emplace_back(LogEntry::parse(res.data, res.stat));
 
@@ -675,7 +687,9 @@ int32_t ReplicatedMergeTreeQueue::pullLogsToQueue(zkutil::ZooKeeperPtr zookeeper
                 ops.emplace_back(zkutil::makeSetRequest(
                     fs::path(replica_path) / "min_unprocessed_insert_time", toString(*min_unprocessed_insert_time_changed), -1));
 
+            metric_counter.add();
             auto responses = zookeeper->multi(ops);
+            metric_counter.sub();
 
             /// Now we have successfully updated the queue in ZooKeeper. Update it in RAM.
 
@@ -749,11 +763,13 @@ Names getPartNamesToMutate(
 
 }
 
-void ReplicatedMergeTreeQueue::updateMutations(zkutil::ZooKeeperPtr zookeeper, Coordination::WatchCallback watch_callback)
+void ReplicatedMergeTreeQueue::updateMutations(zkutil::ZooKeeperPtr zookeeper, CurrentMetrics::Increment & metric_counter, Coordination::WatchCallback watch_callback)
 {
     std::lock_guard lock(update_mutations_mutex);
 
+    metric_counter.add();
     Strings entries_in_zk = zookeeper->getChildrenWatch(fs::path(zookeeper_path) / "mutations", nullptr, watch_callback);
+    metric_counter.sub();
     StringSet entries_in_zk_set(entries_in_zk.begin(), entries_in_zk.end());
 
     /// Compare with the local state, delete obsolete entries and determine which new entries to load.
@@ -810,12 +826,16 @@ void ReplicatedMergeTreeQueue::updateMutations(zkutil::ZooKeeperPtr zookeeper, C
 
         std::vector<std::future<Coordination::GetResponse>> futures;
         for (const String & entry : entries_to_load)
+        {
+            metric_counter.add();
             futures.emplace_back(zookeeper->asyncTryGet(fs::path(zookeeper_path) / "mutations" / entry));
+        }
 
         std::vector<ReplicatedMergeTreeMutationEntryPtr> new_mutations;
         for (size_t i = 0; i < entries_to_load.size(); ++i)
         {
             auto maybe_response = futures[i].get();
+            metric_counter.sub();
             if (maybe_response.error != Coordination::Error::ZOK)
             {
                 assert(maybe_response.error == Coordination::Error::ZNONODE);
@@ -1590,9 +1610,9 @@ size_t ReplicatedMergeTreeQueue::countFinishedMutations() const
 }
 
 
-ReplicatedMergeTreeMergePredicate ReplicatedMergeTreeQueue::getMergePredicate(zkutil::ZooKeeperPtr & zookeeper)
+ReplicatedMergeTreeMergePredicate ReplicatedMergeTreeQueue::getMergePredicate(zkutil::ZooKeeperPtr & zookeeper, CurrentMetrics::Metric metric)
 {
-    return ReplicatedMergeTreeMergePredicate(*this, zookeeper);
+    return ReplicatedMergeTreeMergePredicate(*this, zookeeper, metric);
 }
 
 
@@ -1893,7 +1913,7 @@ ReplicatedMergeTreeQueue::QueueLocks ReplicatedMergeTreeQueue::lockQueue()
 }
 
 ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
-    ReplicatedMergeTreeQueue & queue_, zkutil::ZooKeeperPtr & zookeeper)
+    ReplicatedMergeTreeQueue & queue_, zkutil::ZooKeeperPtr & zookeeper, CurrentMetrics::Metric metric)
     : queue(queue_)
     , prev_virtual_parts(queue.format_version)
 {
@@ -1902,12 +1922,20 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
         prev_virtual_parts = queue.virtual_parts;
     }
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(metric, 0);
+
     /// Load current quorum status.
+    metric_counter.add();
     auto quorum_status_future = zookeeper->asyncTryGet(fs::path(queue.zookeeper_path) / "quorum" / "status");
 
     /// Load current inserts
     std::unordered_set<String> lock_holder_paths;
-    for (const String & entry : zookeeper->getChildren(fs::path(queue.zookeeper_path) / "temp"))
+
+    metric_counter.add();
+    const auto & entries = zookeeper->getChildren(fs::path(queue.zookeeper_path) / "temp");
+    metric_counter.sub();
+
+    for (const String & entry : entries)
     {
         if (startsWith(entry, "abandonable_lock-"))
             lock_holder_paths.insert(fs::path(queue.zookeeper_path) / "temp" / entry);
@@ -1915,10 +1943,16 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
 
     if (!lock_holder_paths.empty())
     {
+        metric_counter.add();
         Strings partitions = zookeeper->getChildren(fs::path(queue.zookeeper_path) / "block_numbers");
+        metric_counter.sub();
+
         std::vector<std::future<Coordination::ListResponse>> lock_futures;
         for (const String & partition : partitions)
+        {
+            metric_counter.add();
             lock_futures.push_back(zookeeper->asyncGetChildren(fs::path(queue.zookeeper_path) / "block_numbers" / partition));
+        }
 
         struct BlockInfoInZooKeeper
         {
@@ -1932,6 +1966,7 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
         for (size_t i = 0; i < partitions.size(); ++i)
         {
             Strings partition_block_numbers = lock_futures[i].get().names;
+            metric_counter.sub();
             for (const String & entry : partition_block_numbers)
             {
                 /// TODO: cache block numbers that are abandoned.
@@ -1940,6 +1975,7 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
                 {
                     Int64 block_number = parse<Int64>(entry.substr(strlen("block-")));
                     String zk_path = fs::path(queue.zookeeper_path) / "block_numbers" / partitions[i] / entry;
+                    metric_counter.add();
                     block_infos.emplace_back(
                         BlockInfoInZooKeeper{partitions[i], block_number, zk_path, zookeeper->asyncTryGet(zk_path)});
                 }
@@ -1949,12 +1985,13 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
         for (auto & block : block_infos)
         {
             Coordination::GetResponse resp = block.contents_future.get();
+            metric_counter.sub();
             if (resp.error == Coordination::Error::ZOK && lock_holder_paths.count(resp.data))
                 committing_blocks[block.partition].insert(block.number);
         }
     }
 
-    merges_version = queue_.pullLogsToQueue(zookeeper, {}, ReplicatedMergeTreeQueue::MERGE_PREDICATE);
+    merges_version = queue_.pullLogsToQueue(zookeeper, {}, ReplicatedMergeTreeQueue::MERGE_PREDICATE, metric);
 
     {
         /// We avoid returning here a version to be used in a lightweight transaction.
@@ -1963,11 +2000,14 @@ ReplicatedMergeTreeMergePredicate::ReplicatedMergeTreeMergePredicate(
         /// The log entry serves as a synchronization point, and it also increments `merges_version`.
         ///
         /// If pinned parts are fetched after logs are pulled then we can safely say that it contains all locks up to `merges_version`.
+        metric_counter.add();
         String s = zookeeper->get(queue.zookeeper_path + "/pinned_part_uuids");
+        metric_counter.sub();
         pinned_part_uuids.fromString(s);
     }
 
     Coordination::GetResponse quorum_status_response = quorum_status_future.get();
+    metric_counter.sub();
     if (quorum_status_response.error == Coordination::Error::ZOK)
     {
         ReplicatedMergeTreeQuorumEntry quorum_status;

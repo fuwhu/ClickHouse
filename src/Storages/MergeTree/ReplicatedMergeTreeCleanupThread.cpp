@@ -84,8 +84,15 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
     auto zookeeper = storage.getZooKeeper();
     auto storage_settings = storage.getSettings();
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(CurrentMetrics::ZooKeeperRequests_CLEAR_OLD_LOGS, 0);
+
     Coordination::Stat stat;
-    if (!zookeeper->exists(storage.zookeeper_path + "/log", &stat))
+
+    metric_counter.add();
+    bool zk_exists = zookeeper->exists(storage.zookeeper_path + "/log", &stat);
+    metric_counter.sub();
+
+    if (!zk_exists)
         throw Exception(storage.zookeeper_path + "/log doesn't exist", ErrorCodes::NOT_FOUND_NODE);
 
     int children_count = stat.numChildren;
@@ -99,15 +106,19 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
 
     if (static_cast<double>(children_count) < min_replicated_logs_to_keep)
         return;
-
+    
+    metric_counter.add();
     Strings replicas = zookeeper->getChildren(storage.zookeeper_path + "/replicas", &stat);
+    metric_counter.sub();
 
     /// We will keep logs after and including this threshold.
     UInt64 min_saved_log_pointer = std::numeric_limits<UInt64>::max();
 
     UInt64 min_log_pointer_lost_candidate = std::numeric_limits<UInt64>::max();
 
+    metric_counter.add();
     Strings entries = zookeeper->getChildren(storage.zookeeper_path + "/log");
+    metric_counter.sub();
 
     if (entries.empty())
         return;
@@ -133,8 +144,13 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
     for (const String & replica : replicas)
     {
         Coordination::Stat host_stat;
+        metric_counter.add();
         zookeeper->get(storage.zookeeper_path + "/replicas/" + replica + "/host", &host_stat);
+        metric_counter.sub();
+
+        metric_counter.add();
         String pointer = zookeeper->get(storage.zookeeper_path + "/replicas/" + replica + "/log_pointer");
+        metric_counter.sub();
 
         UInt64 log_pointer = 0;
 
@@ -150,9 +166,15 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
         /// It exists and value is 1.
         String is_lost_str;
 
+        metric_counter.add();
         bool has_is_lost_node = zookeeper->tryGet(storage.zookeeper_path + "/replicas/" + replica + "/is_lost", is_lost_str);
+        metric_counter.sub();
 
-        if (zookeeper->exists(storage.zookeeper_path + "/replicas/" + replica + "/is_active"))
+        metric_counter.add();
+        bool has_is_active_node = zookeeper->exists(storage.zookeeper_path + "/replicas/" + replica + "/is_active");
+        metric_counter.sub();
+        
+        if (has_is_active_node)
         {
             if (has_is_lost_node && is_lost_str == "1")
             {
@@ -207,7 +229,9 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
     /// Because log pointer of recovering replicas can move backward.
     for (const String & replica : recovering_replicas)
     {
+        metric_counter.add();
         String pointer = zookeeper->get(storage.zookeeper_path + "/replicas/" + replica + "/log_pointer");
+        metric_counter.sub();
         UInt64 log_pointer = 0;
         if (!pointer.empty())
             log_pointer = parse<UInt64>(pointer);
@@ -229,7 +253,7 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
         host_versions_lost_replicas,
         log_pointers_candidate_lost_replicas,
         replicas.size() - num_replicas_were_marked_is_lost,
-        zookeeper);
+        zookeeper, metric_counter);
 
     Coordination::Requests ops;
     size_t i = 0;
@@ -248,7 +272,9 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
 
             try
             {
+                metric_counter.add();
                 zookeeper->multi(ops);
+                metric_counter.sub();
             }
             catch (const zkutil::KeeperMultiException & e)
             {
@@ -269,7 +295,8 @@ void ReplicatedMergeTreeCleanupThread::clearOldLogs()
 
 void ReplicatedMergeTreeCleanupThread::markLostReplicas(const std::unordered_map<String, UInt32> & host_versions_lost_replicas,
                                                         const std::unordered_map<String, String> & log_pointers_candidate_lost_replicas,
-                                                        size_t replicas_count, const zkutil::ZooKeeperPtr & zookeeper)
+                                                        size_t replicas_count, const zkutil::ZooKeeperPtr & zookeeper,
+                                                        CurrentMetrics::Increment & metric_counter)
 {
     Strings candidate_lost_replicas;
     std::vector<Coordination::Requests> requests;
@@ -293,11 +320,15 @@ void ReplicatedMergeTreeCleanupThread::markLostReplicas(const std::unordered_map
 
     std::vector<zkutil::ZooKeeper::FutureMulti> futures;
     for (size_t i = 0; i < candidate_lost_replicas.size(); ++i)
+    {
+        metric_counter.add();
         futures.emplace_back(zookeeper->asyncTryMultiNoThrow(requests[i]));
+    }
 
     for (size_t i = 0; i < candidate_lost_replicas.size(); ++i)
     {
         auto multi_responses = futures[i].get();
+        metric_counter.sub();
         if (multi_responses.responses[0]->error == Coordination::Error::ZBADVERSION)
             throw Exception(candidate_lost_replicas[i] + " became active when we marked lost replicas.", DB::ErrorCodes::REPLICA_STATUS_CHANGED);
         zkutil::KeeperMultiException::check(multi_responses.error, requests[i], multi_responses.responses);
@@ -324,8 +355,10 @@ void ReplicatedMergeTreeCleanupThread::clearOldBlocks()
     auto zookeeper = storage.getZooKeeper();
     auto storage_settings = storage.getSettings();
 
+    CurrentMetrics::Increment metric_counter = CurrentMetrics::Increment(CurrentMetrics::ZooKeeperRequests_CLEAR_OLD_BLOCKS, 0);
+
     std::vector<NodeWithStat> timed_blocks;
-    getBlocksSortedByTime(*zookeeper, timed_blocks);
+    getBlocksSortedByTime(*zookeeper, timed_blocks, metric_counter);
 
     if (timed_blocks.empty())
         return;
@@ -358,17 +391,21 @@ void ReplicatedMergeTreeCleanupThread::clearOldBlocks()
     for (auto it = first_outdated_block; it != timed_blocks.end(); ++it)
     {
         String path = storage.zookeeper_path + "/blocks/" + it->node;
+        metric_counter.add();
         try_remove_futures.emplace_back(path, zookeeper->asyncTryRemove(path, it->version));
     }
 
     for (auto & pair : try_remove_futures)
     {
         const String & path = pair.first;
+        metric_counter.sub();
         Coordination::Error rc = pair.second.get().error;
         if (rc == Coordination::Error::ZNOTEMPTY)
         {
             /// Can happen if there are leftover block nodes with children created by previous server versions.
+            metric_counter.add();
             zookeeper->removeRecursive(path);
+            metric_counter.sub();
             cached_block_stats.erase(first_outdated_block->node);
         }
         else if (rc == Coordination::Error::ZOK || rc == Coordination::Error::ZNONODE || rc == Coordination::Error::ZBADVERSION)
@@ -388,13 +425,18 @@ void ReplicatedMergeTreeCleanupThread::clearOldBlocks()
 }
 
 
-void ReplicatedMergeTreeCleanupThread::getBlocksSortedByTime(zkutil::ZooKeeper & zookeeper, std::vector<NodeWithStat> & timed_blocks)
+void ReplicatedMergeTreeCleanupThread::getBlocksSortedByTime(zkutil::ZooKeeper & zookeeper, std::vector<NodeWithStat> & timed_blocks, CurrentMetrics::Increment & metric_counter)
 {
     timed_blocks.clear();
 
     Strings blocks;
     Coordination::Stat stat;
-    if (Coordination::Error::ZOK != zookeeper.tryGetChildren(storage.zookeeper_path + "/blocks", blocks, &stat))
+
+    metric_counter.add();
+    auto zk_try_get_child = zookeeper.tryGetChildren(storage.zookeeper_path + "/blocks", blocks, &stat);
+    metric_counter.sub();
+
+    if (Coordination::Error::ZOK != zk_try_get_child)
         throw Exception(storage.zookeeper_path + "/blocks doesn't exist", ErrorCodes::NOT_FOUND_NODE);
 
     /// Seems like this code is obsolete, because we delete blocks from cache
@@ -424,6 +466,7 @@ void ReplicatedMergeTreeCleanupThread::getBlocksSortedByTime(zkutil::ZooKeeper &
         if (it == cached_block_stats.end())
         {
             /// New block. Fetch its stat asynchronously.
+            metric_counter.add();
             exists_futures.emplace_back(block, zookeeper.asyncExists(storage.zookeeper_path + "/blocks/" + block));
         }
         else
@@ -438,6 +481,7 @@ void ReplicatedMergeTreeCleanupThread::getBlocksSortedByTime(zkutil::ZooKeeper &
     for (auto & elem : exists_futures)
     {
         auto status = elem.second.get();
+        metric_counter.sub();
         if (status.error != Coordination::Error::ZNONODE)
         {
             cached_block_stats.emplace(elem.first, std::make_pair(status.stat.ctime, status.stat.version));

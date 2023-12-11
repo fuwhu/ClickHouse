@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <Processors/Sinks/SinkToStorage.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <base/types.h>
@@ -11,6 +12,12 @@ namespace zkutil
 {
     class ZooKeeper;
     using ZooKeeperPtr = std::shared_ptr<ZooKeeper>;
+}
+
+namespace CurrentMetrics
+{
+    extern const Metric ZooKeeperRequests_DEFAULT;
+    extern const Metric ZooKeeperRequests_INSERT;
 }
 
 namespace DB
@@ -66,16 +73,19 @@ private:
     };
 
     QuorumInfo quorum_info;
-    void checkQuorumPrecondition(zkutil::ZooKeeperPtr & zookeeper);
+
+    void checkQuorumPrecondition(zkutil::ZooKeeperPtr & zookeeper, CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_DEFAULT);
 
     /// Rename temporary part and commit to ZooKeeper.
-    void commitPart(zkutil::ZooKeeperPtr & zookeeper, MergeTreeData::MutableDataPartPtr & part, const String & block_id);
+    void commitPart(zkutil::ZooKeeperPtr & zookeeper, MergeTreeData::MutableDataPartPtr & part, const String & block_id, 
+    CurrentMetrics::Metric metric = CurrentMetrics::ZooKeeperRequests_DEFAULT);
 
     /// Wait for quorum to be satisfied on path (quorum_path) form part (part_name)
     /// Also checks that replica still alive.
     void waitForQuorum(
         zkutil::ZooKeeperPtr & zookeeper, const std::string & part_name,
-        const std::string & quorum_path, const std::string & is_active_node_value) const;
+        const std::string & quorum_path, const std::string & is_active_node_value,
+        CurrentMetrics::Increment & metric_counter) const;
 
     StorageReplicatedMergeTree & storage;
     StorageMetadataPtr metadata_snapshot;

@@ -84,6 +84,15 @@
     M(AsynchronousReadWait, "Number of threads waiting for asynchronous read.") \
     M(PendingAsyncInsert, "Number of asynchronous inserts that are waiting for flush.") \
     M(PartReceive, "Number of data parts being received.") \
+    \
+    M(ZooKeeperRequests_DEFAULT, "default type of zookeeper requests.")        \
+    M(ZooKeeperRequests_INSERT, "insert related zk requests")        \
+    M(ZooKeeperRequests_MERGE_SELECT, "merge selecting related zk requests")        \
+    M(ZooKeeperRequests_QUEUE_UPDATE, "queue updating related zk requests")        \
+    M(ZooKeeperRequests_MUTATION_UPDATE, "mutation updating related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_PARTS, "clear old parts related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_LOGS, "clear old logs related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_BLOCKS, "clear old blocks related zk requests")        \
 
 namespace CurrentMetrics
 {

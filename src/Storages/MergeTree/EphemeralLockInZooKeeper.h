@@ -26,7 +26,7 @@ class EphemeralLockInZooKeeper : public boost::noncopyable
 {
 public:
     EphemeralLockInZooKeeper(
-        const String & path_prefix_, const String & temp_path, zkutil::ZooKeeper & zookeeper_, Coordination::Requests * precheck_ops = nullptr);
+        const String & path_prefix_, const String & temp_path, zkutil::ZooKeeper & zookeeper_, CurrentMetrics::Increment & metric_counter_, Coordination::Requests * precheck_ops = nullptr);
 
     EphemeralLockInZooKeeper() = default;
 
@@ -88,6 +88,7 @@ private:
     String path_prefix;
     String path;
     String holder_path;
+    CurrentMetrics::Increment * metric_counter = nullptr;
 };
 
 
