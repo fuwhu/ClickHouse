@@ -256,6 +256,10 @@ class IColumn;
     M(Int64, distributed_ddl_task_timeout, 180, "Timeout for DDL query responses from all hosts in cluster. If a ddl request has not been performed on all hosts, a response will contain a timeout error and a request will be executed in an async mode. Negative value means infinite. Zero means async mode.", 0) \
     M(Milliseconds, stream_flush_interval_ms, 7500, "Timeout for flushing data from streaming storages.", 0) \
     M(Milliseconds, stream_poll_timeout_ms, 500, "Timeout for polling data from/to streaming storages.", 0) \
+    M(Seconds, block_number_cleanup_batch_interval, 5, "Time interval between two batches of block number znodes cleanup. please note that each round of cleanup can have multiple batches of cleanup, so this setting must be less than 'block_number_cleanup_execution_interval'.", 0) \
+    M(UInt64, block_number_cleanup_batch_size, 50, "Number of tables in each batch of block number znodes cleanup.", 0) \
+    M(Seconds, block_number_cleanup_execution_interval, 3600*12, "Time interval between two rounds of block number znodes cleanup", 0) \
+    M(UInt64, block_number_cleanup_timediff_hours, 30*24, "Only the block number znode that exists longer than this time interval could be cleared up.", 0) \
     \
     /** Settings for testing hedged requests */ \
     M(Milliseconds, sleep_in_send_tables_status_ms, 0, "Time to sleep in sending tables status response in TCPHandler", 0) \

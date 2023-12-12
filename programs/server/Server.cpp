@@ -89,6 +89,7 @@
 #include <Compression/CompressionCodecEncrypted.h>
 #include <filesystem>
 
+#include <Storages/MergeTree/BlockNumberCleaner.h>
 #include "config_core.h"
 #include "Common/config_version.h"
 
@@ -1188,6 +1189,8 @@ if (ThreadFuzzer::instance().isEffective())
     SCOPE_EXIT({
         /// Stop reloading of the main config. This must be done before `global_context->shutdown()` because
         /// otherwise the reloading may pass a changed config to some destroyed parts of ContextSharedPart.
+        BlockNumberCleaner::shutdown();
+        
         main_config_reloader.reset();
 
         async_metrics.stop();
@@ -1289,6 +1292,10 @@ if (ThreadFuzzer::instance().isEffective())
     }
     LOG_DEBUG(log, "Loaded metadata.");
 
+    LOG_DEBUG(log, "Starting BlockNumberCleaner");
+    BlockNumberCleaner::init(global_context, global_context->getSettings().block_number_cleanup_execution_interval);
+    BlockNumberCleaner::instance().startup();
+    LOG_DEBUG(log, "Started BlockNumberCleaner");
     /// Init trace collector only after trace_log system table was created
     /// Disable it if we collect test coverage information, because it will work extremely slow.
 #if USE_UNWIND && !WITH_COVERAGE && defined(__x86_64__)
