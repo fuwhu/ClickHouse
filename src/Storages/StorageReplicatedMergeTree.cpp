@@ -5170,6 +5170,11 @@ void StorageReplicatedMergeTree::rename(const String & new_path_to_table_data, c
     /// TODO: You can update names of loggers.
 }
 
+void StorageReplicatedMergeTree::erasePathCache(const std::string & path)
+{
+    std::lock_guard lock(existing_nodes_cache_mutex);
+    existing_nodes_cache.erase(path);
+}
 
 bool StorageReplicatedMergeTree::existsNodeCached(const std::string & path) const
 {

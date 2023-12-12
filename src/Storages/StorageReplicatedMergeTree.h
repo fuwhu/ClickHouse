@@ -30,6 +30,7 @@
 #include <Common/randomSeed.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/Throttler.h>
+#include <Storages/MergeTree/BlockNumberCleaner.h>
 #include <Core/BackgroundSchedulePool.h>
 #include <QueryPipeline/Pipe.h>
 #include <Storages/MergeTree/BackgroundJobsAssignee.h>
@@ -303,6 +304,8 @@ public:
     /// Check if there are new broken disks and enqueue part recovery tasks.
     void checkBrokenDisks();
 
+    void erasePathCache(const std::string & path);
+
 private:
     std::atomic_bool are_restoring_replica {false};
 
@@ -326,6 +329,7 @@ private:
     friend class MergeFromLogEntryTask;
     friend class MutateFromLogEntryTask;
     friend class ReplicatedMergeMutateTaskBase;
+    friend class BlockNumberCleaner;
 
     using MergeStrategyPicker = ReplicatedMergeTreeMergeStrategyPicker;
     using LogEntry = ReplicatedMergeTreeLogEntry;
