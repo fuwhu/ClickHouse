@@ -1,3 +1,32 @@
+### ClickHouse release v22.3.15.1-bili-1.0.3, 2023-12-14
+#### New Feature
+
+* Support skipping slow/hang shards for distributed query. ([hufuwang](https://git.bilibili.co/hufuwang)) [#358](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/358) [#366](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/366)
+* Add BlockNumberCleaner which cleans up the znodes in 'block_numbers' in case the partition is empty and specified conditions met. ([chenjian04](https://git.bilibili.co/chenjian04)) [#348]()
+
+#### Improvement
+* Improve the insert performance for unique engine table by using LevelDB as unique key index. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#351](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/351)
+* add some metrics for tracking what are running zookeeper request for. this can help in case of troubleshooting zookeeper issues. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#359](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/359)
+
+#### Bug Fix
+* fix the issue of unique engine data part status update in case the data part move failed. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#364](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/364)
+* the prewhere optimization is not effective for implicit column of MapV2. ([chenjian04](https://git.bilibili.co/chenjian04)) [#365](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/365)
+* fix the incorrect status of unique engine data part in case of clickhouse server restart or crash. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#368](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/368)
+
+### ClickHouse release v22.3.15.1-bili-1.0.2, 2023-11-10
+#### New Feature
+
+* Add tokenLike function which support tokenization with wildcard. ([chenjian04](https://git.bilibili.co/chenjian04)) [#326](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/326)
+
+#### Bug Fix
+* fix with propagation in subquery. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#338](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/338)
+* fix `attach from` duplicated parts issue. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#341](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/341)
+* fix bitmap aggreate state on distributed table. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#349](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/349)
+* fix infinite loop while using hasToken with empty needle. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#347](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/347)
+* fix projection columns check in case implicit column involved. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#343](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/343)
+* fix negative ReadonlyReplica metric. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#344](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/344)
+* Do not read all the columns from right GLOBAL JOIN table. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#345](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/345)
+
 ### ClickHouse release v22.3.15.1-bili-1.0.1, 2023-08-22
 #### New Feature
 
