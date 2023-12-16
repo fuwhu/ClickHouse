@@ -90,6 +90,16 @@ private:
         size_t begin,
         size_t end);
     void dedupFunctionBykey();
+    static void compareWithActivePart(
+        std::map<String, VersionAndRow> & to_update_current,
+        std::map<MutableDataPartPtr, std::vector<size_t>> & to_update_normal,
+        std::map<MutableDataPartPtr, DeletedKeysPtr> & to_update_merging_moving,
+        const String & key_str,
+        const UInt64 & current_version,
+        const UInt64 & current_rowid,
+        const MutableDataPartPtr & active_part,
+        const UInt64 & active_version,
+        const UInt64 & active_rowid);
     PartToWriteLock lockPartToWrite() const { return PartToWriteLock(part_to_write_mutex); }
 
     MutableDataPartPtr & part_to_write;

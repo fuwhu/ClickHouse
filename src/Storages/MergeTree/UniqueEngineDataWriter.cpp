@@ -113,59 +113,34 @@ void UniqueEngineDataWriter::dedupFunctionByPart(
         current_key_index->forEach(
             [&](const StringRef & key, const VersionAndRow & mapped)
             {
-                String key_str = key.toString();
+                const String & current_key = key.toString();
                 const UInt64 & current_version = std::get<0>(mapped);
-                const UInt32 & current_row_num = std::get<1>(mapped);
+                const size_t & current_rowid = std::get<1>(mapped);
 
                 /// if new part is fetched from another replica, current row maybe already deleted by another replica, because delete bitmap is realtime updating.
-                if (current_delete_bitmap->isDeleted(current_row_num))
+                if (current_delete_bitmap->isDeleted(current_rowid))
                     return;
 
-                auto key_index = active_part->getUniqueKeyIndex(true, loading_bucket_pool, bucket_range);
-                const auto & existing_version_row_num = key_index->get(key_str);
-                if (existing_version_row_num)
+                auto active_key_index = active_part->getUniqueKeyIndex(true, loading_bucket_pool, bucket_range);
+                const auto & active_version_rowid = active_key_index->get(current_key);
+                if (active_version_rowid)
                 {
-                    auto existing_row_num = std::get<1>(existing_version_row_num.value());
-                    if (delete_bitmap->isDeleted(existing_row_num))
+                    size_t active_rowid = std::get<1>(active_version_rowid.value());
+                    if (delete_bitmap->isDeleted(active_rowid))
                         return;
 
-                    auto existing_version = std::get<0>(existing_version_row_num.value());
+                    UInt64 active_version = std::get<0>(active_version_rowid.value());
 
-                    /// if version in existing part is same as version of part being written, then always delete duplicate row in the part being written.
-                    if (existing_version >= current_version)
-                    {
-                        size_t pos = std::get<1>(current_key_index->get(key_str).value());
-                        to_update_current.insert(std::make_pair(key_str, std::make_pair(current_version, pos)));
-                    }
-                    else
-                    {
-                        /// Part is being merged or being moved.
-                        if (IMergeTreeDataPart::MERGING == active_part->merge_update_status.load()
-                            || IMergeTreeDataPart::MOVING == active_part->merge_update_status.load())
-                        {
-                            if (!to_update_merging_moving.contains(active_part))
-                                to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
-                            to_update_merging_moving[active_part]->insert(std::make_pair(key_str, existing_version));
-                        }
-                        else
-                        {
-                            auto expect = IMergeTreeDataPart::NORMAL;
-                            auto to = IMergeTreeDataPart::UPDATING;
-                            /// Thanks to commit_lock, the merge_update_status can not be UPDATING here.
-                            if (!active_part->merge_update_status.compare_exchange_strong(expect, to))
-                            {
-                                if (active_part->merge_update_status == IMergeTreeDataPart::MERGING
-                                    || active_part->merge_update_status == IMergeTreeDataPart::MOVING)
-                                {
-                                    if (!to_update_merging_moving.contains(active_part))
-                                        to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
-                                    to_update_merging_moving[active_part]->insert(std::make_pair(key_str, existing_version));
-                                }
-                            }
-                        }
-
-                        to_update_normal[active_part].emplace_back(existing_row_num);
-                    }
+                    compareWithActivePart(
+                        to_update_current,
+                        to_update_normal,
+                        to_update_merging_moving,
+                        current_key,
+                        current_version,
+                        current_rowid,
+                        active_part,
+                        active_version,
+                        active_rowid);
                 }
             });
 
@@ -370,77 +345,52 @@ void UniqueEngineDataWriter::executeDedupByIterator(
 
         while (exact_match)
         {
-            const auto & current_key = current_iterator->key();
-            auto current_value = current_iterator->value();
+            const auto & current_key = current_iterator->key().ToString();
+            auto current_rowid_version = current_iterator->value();
             
             UInt64 current_rowid;
 
             if (rowid_is_uinit32)
             {
                 UInt32 current_rowid_u32;
-                LevelDBUniqueKeyIndex::decodeUInt32Rowid(current_value, current_rowid_u32);
+                LevelDBUniqueKeyIndex::decodeUInt32Rowid(current_rowid_version, current_rowid_u32);
                 current_rowid = current_rowid_u32;
             }
             else
-                LevelDBUniqueKeyIndex::decodeUInt64Rowid(current_value, current_rowid);
+                LevelDBUniqueKeyIndex::decodeUInt64Rowid(current_rowid_version, current_rowid);
 
             UInt64 current_version;
-            LevelDBUniqueKeyIndex::decodeVersion(current_value, current_version);
+            LevelDBUniqueKeyIndex::decodeVersion(current_rowid_version, current_version);
 
-            
-            const auto & merge_key = merge_iterator.key();
-            auto merge_value = merge_iterator.value();
+            auto active_rowid_version = merge_iterator.value();
 
-            UInt64 merge_rowid;
+            UInt64 active_rowid;
 
             if (rowid_is_uinit32)
             {
-                UInt32 merge_rowid_u32;
-                LevelDBUniqueKeyIndex::decodeUInt32Rowid(merge_value, merge_rowid_u32);
-                merge_rowid = merge_rowid_u32;
+                UInt32 active_rowid_u32;
+                LevelDBUniqueKeyIndex::decodeUInt32Rowid(active_rowid_version, active_rowid_u32);
+                active_rowid = active_rowid_u32;
             }
             else
-                LevelDBUniqueKeyIndex::decodeUInt64Rowid(merge_value, merge_rowid);
+                LevelDBUniqueKeyIndex::decodeUInt64Rowid(active_rowid_version, active_rowid);
 
-            UInt64 merge_version;
-            LevelDBUniqueKeyIndex::decodeVersion(merge_value, merge_version);
+            UInt64 active_version;
+            LevelDBUniqueKeyIndex::decodeVersion(active_rowid_version, active_version);
 
-            if (current_version <= merge_version)
-            {
-                to_update_current.insert(std::make_pair(current_key.ToString(), std::make_pair(current_version, current_rowid)));
-            }
-            else 
-            {
-                const auto & active_part_idx = merge_iterator.child_index();
-                const auto & active_part = data_parts[active_part_idx];
+            const auto & active_part_idx = merge_iterator.child_index();
+            const auto & active_part = data_parts[active_part_idx];
 
-                /// Part is being merged or being moved.
-                if (IMergeTreeDataPart::MERGING == active_part->merge_update_status.load()
-                    || IMergeTreeDataPart::MOVING == active_part->merge_update_status.load())
-                {
-                    if (!to_update_merging_moving.contains(active_part))
-                        to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
-                    to_update_merging_moving[active_part]->insert(std::make_pair(merge_key.ToString(), merge_version));
-                }
-                else
-                {
-                    auto expect = IMergeTreeDataPart::NORMAL;
-                    auto to = IMergeTreeDataPart::UPDATING;
-                    /// Thanks to commit_lock, the merge_update_status can not be UPDATING here.
-                    if (!active_part->merge_update_status.compare_exchange_strong(expect, to))
-                    {
-                        if (active_part->merge_update_status == IMergeTreeDataPart::MERGING
-                            || active_part->merge_update_status == IMergeTreeDataPart::MOVING)
-                        {
-                            if (!to_update_merging_moving.contains(active_part))
-                                to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
-                            to_update_merging_moving[active_part]->insert(std::make_pair(merge_key.ToString(), merge_version));
-                        }
-                    }
-                }
-
-                to_update_normal[active_part].emplace_back(merge_rowid);
-            }
+            compareWithActivePart(
+                to_update_current,
+                to_update_normal,
+                to_update_merging_moving,
+                current_key,
+                current_version,
+                current_rowid,
+                active_part,
+                active_version,
+                active_rowid);
 
             exact_match = false;
             current_iterator->Next();
@@ -482,6 +432,39 @@ void UniqueEngineDataWriter::executeDedupByIterator(
         flushToTempFiles(pair.first);
     for (const auto & pair : unique_deleted_keys_map)
         flushToTempFiles(pair.first, pair.second);
+}
+
+void UniqueEngineDataWriter::compareWithActivePart(
+    std::map<String, VersionAndRow> & to_update_current,
+    std::map<MutableDataPartPtr, std::vector<size_t>> & to_update_normal,
+    std::map<MutableDataPartPtr, DeletedKeysPtr> & to_update_merging_moving,
+    const String & key_str,
+    const UInt64 & current_version,
+    const UInt64 & current_rowid,
+    const MutableDataPartPtr & active_part,
+    const UInt64 & active_version,
+    const UInt64 & active_rowid)
+{
+    if (current_version <= active_version)
+        to_update_current.insert(std::make_pair(key_str, std::make_pair(current_version, current_rowid)));
+    else
+    {
+        auto expect = IMergeTreeDataPart::NORMAL;
+        auto to = IMergeTreeDataPart::UPDATING;
+        /// Thanks to commit_lock, the merge_update_status can not be UPDATING here.
+        
+        /// As long as merge_update_status of part cannot be changed from normal to updating, 
+        /// part are identified as merging or moving. The purpose of doing so is to prevent conflicts between write and merge, write and move, 
+        /// and avoid data duplication.
+        if (!active_part->merge_update_status.compare_exchange_strong(expect, to))
+        {
+            if (!to_update_merging_moving.contains(active_part))
+                to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
+            to_update_merging_moving[active_part]->insert(std::make_pair(key_str, active_version));
+        }
+
+        to_update_normal[active_part].emplace_back(active_rowid);
+    }
 }
 
 void UniqueEngineDataWriter::prepareForNewPart(bool is_merge_by_fetch)
