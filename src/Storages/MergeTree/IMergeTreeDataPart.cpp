@@ -1545,6 +1545,20 @@ void IMergeTreeDataPart::remove() const
             /// remove the files generated for unique engine.
             if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
             {
+                for (const auto & uk_tmp :
+                     {UniqueEngineDataWriter::TEMP_DIR_SUFFIX,
+                      UniqueEngineDataWriter::TEMP_MERGING_MOVING_DIR_SUFFIX,
+                      UniqueEngineDataWriter::TEMP_MERGING_STAGE_DIR_SUFFIX,
+                      UniqueEngineDataWriter::MERGING_MOVING_DIR_SUFFIX})
+                {
+                    fs::path uk_tmp_path = fs::path(storage.relative_data_path) / (relative_path + uk_tmp);
+                    if (disk->exists(uk_tmp_path))
+                    {
+                        LOG_WARNING(storage.log, "unique engine clean tmp file {}", fullPath(disk, uk_tmp_path));
+                        disk->removeRecursive(uk_tmp_path);
+                    }
+                }
+
                 for (const auto & file : {UNIQUE_ENGINE_DELETE_BITMAP})
                     request.emplace_back(fs::path(to) / file);
             }
