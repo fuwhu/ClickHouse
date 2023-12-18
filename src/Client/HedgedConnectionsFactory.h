@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #if defined(OS_LINUX)
 
 #include <Common/TimerDescriptor.h>
@@ -45,21 +46,28 @@ public:
         bool is_ready = false;
     };
 
+    struct ConnectionWithIndex
+    {
+        Connection * connection;
+        size_t index_in_pool;
+    };
+    using ConnectionWithIndexPtr = std::shared_ptr<ConnectionWithIndex>;
+
     HedgedConnectionsFactory(const ConnectionPoolWithFailoverPtr & pool_,
                         const Settings * settings_,
                         const ConnectionTimeouts & timeouts_,
                         std::shared_ptr<QualifiedTableName> table_to_check_ = nullptr);
 
     /// Create and return active connections according to pool_mode.
-    std::vector<Connection *> getManyConnections(PoolMode pool_mode);
+    std::vector<ConnectionWithIndexPtr> getManyConnections(PoolMode pool_mode);
 
     /// Try to get connection to the new replica without blocking. Process all current events in epoll (connections, timeouts),
     /// Returned state might be READY (connection established successfully),
     /// NOT_READY (there are no ready events now) and CANNOT_CHOOSE (cannot produce new connection anymore).
     /// If state is READY, replica connection will be written in connection_out.
-    State waitForReadyConnections(Connection *& connection_out);
+    State waitForReadyConnections(ConnectionWithIndexPtr & connection_out);
 
-    State startNewConnection(Connection *& connection_out);
+    State startNewConnection(ConnectionWithIndexPtr & connection_out);
 
     /// Stop working with all replicas that are not READY.
     void stopChoosingReplicas();
@@ -75,14 +83,15 @@ public:
     /// Tell Factory to not return connections with two level aggregation incompatibility.
     void skipReplicasWithTwoLevelAggregationIncompatibility() { skip_replicas_with_two_level_aggregation_incompatibility = true; }
 
+    void incrementRemoteErrorCountForConnection(size_t index_in_pool);
+
     ~HedgedConnectionsFactory();
 
 private:
-    State waitForReadyConnectionsImpl(bool blocking, Connection *& connection_out);
+    State waitForReadyConnectionsImpl(bool blocking, ConnectionWithIndexPtr & connection_out);
 
-    /// Try to start establishing connection to the new replica. Return
-    /// the index of the new replica or -1 if cannot start new connection.
-    State startNewConnectionImpl(Connection *& connection_out);
+    /// Try to start establishing connection to the new replica.
+    State startNewConnectionImpl(ConnectionWithIndexPtr & connection_out);
 
     /// Find an index of the next free replica to start connection.
     /// Return -1 if there is no free replica.
@@ -102,7 +111,7 @@ private:
 
     /// Return NOT_READY state if there is no ready events, READY if replica is ready
     /// and CANNOT_CHOOSE if there is no more events in epoll.
-    State processEpollEvents(bool blocking, Connection *& connection_out);
+    State processEpollEvents(bool blocking, ConnectionWithIndexPtr & connection_out);
 
     State setBestUsableReplica(Connection *& connection_out);
 

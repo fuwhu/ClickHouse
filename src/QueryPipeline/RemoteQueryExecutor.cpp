@@ -338,8 +338,14 @@ std::variant<Block, int> RemoteQueryExecutor::read(std::unique_ptr<ReadContext> 
         }
         catch (Exception & e)
         {
-            if (e.isRemoteException() && *connected_index != -1)
-                connection_pool->addRemoteError(connected_index);
+            /// TODO : add remote error for sync read as well.
+            if (e.isRemoteException())
+            {
+                if (*connected_index != -1)
+                    connection_pool->addRemoteError(connected_index);
+                else if (HedgedConnections * hedged_connections = dynamic_cast<HedgedConnections *>(connections.get()))
+                    hedged_connections->incrementRemoteErrorCountForActiveConnections();
+            }
 
             throw;
         }

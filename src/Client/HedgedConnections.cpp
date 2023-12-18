@@ -38,7 +38,7 @@ HedgedConnections::HedgedConnections(
     , allow_changing_replica_until_first_data_packet(settings.allow_changing_replica_until_first_data_packet)
     , throttler(throttler_)
 {
-    std::vector<Connection *> connections = hedged_connections_factory.getManyConnections(pool_mode);
+    std::vector<HedgedConnectionsFactory::ConnectionWithIndexPtr> connections = hedged_connections_factory.getManyConnections(pool_mode);
 
     if (connections.empty())
         return;
@@ -47,17 +47,17 @@ HedgedConnections::HedgedConnections(
     for (size_t i = 0; i != connections.size(); ++i)
     {
         offset_states.emplace_back();
-        offset_states[i].replicas.emplace_back(connections[i]);
+        offset_states[i].replicas.emplace_back(connections[i]->connection);
         offset_states[i].active_connection_count = 1;
 
         ReplicaState & replica = offset_states[i].replicas.back();
         replica.connection->setThrottler(throttler_);
 
         epoll.add(replica.packet_receiver->getFileDescriptor());
-        fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{i, 0};
+        fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{i, 0, connections[i]->index_in_pool};
 
         epoll.add(replica.change_replica_timeout.getDescriptor());
-        timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{i, 0};
+        timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{i, 0, connections[i]->index_in_pool};
     }
 
     active_connection_count = connections.size();
@@ -265,7 +265,7 @@ Packet HedgedConnections::drain()
     while (!epoll.empty())
     {
         ReplicaLocation location = getReadyReplicaLocation(DrainCallback{drain_timeout});
-        if (location.remote_query_timeout_exceeded)
+        if (location.generated_by_remote_query_timeout)
             continue;
         Packet packet = receivePacketFromReplica(location);
         switch (packet.type)
@@ -307,7 +307,7 @@ Packet HedgedConnections::receivePacketUnlocked(AsyncCallback async_callback, bo
         throw Exception("No pending events in epoll.", ErrorCodes::LOGICAL_ERROR);
 
     ReplicaLocation location = getReadyReplicaLocation(std::move(async_callback));
-    if (location.remote_query_timeout_exceeded)
+    if (location.generated_by_remote_query_timeout)
     {
         if (context->getSettings().remote_query_timeout_mode == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
             throw Exception("Remote query timeout exceeded.", ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED);
@@ -340,7 +340,7 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
         else if (event_fd == remote_query_timeout.getDescriptor())
         {
             epoll.remove(event_fd);
-            return ReplicaLocation{0, 0, true};
+            return ReplicaLocation{0, 0, 0, true};
         }
         else if (fd_to_replica_location.contains(event_fd))
         {
@@ -356,6 +356,7 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
             offset_states[location.offset].next_replica_in_process = true;
             offsets_queue.push(location.offset);
             ProfileEvents::increment(ProfileEvents::HedgedRequestsChangeReplica);
+            hedged_connections_factory.incrementRemoteErrorCountForConnection(location.index_in_pool);
             startNewReplica();
         }
         else
@@ -491,38 +492,38 @@ void HedgedConnections::disableChangingReplica(const ReplicaLocation & replica_l
 
 void HedgedConnections::startNewReplica()
 {
-    Connection * connection = nullptr;
-    HedgedConnectionsFactory::State state = hedged_connections_factory.startNewConnection(connection);
+    HedgedConnectionsFactory::ConnectionWithIndexPtr connection_out = std::make_shared<HedgedConnectionsFactory::ConnectionWithIndex>();
+    HedgedConnectionsFactory::State state = hedged_connections_factory.startNewConnection(connection_out);
 
     /// Check if we need to add hedged_connections_factory file descriptor to epoll.
     if (state == HedgedConnectionsFactory::State::NOT_READY && hedged_connections_factory.numberOfProcessingReplicas() == 1)
         epoll.add(hedged_connections_factory.getFileDescriptor());
 
-    processNewReplicaState(state, connection);
+    processNewReplicaState(state, connection_out);
 }
 
 void HedgedConnections::checkNewReplica()
 {
-    Connection * connection = nullptr;
-    HedgedConnectionsFactory::State state = hedged_connections_factory.waitForReadyConnections(connection);
+    HedgedConnectionsFactory::ConnectionWithIndexPtr connection_out = std::make_shared<HedgedConnectionsFactory::ConnectionWithIndex>();
+    HedgedConnectionsFactory::State state = hedged_connections_factory.waitForReadyConnections(connection_out);
 
     if (cancelled)
     {
         /// Do not start new connection if query is already canceled.
-        if (connection)
-            connection->disconnect();
+        if (connection_out->connection)
+            connection_out->connection->disconnect();
 
         state = HedgedConnectionsFactory::State::CANNOT_CHOOSE;
     }
 
-    processNewReplicaState(state, connection);
+    processNewReplicaState(state, connection_out);
 
     /// Check if we don't need to listen hedged_connections_factory file descriptor in epoll anymore.
     if (hedged_connections_factory.numberOfProcessingReplicas() == 0)
         epoll.remove(hedged_connections_factory.getFileDescriptor());
 }
 
-void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State state, Connection * connection)
+void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State state, HedgedConnectionsFactory::ConnectionWithIndexPtr connection_with_index)
 {
     switch (state)
     {
@@ -531,16 +532,18 @@ void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State s
             size_t offset = offsets_queue.front();
             offsets_queue.pop();
 
-            offset_states[offset].replicas.emplace_back(connection);
+            assert(connection_with_index);
+
+            offset_states[offset].replicas.emplace_back(connection_with_index->connection);
             ++offset_states[offset].active_connection_count;
             offset_states[offset].next_replica_in_process = false;
             ++active_connection_count;
 
             ReplicaState & replica = offset_states[offset].replicas.back();
             epoll.add(replica.packet_receiver->getFileDescriptor());
-            fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1};
+            fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1, connection_with_index->index_in_pool};
             epoll.add(replica.change_replica_timeout.getDescriptor());
-            timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1};
+            timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1, connection_with_index->index_in_pool};
 
             pipeline_for_new_replicas.run(replica);
             break;
@@ -582,6 +585,15 @@ void HedgedConnections::finishProcessReplica(ReplicaState & replica, bool discon
     if (disconnect)
         replica.connection->disconnect();
     replica.connection = nullptr;
+}
+
+void HedgedConnections::incrementRemoteErrorCountForActiveConnections()
+{
+    for (const auto & pair : fd_to_replica_location)
+    {
+        const auto & location = pair.second;
+        hedged_connections_factory.incrementRemoteErrorCountForConnection(location.index_in_pool);
+    }
 }
 
 }
