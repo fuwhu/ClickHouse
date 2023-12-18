@@ -309,6 +309,7 @@ Packet HedgedConnections::receivePacketUnlocked(AsyncCallback async_callback, bo
     ReplicaLocation location = getReadyReplicaLocation(std::move(async_callback));
     if (location.generated_by_remote_query_timeout)
     {
+        incrementRemoteErrorCountForActiveConnections();
         if (context->getSettings().remote_query_timeout_mode == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
             throw Exception("Remote query timeout exceeded.", ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED);
         Packet packet;
