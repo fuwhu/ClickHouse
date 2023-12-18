@@ -2364,7 +2364,7 @@ bool MergeTreeData::changePartMergeUpdateStatus(
             log,
             "Failed changing merge_update_status of part {} merge_update_status {} from {} to {}.",
             cas_part->name,
-            cas_part->merge_update_status,
+            cas_part->getMergeUpdateStatusName(),
             from,
             to);
         return false;

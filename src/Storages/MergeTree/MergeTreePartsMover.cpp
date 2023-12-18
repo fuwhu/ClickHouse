@@ -265,7 +265,7 @@ bool MergeTreePartsMover::selectPartsForMove(
         {
             const auto & part_info = part_reservation.part;
 
-            if (IMergeTreeDataPart::MOVING == part_info->merge_update_status.load())
+            if (part_info->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::MOVING)
             {
                 LOG_WARNING(
                     log,
@@ -275,7 +275,7 @@ bool MergeTreePartsMover::selectPartsForMove(
             }
             else
             {
-                if (data->changePartMergeUpdateStatus(part_info, IMergeTreeDataPart::NORMAL, IMergeTreeDataPart::MOVING))
+                if (data->changePartMergeUpdateStatus(part_info, IMergeTreeDataPart::MergeUpdateStatus::NORMAL, IMergeTreeDataPart::MergeUpdateStatus::MOVING))
                     parts_to_move.emplace_back(std::move(part_reservation));
                 else
                 {

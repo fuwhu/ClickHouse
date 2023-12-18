@@ -96,11 +96,11 @@ std::pair<bool, ReplicatedMergeMutateTaskBase::PartLogWriter> MergeFromLogEntryT
 
         if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
         {
-            if (source_part_or_covering->merge_update_status == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
+            if (source_part_or_covering->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
             {
                 /// nothing, it's correct.
             }
-            else if (source_part_or_covering->merge_update_status == IMergeTreeDataPart::MergeUpdateStatus::NORMAL)
+            else if (source_part_or_covering->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::NORMAL)
             {
                 LOG_WARNING(
                     storage.log,
@@ -132,7 +132,7 @@ std::pair<bool, ReplicatedMergeMutateTaskBase::PartLogWriter> MergeFromLogEntryT
                     "reasons, so wait for write to complete and then change merge_update_status to merging to avoid the conflict between "
                     "write and merge.",
                     source_part_or_covering->name,
-                    source_part_or_covering->merge_update_status);
+                    source_part_or_covering->getMergeUpdateStatusName());
                 return {false, {}};
             }
         }

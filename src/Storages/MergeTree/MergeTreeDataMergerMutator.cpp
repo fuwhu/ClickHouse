@@ -298,7 +298,7 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
         {
             const MergeTreeData::DataPartPtr & part = *static_cast<const MergeTreeData::DataPartPtr *>(part_info.data);
 
-            if (IMergeTreeDataPart::MERGING == part->merge_update_status.load())
+            if (part->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
             {
                 LOG_WARNING(
                     log,
@@ -308,7 +308,7 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
             }
             else
             {
-                if (data.changePartMergeUpdateStatus(part, IMergeTreeDataPart::NORMAL, IMergeTreeDataPart::MERGING))
+                if (data.changePartMergeUpdateStatus(part, IMergeTreeDataPart::MergeUpdateStatus::NORMAL, IMergeTreeDataPart::MergeUpdateStatus::MERGING))
                     parts.push_back(part);
                 else
                 {
@@ -336,7 +336,7 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
         if (parts.size() == 1 && future_part->merge_type == MergeType::REGULAR)
         {
             /// rollback merge_update_status of part
-            data.changePartMergeUpdateStatus(parts[0], IMergeTreeDataPart::MERGING, IMergeTreeDataPart::NORMAL);
+            data.changePartMergeUpdateStatus(parts[0], IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
 
             throw Exception("Logical error: regular merge selector returned only one part that can be merged.", ErrorCodes::LOGICAL_ERROR);
         }
