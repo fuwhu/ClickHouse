@@ -338,7 +338,7 @@ public:
 
     MergeTreePartition partition;
 
-    enum MergeUpdateStatus
+    enum class MergeUpdateStatus
     {
         NORMAL,          /// Not being merged and not being updated and not being moved.
         MERGING,         /// Being merged.
@@ -346,26 +346,26 @@ public:
         MOVING           /// Being moved.
     };
 
-    std::atomic<MergeUpdateStatus> merge_update_status{NORMAL};
+    std::atomic<MergeUpdateStatus> merge_update_status{MergeUpdateStatus::NORMAL};
 
     String getMergeUpdateStatusName() const
     {
-        switch (merge_update_status)
+        switch (merge_update_status.load())
         {
-            case NORMAL:
+            case MergeUpdateStatus::NORMAL:
                 return "NORMAL";
-            case MERGING:
+            case MergeUpdateStatus::MERGING:
                 return "MERGING";
-            case UPDATING:
+            case MergeUpdateStatus::UPDATING:
                 return "UPDATING";
-            case MOVING:
+            case MergeUpdateStatus::MOVING:
                 return "MOVING";
         }
 
         return "UNKNOWN";
     }
 
-    enum CommitType
+    enum class CommitType
     {
         NORMAL_INSERT,
         EXECUTE_MERGE,   /// triggered by current replica merge.
@@ -373,19 +373,19 @@ public:
         EXECUTE_MOVE     /// triggered by current replica move.
     };
 
-    std::atomic<CommitType> commit_type{NORMAL_INSERT};
+    mutable CommitType commit_type{CommitType::NORMAL_INSERT};
 
     String getCommitTypeName() const
     {
         switch (commit_type)
         {
-            case NORMAL_INSERT:
+            case CommitType::NORMAL_INSERT:
                 return "NORMAL_INSERT";
-            case EXECUTE_MERGE:
+            case CommitType::EXECUTE_MERGE:
                 return "EXECUTE_MERGE";
-            case MERGE_BY_FETCH:
+            case CommitType::MERGE_BY_FETCH:
                 return "MERGE_BY_FETCH";
-            case EXECUTE_MOVE:
+            case CommitType::EXECUTE_MOVE:
                 return "EXECUTE_MOVE";
         }
 

@@ -449,14 +449,13 @@ void UniqueEngineDataWriter::compareWithActivePart(
         to_update_current.insert(std::make_pair(key_str, std::make_pair(current_version, current_rowid)));
     else
     {
-        auto expect = IMergeTreeDataPart::NORMAL;
-        auto to = IMergeTreeDataPart::UPDATING;
-        /// Thanks to commit_lock, the merge_update_status can not be UPDATING here.
-        
-        /// As long as merge_update_status of part cannot be changed from normal to updating, 
-        /// part are identified as merging or moving. The purpose of doing so is to prevent conflicts between write and merge, write and move, 
+        auto expect = IMergeTreeDataPart::MergeUpdateStatus::NORMAL;
+        auto to = IMergeTreeDataPart::MergeUpdateStatus::UPDATING;
+
+        /// As long as merge_update_status of part cannot be changed from normal to updating,
+        /// part are identified as merging or moving. The purpose of doing so is to prevent conflicts between write and merge, write and move,
         /// and avoid data duplication.
-        if (!active_part->merge_update_status.compare_exchange_strong(expect, to))
+        if (active_part->merge_update_status.load() != to && !active_part->merge_update_status.compare_exchange_strong(expect, to))
         {
             if (!to_update_merging_moving.contains(active_part))
                 to_update_merging_moving[active_part] = std::make_shared<DeletedKeys>();
@@ -673,8 +672,8 @@ void UniqueEngineDataWriter::commit()
         pair.first->loadRowsCount();
 
         /// Change its merge_update_status back to NORMAL after persisting the unique data to files.
-        auto expect = IMergeTreeDataPart::UPDATING;
-        auto to = IMergeTreeDataPart::NORMAL;
+        auto expect = IMergeTreeDataPart::MergeUpdateStatus::UPDATING;
+        auto to = IMergeTreeDataPart::MergeUpdateStatus::NORMAL;
         pair.first->merge_update_status.compare_exchange_strong(expect, to);
     }
 }
