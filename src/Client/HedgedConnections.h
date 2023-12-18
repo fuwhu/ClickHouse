@@ -68,7 +68,8 @@ public:
     {
         size_t offset;
         size_t index;
-        bool remote_query_timeout_exceeded = false;
+        size_t index_in_pool;
+        bool generated_by_remote_query_timeout = false;
     };
 
     HedgedConnections(const ConnectionPoolWithFailoverPtr & pool_,
@@ -120,6 +121,8 @@ public:
 
     void setReplicaInfo(ReplicaInfo value) override { replica_info = value; }
 
+    void incrementRemoteErrorCountForActiveConnections();
+
 private:
     /// If we don't receive data from replica and there is no progress in query
     /// execution for receive_data_timeout, we are trying to get new
@@ -149,7 +152,7 @@ private:
 
     void checkNewReplica();
 
-    void processNewReplicaState(HedgedConnectionsFactory::State state, Connection * connection);
+    void processNewReplicaState(HedgedConnectionsFactory::State state, HedgedConnectionsFactory::ConnectionWithIndexPtr connection_with_index);
 
     void finishProcessReplica(ReplicaState & replica, bool disconnect);
 
