@@ -1017,6 +1017,17 @@ size_t MutationsInterpreter::evaluateCommandsSize()
 
 std::optional<SortDescription> MutationsInterpreter::getStorageSortDescriptionIfPossible(const Block & header) const
 {
+    /// while using curve order, do not perform CheckSortedTransform
+    const MergeTreeData * merge_tree_data = storage->as<MergeTreeData>();
+    if (!merge_tree_data)
+    {
+        if (auto * storage_from_data_part = storage->as<StorageFromMergeTreeDataPart>())
+            merge_tree_data = &storage_from_data_part->getMergeTreeData();
+    }
+
+    if (merge_tree_data && merge_tree_data->getSettings()->order_by_mode != SortingMode::NORMAL)
+        return {};
+
     Names sort_columns = metadata_snapshot->getSortingKeyColumns();
     SortDescription sort_description;
     size_t sort_columns_size = sort_columns.size();

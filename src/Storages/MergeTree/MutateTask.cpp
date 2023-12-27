@@ -925,6 +925,20 @@ private:
     {
         ctx->disk->createDirectories(ctx->new_part_tmp_path);
 
+        /// Create hard link for row mapping files
+        if (ctx->data->getSettings()->order_by_mode != SortingMode::NORMAL)
+        {
+            auto metadata_snapshot = ctx->data->getInMemoryMetadataPtr();
+            auto sorting_key_columns = metadata_snapshot->getSortingKeyColumns();
+
+            for (const auto & col_name : sorting_key_columns)
+            {
+                auto col_mapping_path = ctx->source_part->getFullRelativePath() + col_name + MergeTreeRowMappingStore::MAPPING_FILE_EXTENSION;
+                auto destination_path = ctx->new_part_tmp_path + col_name + MergeTreeRowMappingStore::MAPPING_FILE_EXTENSION;
+                ctx->disk->createHardLink(col_mapping_path, destination_path);
+            }
+        }
+
         /// Note: this is done before creating input streams, because otherwise data.data_parts_mutex
         /// (which is locked in data.getTotalActiveSizeInBytes())
         /// (which is locked in shared mode when input streams are created) and when inserting new data
@@ -1311,7 +1325,7 @@ bool MutateTask::prepare()
     ctx->mrk_extension = ctx->source_part->index_granularity_info.is_adaptive ? getAdaptiveMrkExtension(ctx->new_data_part->getType())
                                                                          : getNonAdaptiveMrkExtension();
 
-    const auto data_settings = ctx->data->  getSettings();
+    const auto data_settings = ctx->data->getSettings();
     ctx->need_sync = needSyncPart(ctx->source_part->rows_count, ctx->source_part->getBytesOnDisk(), *data_settings);
     ctx->execute_ttl_type = ExecuteTTLType::NONE;
 

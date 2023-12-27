@@ -570,19 +570,7 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         metadata.sorting_key = KeyDescription::getSortingKeyFromAST(
             args.storage_def->order_by->ptr(), metadata.columns, args.getContext(), merging_param_key_arg);
 
-        if (storage_settings->order_by_use_zcurve)
-        {
-            if (args.storage_def->primary_key)
-                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Primary key not supported while using Z Order");
-
-            if (metadata.sorting_key.column_names.size() < 2 || metadata.sorting_key.column_names.size() > 8)
-                throw Exception(ErrorCodes::BAD_ARGUMENTS, "ZCurve sorting needs at least 2 columns and at most 8 columns");
-
-            /// Should set primary key to empty if use z order
-            auto empty_primary_key = makeASTFunction("tuple");
-            metadata.primary_key = KeyDescription::getKeyFromAST(empty_primary_key, metadata.columns, args.getContext());
-        }
-        else
+        if (storage_settings->order_by_mode == SortingMode::NORMAL)
         {
             /// If primary key explicitly defined, than get it from AST
             if (args.storage_def->primary_key)
@@ -598,6 +586,19 @@ static StoragePtr create(const StorageFactory::Arguments & args)
                 /// will return false but hasPrimaryKey() will return true.
                 metadata.primary_key.definition_ast = nullptr;
             }
+        }
+        else if (storage_settings->order_by_mode.value == SortingMode::Z_CURVE)
+        {
+            /// Should set primary key to empty if use z order
+            auto empty_primary_key = makeASTFunction("tuple");
+
+            if (args.storage_def->primary_key && args.storage_def->primary_key->getTreeHash() != empty_primary_key->getTreeHash())
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Primary key not supported while using Z Order");
+
+            if (metadata.sorting_key.column_names.size() < 2 || metadata.sorting_key.column_names.size() > 8)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "ZCurve sorting needs at least 2 columns and at most 8 columns");
+
+            metadata.primary_key = KeyDescription::getKeyFromAST(empty_primary_key, metadata.columns, args.getContext());
         }
 
         auto minmax_columns = metadata.getColumnsRequiredForPartitionKey();

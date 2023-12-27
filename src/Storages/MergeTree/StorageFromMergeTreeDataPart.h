@@ -77,6 +77,8 @@ public:
         return parts.front()->storage.getSettings()->materialize_ttl_recalculate_only;
     }
 
+    const MergeTreeData & getMergeTreeData() const { return storage; }
+
 protected:
     /// Used in part mutation.
     explicit StorageFromMergeTreeDataPart(const MergeTreeData::DataPartPtr & part_)

@@ -1,8 +1,8 @@
-#include "Processors/Transforms/ZCurveDictionaryTransform.h"
+#include "Processors/Transforms/ZCurveTransform.h"
 
 #include <DataTypes/DataTypesNumber.h>
 #include <Functions/FunctionFactory.h>
-#include <Storages/MergeTree/MergeTreeDictionary.h>
+#include <Storages/MergeTree/MergeTreeRowMapping.h>
 #include <base/range.h>
 
 namespace DB
@@ -12,16 +12,19 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
 }
 
-ZCurveDictionaryTransform::ZCurveDictionaryTransform(
-    const Block & header_, const std::vector<String> & z_curve_columns_, const MergeTreeDictionaryStore & dict_store_, ContextPtr context_)
+ZCurveTransform::ZCurveTransform(
+    const Block & header_,
+    const std::vector<String> & z_curve_columns_,
+    const MergeTreeRowMappingStore & mapping_store_,
+    ContextPtr context_)
     : ISimpleTransform(header_, transformHeader(header_), false)
     , z_curve_columns(z_curve_columns_)
-    , dict_store(dict_store_)
+    , mapping_store(mapping_store_)
     , context(context_)
 {
 }
 
-Block ZCurveDictionaryTransform::transformHeader(const Block & header)
+Block ZCurveTransform::transformHeader(const Block & header)
 {
     Block res;
 
@@ -34,7 +37,7 @@ Block ZCurveDictionaryTransform::transformHeader(const Block & header)
     return res;
 }
 
-void ZCurveDictionaryTransform::transform(Chunk & chunk)
+void ZCurveTransform::transform(Chunk & chunk)
 {
     auto num_rows = chunk.getNumRows();
     auto columns = chunk.detachColumns();
@@ -46,15 +49,15 @@ void ZCurveDictionaryTransform::transform(Chunk & chunk)
     {
         auto column_name = z_curve_columns[i];
         auto & col = columns[header.getPositionByName(column_name)];
-        auto dict = dict_store.getDictionary(column_name);
-        if (!dict)
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not find MergeTreeDictionary for column {}", column_name);
+        auto mapping = mapping_store.getMapping(column_name);
+        if (!mapping)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not find MergeTreeRowMapping for column {}", column_name);
 
         auto index_column = ColumnUInt64::create(num_rows);
         auto & container = index_column->getData();
         for (auto n : collections::range(num_rows))
         {
-            auto idx = dict->getIndex(col->getDataAt(n));
+            auto idx = mapping->getIndex(col->getDataAt(n));
             if (!idx)
                 throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not get index for col: {}", column_name);
 
