@@ -17,7 +17,7 @@
 #include <DataTypes/Serializations/SerializationInfo.h>
 #include "Storages/MergeTree/UUIDAndPartName.h"
 #include <Storages/MergeTree/UniqueKeyIndexCache.h>
-#include <Storages/MergeTree/MergeTreeDictionary.h>
+#include <Storages/MergeTree/MergeTreeRowMapping.h>
 
 #include <shared_mutex>
 
@@ -204,7 +204,7 @@ public:
     /// Load checksums from checksums.txt if exists. Load index if required.
     void loadColumnsChecksumsIndexes(bool require_columns_checksums, bool check_consistency);
 
-    void loadDictionaries() const;
+    void loadRowMappings() const;
 
     String getMarksFileExtension() const { return index_granularity_info.marks_file_extension; }
 
@@ -277,7 +277,7 @@ public:
     /// Flag for keep S3 data when zero-copy replication over S3 turned on.
     mutable bool force_keep_shared_data = false;
 
-    mutable MergeTreeDictionaryStorePtr dict_store;
+    mutable MergeTreeRowMappingStorePtr mapping_store;
 
     /**
      * Part state is a stage of its lifetime. States are ordered and state of a part could be increased only.

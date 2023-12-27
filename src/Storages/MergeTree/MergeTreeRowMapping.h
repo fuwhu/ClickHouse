@@ -7,25 +7,25 @@ namespace DB
 {
 class MergeTreeData;
 class IMergeTreeDataPart;
-class MergeTreeDictionaryStore;
+class MergeTreeRowMappingStore;
 struct MergeTreeDataPartChecksums;
 
-class IMergeTreeDictionary
+class IMergeTreeRowMapping
 {
 public:
-    enum class DictionaryType : UInt8
+    enum class MappingType : UInt8
     {
         KEY_VALUE,
         UNKNOWN = 255
     };
 
-    explicit IMergeTreeDictionary(const DataTypePtr & data_type_, DictionaryType dict_type_);
+    explicit IMergeTreeRowMapping(const DataTypePtr & data_type_, MappingType mapping_type_);
 
-    virtual ~IMergeTreeDictionary() = default;
+    virtual ~IMergeTreeRowMapping() = default;
 
     void insertData(StringRef data)
     {
-        if (is_dict_built)
+        if (built)
             return;
 
         insertDataImpl(data);
@@ -33,7 +33,7 @@ public:
 
     void insertDataFrom(const IColumn & src, size_t n)
     {
-        if (is_dict_built)
+        if (built)
             return;
 
         insertDataFromImpl(src, n);
@@ -41,7 +41,7 @@ public:
 
     void build()
     {
-        if (is_dict_built)
+        if (built)
             return;
 
         buildImpl();
@@ -49,7 +49,7 @@ public:
 
     void buildFrom(const IColumn & src)
     {
-        if (is_dict_built)
+        if (built)
             return;
 
         buildFromImpl(src);
@@ -57,7 +57,7 @@ public:
 
     virtual std::optional<UInt64> getIndex(StringRef data) const
     {
-        if (!is_dict_built)
+        if (!built)
             return {};
 
         return getIndexImpl(data);
@@ -66,7 +66,7 @@ public:
     const IColumn & getRawData() const { return *raw_data; }
 
 protected:
-    friend class MergeTreeDictionaryStore;
+    friend class MergeTreeRowMappingStore;
 
     virtual void insertDataImpl(StringRef data) = 0;
 
@@ -83,21 +83,21 @@ protected:
     virtual void deserialize(ReadBuffer & in) = 0;
 
     DataTypePtr data_type;
-    DictionaryType dict_type{DictionaryType::UNKNOWN};
+    MappingType mapping_type{MappingType::UNKNOWN};
     IColumn::MutablePtr raw_data;
-    bool is_dict_built{false};
+    bool built{false};
 };
 
-using MergeTreeDictionaryPtr = std::shared_ptr<const IMergeTreeDictionary>;
-using MergeTreeDictionaryMutablePtr = std::shared_ptr<IMergeTreeDictionary>;
-using MergeTreeDictionaryStorePtr = std::unique_ptr<MergeTreeDictionaryStore>;
+using MergeTreeRowMappingPtr = std::shared_ptr<const IMergeTreeRowMapping>;
+using MergeTreeRowMappingMutablePtr = std::shared_ptr<IMergeTreeRowMapping>;
+using MergeTreeRowMappingStorePtr = std::unique_ptr<MergeTreeRowMappingStore>;
 
-class MergeTreeDictionaryKeyValue final : public IMergeTreeDictionary
+class MergeTreeRowMappingKeyValue final : public IMergeTreeRowMapping
 {
 public:
-    explicit MergeTreeDictionaryKeyValue(const DataTypePtr & data_type_);
+    explicit MergeTreeRowMappingKeyValue(const DataTypePtr & data_type_);
 
-    MergeTreeDictionaryKeyValue(const MergeTreeDictionaryKeyValue &) = delete;
+    MergeTreeRowMappingKeyValue(const MergeTreeRowMappingKeyValue &) = delete;
 
     void insertDataImpl(StringRef data) override;
 
@@ -118,27 +118,29 @@ private:
     absl::flat_hash_map<StringRef, UInt64, StringRefHash> reverse_index;
 };
 
-class MergeTreeDictionaryStore
+class MergeTreeRowMappingStore
 {
 public:
-    explicit MergeTreeDictionaryStore(const IMergeTreeDataPart * part_ = nullptr);
+    static constexpr auto MAPPING_FILE_EXTENSION = ".mapping";
+
+    explicit MergeTreeRowMappingStore(const IMergeTreeDataPart * part_ = nullptr);
 
     void setMergeTreePart(const IMergeTreeDataPart * part_);
 
-    MergeTreeDictionaryPtr getDictionary(const String & column_name) const;
+    MergeTreeRowMappingPtr getMapping(const String & column_name) const;
 
-    void addDictionary(const String & column_name, MergeTreeDictionaryPtr dict);
+    void addMapping(const String & column_name, MergeTreeRowMappingPtr mapping);
 
     void serialize(MergeTreeDataPartChecksums & checksums) const;
 
     void deserialize();
 
-    static MergeTreeDictionaryMutablePtr createDictionary(IMergeTreeDictionary::DictionaryType dict_type, const DataTypePtr & data_type);
+    static MergeTreeRowMappingMutablePtr createMapping(IMergeTreeRowMapping::MappingType mapping_type, const DataTypePtr & data_type);
 
-    static MergeTreeDictionaryPtr mergeDictionaries(const std::vector<MergeTreeDictionaryPtr> & dictionaries);
+    static MergeTreeRowMappingPtr mergeMappings(const std::vector<MergeTreeRowMappingPtr> & mappings);
 
 private:
-    std::unordered_map<String, MergeTreeDictionaryPtr> dictionaries;
+    std::unordered_map<String, MergeTreeRowMappingPtr> column_mappings;
     const IMergeTreeDataPart * part;
 };
 }

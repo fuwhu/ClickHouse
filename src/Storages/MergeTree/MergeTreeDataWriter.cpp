@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <functional>
 #include <memory>
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
@@ -388,11 +390,11 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
 
     ProfileEvents::increment(ProfileEvents::MergeTreeDataWriterBlocks);
 
-    MergeTreeDictionaryStorePtr dict_store;
-    if (data_settings->order_by_use_zcurve)
+    MergeTreeRowMappingStorePtr mapping_store;
+    if (data_settings->order_by_mode != SortingMode::NORMAL)
     {
-        dict_store = std::make_unique<MergeTreeDictionaryStore>();
-        computeAndInjectZCurveSortDesc(block, sort_description, *dict_store);
+        mapping_store = std::make_unique<MergeTreeRowMappingStore>();
+        computeAndInjectCurveSortDesc(data_settings->order_by_mode, block, sort_description, *mapping_store);
     }
 
     /// Sort
@@ -451,10 +453,10 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     new_data_part->minmax_idx = std::move(minmax_idx);
     new_data_part->is_temp = true;
 
-    if (dict_store)
+    if (mapping_store)
     {
-        dict_store->setMergeTreePart(new_data_part.get());
-        new_data_part->dict_store = std::move(dict_store);
+        mapping_store->setMergeTreePart(new_data_part.get());
+        new_data_part->mapping_store = std::move(mapping_store);
     }
 
     SyncGuardPtr sync_guard;
@@ -778,49 +780,60 @@ void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(Block & block
     }
 }
 
-void MergeTreeDataWriter::computeAndInjectZCurveSortDesc(
-    Block & block, SortDescription & description, MergeTreeDictionaryStore & dict_store)
+void MergeTreeDataWriter::computeAndInjectCurveSortDesc(
+    SortingMode sorting_mode, Block & block, SortDescription & description, MergeTreeRowMappingStore & mapping_store)
 {
-    ColumnsWithTypeAndName z_curve_args;
-    size_t col_size = 0;
+    using BuildFunc = std::function<void(ColumnsWithTypeAndName, size_t)>;
+    BuildFunc build_func;
+
+    if (sorting_mode == SortingMode::Z_CURVE)
+    {
+        build_func = [&](ColumnsWithTypeAndName curve_args, size_t rows)
+        {
+            auto func = FunctionFactory::instance().get("zCurve", data.getContext());
+            auto z_value_col = func->build(curve_args)->execute(curve_args, std::make_shared<DataTypeUInt64>(), rows);
+
+            block.insert(ColumnWithTypeAndName{z_value_col, std::make_shared<DataTypeUInt64>(), "_zcurve"});
+
+            description.clear();
+            description.emplace_back(block.getPositionByName("_zcurve"), 1, 1);
+        };
+    }
+
+    ColumnsWithTypeAndName curve_args;
+    size_t rows = 0;
 
     for (const auto & desc : description)
     {
         const auto & col_type_and_name = block.getByPosition(desc.column_number);
-        auto dict = MergeTreeDictionaryStore::createDictionary(IMergeTreeDictionary::DictionaryType::KEY_VALUE, col_type_and_name.type);
+        auto mapping = MergeTreeRowMappingStore::createMapping(IMergeTreeRowMapping::MappingType::KEY_VALUE, col_type_and_name.type);
 
         const auto & col = col_type_and_name.column;
-        col_size = col->size();
+        rows = col->size();
 
-        dict->buildFrom(*col);
+        mapping->buildFrom(*col);
 
-        auto index_column = ColumnUInt64::create(col_size);
+        auto index_column = ColumnUInt64::create(rows);
         auto & container = index_column->getData();
-        for (auto row : collections::range(col_size))
+        for (auto row : collections::range(rows))
         {
             auto row_data = col->getDataAt(row);
-            auto idx = dict->getIndex(row_data);
+            auto idx = mapping->getIndex(row_data);
             if (!idx)
                 throw Exception(
                     ErrorCodes::LOGICAL_ERROR,
-                    "Can not get MergeTreeDictionary index for col: {}, key: {}",
+                    "Can not get MergeTreeRowMapping index for col: {}, key: {}",
                     col_type_and_name.name,
-                    row_data.toString());
+                    applyVisitor(FieldVisitorDump(), (*col)[row]));
 
             container[row] = *idx;
         }
 
-        z_curve_args.emplace_back(ColumnWithTypeAndName{std::move(index_column), std::make_shared<DataTypeUInt64>(), ""});
+        curve_args.emplace_back(ColumnWithTypeAndName{std::move(index_column), std::make_shared<DataTypeUInt64>(), ""});
 
-        dict_store.addDictionary(col_type_and_name.name, dict);
+        mapping_store.addMapping(col_type_and_name.name, std::move(mapping));
     }
 
-    auto func = FunctionFactory::instance().get("zCurve", data.getContext());
-    auto z_value_col = func->build(z_curve_args)->execute(z_curve_args, std::make_shared<DataTypeUInt64>(), col_size);
-
-    block.insert(ColumnWithTypeAndName{z_value_col, std::make_shared<DataTypeUInt64>(), "_zcurve"});
-
-    description.clear();
-    description.emplace_back(block.getPositionByName("_zcurve"), 1, 1);
+    build_func(curve_args, rows);
 }
 }

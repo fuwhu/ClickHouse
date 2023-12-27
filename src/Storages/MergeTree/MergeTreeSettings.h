@@ -3,6 +3,7 @@
 #include <Core/Defines.h>
 #include <Core/BaseSettings.h>
 #include <Storages/MergeTree/MergeTreeDataFormatVersion.h>
+#include <Storages/MergeTree/MergeTreeSettingsEnums.h>
 
 
 namespace Poco::Util
@@ -107,7 +108,6 @@ struct Settings;
     M(Bool, detach_not_byte_identical_parts, false, "Do not remove non byte-idential parts for ReplicatedMergeTree, instead detach them (maybe useful for further analysis).", 0) \
     M(UInt64, max_replicated_fetches_network_bandwidth, 0, "The maximum speed of data exchange over the network in bytes per second for replicated fetches. Zero means unlimited.", 0) \
     M(UInt64, max_replicated_sends_network_bandwidth, 0, "The maximum speed of data exchange over the network in bytes per second for replicated sends. Zero means unlimited.", 0) \
-    M(UInt64, max_part_receives_network_bandwidth, 0, "The maximum speed of data parts receive over the network in bytes per second. Zero means unlimited.", 0) \
     \
     /** Check delay of replicas settings. */ \
     M(UInt64, min_relative_delay_to_measure, 120, "Calculate relative replica delay only if absolute delay is not less that this value.", 0) \
@@ -150,10 +150,17 @@ struct Settings;
     M(Bool, ignore_check_column_hash, true, "Ignore checking part column hash, for compatibility", 0) \
     M(Bool, select_data_parts_for_move_by_ttl, false, "When disk space is low, move TTL older data to a cold drive", 0) \
     \
+    /* data parts receive service */ \
+    M(UInt64, max_parallel_receives, 100, "Limit parallel sends.", 0) \
+    M(UInt64, max_parallel_receives_for_table, 16, "Limit parallel sends per table.", 0) \
+    M(UInt64, max_part_receives_network_bandwidth, 0, "The maximum speed of data parts receive over the network in bytes per second. Zero means unlimited.", 0) \
+    \
+    /* data order mode */ \
+    M(SortingMode, order_by_mode, SortingMode::NORMAL, "Data sorting mode for order keys.", 0) \
+    \
     /** Experimental/work in progress feature. Unsafe for production. */ \
     M(UInt64, part_moves_between_shards_enable, 0, "Experimental/Incomplete feature to move parts between shards. Does not take into account sharding expressions.", 0) \
     M(UInt64, part_moves_between_shards_delay_seconds, 30, "Time to wait before/after moving parts between shards.", 0) \
-    M(Bool, order_by_use_zcurve, false, "Use zCurve to encode data and sort.", 0) \
     \
     /** Obsolete settings. Kept for backward compatibility only. */ \
     M(UInt64, min_relative_delay_to_yield_leadership, 120, "Obsolete setting, does nothing.", 0) \
@@ -164,8 +171,6 @@ struct Settings;
     M(UInt64, replicated_max_parallel_fetches, 0, "Obsolete setting, does nothing.", 0) \
     M(UInt64, replicated_max_parallel_fetches_for_table, 0, "Obsolete setting, does nothing.", 0) \
     M(Bool, write_final_mark, true, "Obsolete setting, does nothing.", 0) \
-    M(UInt64, max_parallel_receives, 100, "Limit parallel sends.", 0) \
-    M(UInt64, max_parallel_receives_for_table, 16, "Limit parallel sends per table.", 0) \
     /// Settings that should not change after the creation of a table.
     /// NOLINTNEXTLINE
 #define APPLY_FOR_IMMUTABLE_MERGE_TREE_SETTINGS(M) \
@@ -188,7 +193,7 @@ struct MergeTreeSettings : public BaseSettings<MergeTreeSettingsTraits>
     static bool isReadonlySetting(const String & name)
     {
         return name == "index_granularity" || name == "index_granularity_bytes"
-            || name == "enable_mixed_granularity_parts" || name == "order_by_use_zcurve";
+            || name == "enable_mixed_granularity_parts" || name == "order_by_mode";
     }
 
     static bool isPartFormatSetting(const String & name)

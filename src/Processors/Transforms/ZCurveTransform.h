@@ -6,15 +6,15 @@
 namespace DB
 {
 
-class MergeTreeDictionaryStore;
+class MergeTreeRowMappingStore;
 
-class ZCurveDictionaryTransform final : public ISimpleTransform
+class ZCurveTransform final : public ISimpleTransform
 {
 public:
-    ZCurveDictionaryTransform(
+    ZCurveTransform(
         const Block & header_,
         const std::vector<String> & z_curve_columns_,
-        const MergeTreeDictionaryStore & dict_store_,
+        const MergeTreeRowMappingStore & mapping_store_,
         ContextPtr context_);
 
     String getName() const override { return "ZCurveDictionaryTransform"; }
@@ -26,7 +26,7 @@ protected:
 
 private:
     std::vector<String> z_curve_columns;
-    const MergeTreeDictionaryStore & dict_store;
+    const MergeTreeRowMappingStore & mapping_store;
     ContextPtr context;
 };
 }

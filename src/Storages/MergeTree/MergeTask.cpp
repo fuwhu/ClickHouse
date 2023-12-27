@@ -25,7 +25,7 @@
 #include <Processors/Transforms/TTLTransform.h>
 #include <Processors/Transforms/TTLCalcTransform.h>
 #include <Processors/Transforms/DistinctSortedTransform.h>
-#include <Processors/Transforms/ZCurveDictionaryTransform.h>
+#include <Processors/Transforms/ZCurveTransform.h>
 
 namespace DB
 {
@@ -35,6 +35,7 @@ namespace ErrorCodes
     extern const int ABORTED;
     extern const int DIRECTORY_ALREADY_EXISTS;
     extern const int LOGICAL_ERROR;
+    extern const int BAD_ARGUMENTS;
 }
 
 
@@ -818,44 +819,44 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
     global_ctx->horizontal_stage_progress = std::make_unique<MergeStageProgress>(
         ctx->column_sizes ? ctx->column_sizes->keyColumnsWeight() : 1.0);
 
-    /// Load dictinaries of all parts and merge them
-    if (data_settings->order_by_use_zcurve)
+    /// Load row mappings of all parts and merge them
+    if (data_settings->order_by_mode != SortingMode::NORMAL)
     {
         SCOPE_EXIT({
             for (const auto & part : global_ctx->future_part->parts)
-                part->dict_store = nullptr;
+                part->mapping_store = nullptr;
         });
 
         auto metadata_snapshot = global_ctx->data->getInMemoryMetadataPtr();
         const auto & sorting_key_columns = metadata_snapshot->getSortingKey().sample_block.getColumnsWithTypeAndName();
 
-        std::unordered_map<String, std::vector<MergeTreeDictionaryPtr>> all_parts_dictionaries;
+        std::unordered_map<String, std::vector<MergeTreeRowMappingPtr>> all_parts_mappings;
         for (auto idx : collections::range(sorting_key_columns.size()))
-            all_parts_dictionaries[sorting_key_columns[idx].name] = {};
+            all_parts_mappings[sorting_key_columns[idx].name] = {};
 
         for (const auto & part : global_ctx->future_part->parts)
         {
-            part->loadDictionaries();
+            part->loadRowMappings();
             for (auto idx : collections::range(sorting_key_columns.size()))
             {
                 auto column_name = sorting_key_columns[idx].name;
-                if (auto column_dict = part->dict_store->getDictionary(column_name))
-                    all_parts_dictionaries[column_name].emplace_back(std::move(column_dict));
+                if (auto mapping = part->mapping_store->getMapping(column_name))
+                    all_parts_mappings[column_name].emplace_back(std::move(mapping));
                 else
                     throw Exception(
-                        ErrorCodes::LOGICAL_ERROR, "Can not find MergeTreeDictionary of column {} in part {}", column_name, part->name);
+                        ErrorCodes::LOGICAL_ERROR, "Can not find MergeTreeRowMapping of column {} in part {}", column_name, part->name);
             }
         }
 
-        auto new_part_dict_store = std::make_unique<MergeTreeDictionaryStore>(global_ctx->new_data_part.get());
+        auto new_part_mapping_store = std::make_unique<MergeTreeRowMappingStore>(global_ctx->new_data_part.get());
         for (auto idx : collections::range(sorting_key_columns.size()))
         {
             auto column_name = sorting_key_columns[idx].name;
-            auto merged_dict = MergeTreeDictionaryStore::mergeDictionaries(all_parts_dictionaries.at(column_name));
-            new_part_dict_store->addDictionary(column_name, std::move(merged_dict));
+            auto merged_mapping = MergeTreeRowMappingStore::mergeMappings(all_parts_mappings.at(column_name));
+            new_part_mapping_store->addMapping(column_name, std::move(merged_mapping));
         }
 
-        global_ctx->new_data_part->dict_store = std::move(new_part_dict_store);
+        global_ctx->new_data_part->mapping_store = std::move(new_part_mapping_store);
     }
 
     for (size_t part_num = 0; part_num < global_ctx->future_part->parts.size(); ++part_num)
@@ -878,15 +879,15 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
                 [this](const Block & header)
                 { return std::make_shared<ExpressionTransform>(header, global_ctx->metadata_snapshot->getSortingKey().expression); });
 
-            if (data_settings->order_by_use_zcurve)
+            if (data_settings->order_by_mode == SortingMode::Z_CURVE)
             {
                 pipe.addSimpleTransform(
                     [this](const Block & header)
                     {
-                        return std::make_shared<ZCurveDictionaryTransform>(
+                        return std::make_shared<ZCurveTransform>(
                             header,
                             global_ctx->metadata_snapshot->getSortingKeyColumns(),
-                            *global_ctx->new_data_part->dict_store,
+                            *global_ctx->new_data_part->mapping_store,
                             global_ctx->context);
                     });
             }
@@ -898,12 +899,7 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
 
     Block header = pipes.at(0).getHeader();
     SortDescription sort_description;
-    if (data_settings->order_by_use_zcurve)
-    {
-        sort_description.clear();
-        sort_description.emplace_back(header.getPositionByName("_zcurve"), 1, 1);
-    }
-    else
+    if (data_settings->order_by_mode == SortingMode::NORMAL)
     {
         Names sort_columns = global_ctx->metadata_snapshot->getSortingKeyColumns();
 
@@ -912,6 +908,11 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream()
 
         for (size_t i = 0; i < sort_columns_size; ++i)
             sort_description.emplace_back(header.getPositionByName(sort_columns[i]), 1, 1);
+    }
+    else if (data_settings->order_by_mode == SortingMode::Z_CURVE)
+    {
+        sort_description.clear();
+        sort_description.emplace_back(header.getPositionByName("_zcurve"), 1, 1);
     }
 
     Names partition_key_columns = global_ctx->metadata_snapshot->getPartitionKey().column_names;

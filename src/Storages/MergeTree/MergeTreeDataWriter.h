@@ -114,7 +114,8 @@ private:
         Block block,
         const ProjectionDescription & projection);
 
-    void computeAndInjectZCurveSortDesc(Block & block, SortDescription & description, MergeTreeDictionaryStore & dict_store);
+    void computeAndInjectCurveSortDesc(
+        SortingMode sorting_mode, Block & block, SortDescription & description, MergeTreeRowMappingStore & mapping_store);
 
     MergeTreeData & data;
 
