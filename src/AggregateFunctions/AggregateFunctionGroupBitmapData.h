@@ -43,6 +43,9 @@ private:
     using Value = std::conditional_t<sizeof(T) >= 8, UInt64, UInt32>;
     std::shared_ptr<RoaringBitmap> rb = nullptr;
 
+    mutable bool finalized = false;
+    mutable std::mutex finalize_mutex;
+
     void toLarge()
     {
         rb = std::make_shared<RoaringBitmap>();
@@ -129,6 +132,16 @@ public:
         }
         else if (BitmapKind::Bitmap == kind)
         {
+            if (!finalized)
+            {
+                std::lock_guard lock(finalize_mutex);
+                if (!finalized)
+                {
+                    rb->runOptimize();
+                    finalized = true;
+                }
+            }
+
             auto size = rb->getSizeInBytes();
             writeVarUInt(size, out);
             std::unique_ptr<char[]> buf(new char[size]);
