@@ -3128,17 +3128,19 @@ void Context::initializeBackgroundExecutorsIfNeeded()
 
     const size_t max_merges_and_mutations = getSettingsRef().background_pool_size * getSettingsRef().background_merges_mutations_concurrency_ratio;
 
+    auto scheduling_policy = getConfigRef().getString("background_merges_mutations_scheduling_policy", "round_robin");
     /// With this executor we can execute more tasks than threads we have
     shared->merge_mutate_executor = MergeMutateBackgroundExecutor::create
     (
         "MergeMutate",
         /*max_threads_count*/getSettingsRef().background_pool_size,
         /*max_tasks_count*/max_merges_and_mutations,
-        CurrentMetrics::BackgroundMergesAndMutationsPoolTask
+        CurrentMetrics::BackgroundMergesAndMutationsPoolTask,
+        scheduling_policy
     );
 
-    LOG_INFO(shared->log, "Initialized background executor for merges and mutations with num_threads={}, num_tasks={}",
-        getSettingsRef().background_pool_size, max_merges_and_mutations);
+    LOG_INFO(shared->log, "Initialized background executor for merges and mutations with num_threads={}, num_tasks={}, scheduling_policy={}",
+        getSettingsRef().background_pool_size, max_merges_and_mutations, scheduling_policy);
 
     shared->moves_executor = OrdinaryBackgroundExecutor::create
     (
@@ -3197,6 +3199,10 @@ OrdinaryBackgroundExecutorPtr Context::getCommonExecutor() const
     return shared->common_executor;
 }
 
+bool Context::areBackgroundExecutorsInitialized() const
+{
+    return shared->is_background_executors_initialized;
+}
 
 ReadSettings Context::getReadSettings() const
 {

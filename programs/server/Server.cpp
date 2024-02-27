@@ -968,6 +968,12 @@ if (ThreadFuzzer::instance().isEffective())
                 updateServers(*config, server_pool, async_metrics, servers);
             }
 
+            if (global_context->areBackgroundExecutorsInitialized())
+            {
+                global_context->getMergeMutateExecutor()->updateSchedulingPolicy(
+                    config->getString("background_merges_mutations_scheduling_policy", "round_robin"));
+            }
+
             global_context->updateStorageConfiguration(*config);
             global_context->updateInterserverCredentials(*config);
 
