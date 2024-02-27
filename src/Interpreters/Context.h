@@ -111,11 +111,15 @@ class StoragePolicySelector;
 using StoragePolicySelectorPtr = std::shared_ptr<const StoragePolicySelector>;
 template <class Queue>
 class MergeTreeBackgroundExecutor;
-class MergeMutateRuntimeQueue;
-class OrdinaryRuntimeQueue;
-using MergeMutateBackgroundExecutor = MergeTreeBackgroundExecutor<MergeMutateRuntimeQueue>;
+/// By default concurrent merges are scheduled using "round_robin" to ensure fair and starvation-free operation.
+/// Previously in heavily overloaded shards big merges could possibly be starved by smaller
+/// merges due to the use of strict priority scheduling "shortest_task_first".
+class DynamicRuntimeQueue;
+using MergeMutateBackgroundExecutor = MergeTreeBackgroundExecutor<DynamicRuntimeQueue>;
 using MergeMutateBackgroundExecutorPtr = std::shared_ptr<MergeMutateBackgroundExecutor>;
-using OrdinaryBackgroundExecutor = MergeTreeBackgroundExecutor<OrdinaryRuntimeQueue>;
+
+class RoundRobinRuntimeQueue;
+using OrdinaryBackgroundExecutor = MergeTreeBackgroundExecutor<RoundRobinRuntimeQueue>;
 using OrdinaryBackgroundExecutorPtr = std::shared_ptr<OrdinaryBackgroundExecutor>;
 struct PartUUIDs;
 using PartUUIDsPtr = std::shared_ptr<PartUUIDs>;
@@ -912,6 +916,8 @@ public:
     OrdinaryBackgroundExecutorPtr getMovesExecutor() const;
     OrdinaryBackgroundExecutorPtr getFetchesExecutor() const;
     OrdinaryBackgroundExecutorPtr getCommonExecutor() const;
+
+    bool areBackgroundExecutorsInitialized() const;
 
     /** Get settings for reading from filesystem. */
     ReadSettings getReadSettings() const;
