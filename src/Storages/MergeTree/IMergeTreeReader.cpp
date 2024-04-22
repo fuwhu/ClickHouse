@@ -60,7 +60,10 @@ IMergeTreeReader::IMergeTreeReader(
             DataTypePtr to_read_type = nullptr;
 
             if (!checkImplicitColumn(column.name).first)
-                to_read_type = source_columns.get(column.name).type;
+            {
+                if (source_columns.has(column.name))
+                    to_read_type = source_columns.get(column.name).type;
+            }
 
             if (to_read_type && to_read_type->getTypeId() == TypeIndex::MapV2)
                 mapv2_columns.emplace_back(column.name);
