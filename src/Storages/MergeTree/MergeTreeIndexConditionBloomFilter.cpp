@@ -297,13 +297,9 @@ bool MergeTreeIndexConditionBloomFilter::traverseFunction(const ASTPtr & node, B
                     maybe_useful = true;
             }
         }
-        else if (function->name == "equals" ||
-                 function->name == "notEquals" ||
-                 function->name == "has" ||
-                 function->name == "mapContains" ||
-                 function->name == "indexOf" ||
-                 function->name == "hasAny" ||
-                 function->name == "hasAll")
+        else if (
+            function->name == "equals" || 
+            function->name == "notEquals")
         {
             Field const_value;
             DataTypePtr const_type;
@@ -315,6 +311,21 @@ bool MergeTreeIndexConditionBloomFilter::traverseFunction(const ASTPtr & node, B
             else if (KeyCondition::getConstant(arguments[0], block_with_constants, const_value, const_type))
             {
                 if (traverseASTEquals(function->name, arguments[1], const_type, const_value, out, parent))
+                    maybe_useful = true;
+            }
+        }
+        else if (
+            function->name == "has" || 
+            function->name == "mapContains" ||
+            function->name == "indexOf" ||
+            function->name == "hasAny" || 
+            function->name == "hasAll")
+        {
+            Field const_value;
+            DataTypePtr const_type;
+            if (KeyCondition::getConstant(arguments[1], block_with_constants, const_value, const_type))
+            {
+                if (traverseASTEquals(function->name, arguments[0], const_type, const_value, out, parent))
                     maybe_useful = true;
             }
         }
