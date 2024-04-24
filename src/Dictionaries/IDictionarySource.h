@@ -92,6 +92,8 @@ public:
     virtual std::string toString() const = 0;
 
     virtual ~IDictionarySource() = default;
+
+    virtual void clean() { }
 };
 
 }

@@ -272,6 +272,8 @@ public:
         return dictionary_comment;
     }
 
+    virtual void cleanSource() const { }
+
 private:
     mutable std::mutex name_mutex;
     mutable StorageID dictionary_id;

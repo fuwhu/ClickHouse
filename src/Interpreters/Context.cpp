@@ -89,6 +89,7 @@
 #include <Interpreters/SynonymsExtensions.h>
 #include <Interpreters/Lemmatizers.h>
 #include <Interpreters/ClusterDiscovery.h>
+#include <rocksdb/cache.h>
 #include <filesystem>
 
 
@@ -209,6 +210,8 @@ struct ContextSharedPart
     mutable UncompressedCachePtr index_uncompressed_cache;  /// The cache of decompressed blocks for MergeTree indices.
     mutable MarkCachePtr index_mark_cache;                  /// Cache of marks in compressed files of MergeTree indices.
     mutable MMappedFileCachePtr mmap_cache; /// Cache of mmapped files to avoid frequent open/map/unmap/close and to reuse from several threads.
+    mutable std::shared_ptr<rocksdb::Cache> rocksdb_lru_cache_for_bitmap_dict;
+
     ProcessList process_list;                               /// Executing queries at the moment.
     GlobalOvercommitTracker global_overcommit_tracker;
     MergeList merge_list;                                   /// The list of executable merge (for (Replicated)?MergeTree)
@@ -1712,6 +1715,21 @@ void Context::dropMMappedFileCache() const
         shared->mmap_cache->reset();
 }
 
+std::shared_ptr<rocksdb::Cache> Context::getRocksDBLRUCache() const
+{
+    auto lock = getLock();
+    return shared->rocksdb_lru_cache_for_bitmap_dict;
+}
+
+void Context::setRocksDBLRUCacheForBitmapDict(size_t rocksdb_lru_cache_size_for_bitmap_dict)
+{
+    auto lock = getLock();
+
+    if (shared->rocksdb_lru_cache_for_bitmap_dict)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Rocksdb lru cache has been already created.");
+
+    shared->rocksdb_lru_cache_for_bitmap_dict = rocksdb::NewLRUCache(rocksdb_lru_cache_size_for_bitmap_dict, 10, true);
+}
 
 void Context::dropCaches() const
 {

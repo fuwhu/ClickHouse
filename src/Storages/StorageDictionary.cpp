@@ -177,6 +177,11 @@ Pipe StorageDictionary::read(
 
 void StorageDictionary::shutdown()
 {
+    auto registered_dictionary_name
+        = location == Location::SameDatabaseAndNameAsDictionary ? getStorageID().getInternalDictionaryName() : dictionary_name;
+    auto dictionary = getContext()->getExternalDictionariesLoader().tryGetDictionary(registered_dictionary_name, getContext());
+    drop_holder = std::move(dictionary);
+
     removeDictionaryConfigurationFromRepository();
 }
 
@@ -296,6 +301,12 @@ void StorageDictionary::alter(const AlterCommands & params, ContextPtr alter_con
 
     std::lock_guard<std::mutex> lock(dictionary_config_mutex);
     configuration->setString("dictionary.comment", new_comment);
+}
+
+void StorageDictionary::drop()
+{
+    if (drop_holder)
+        drop_holder->cleanSource();
 }
 
 void registerStorageDictionary(StorageFactory & factory)

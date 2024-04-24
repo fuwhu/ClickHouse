@@ -28,6 +28,7 @@
 
 namespace Poco::Net { class IPAddress; }
 namespace zkutil { class ZooKeeper; }
+namespace rocksdb { class Cache; }
 
 struct OvercommitTracker;
 
@@ -743,6 +744,9 @@ public:
     void setMMappedFileCache(size_t cache_size_in_num_entries);
     std::shared_ptr<MMappedFileCache> getMMappedFileCache() const;
     void dropMMappedFileCache() const;
+
+    std::shared_ptr<rocksdb::Cache> getRocksDBLRUCache() const;
+    void setRocksDBLRUCacheForBitmapDict(size_t rocksdb_lru_cache_size_for_bitmap_dict);
 
     /** Clear the caches of the uncompressed blocks and marks.
       * This is usually done when renaming tables, changing the type of columns, deleting a table.
