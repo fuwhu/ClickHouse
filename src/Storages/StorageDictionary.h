@@ -11,6 +11,7 @@ namespace DB
 {
 struct DictionaryStructure;
 class TableFunctionDictionary;
+class IDictionary;
 
 class StorageDictionary final : public shared_ptr_helper<StorageDictionary>, public IStorage, public WithContext
 {
@@ -51,6 +52,8 @@ public:
 
     String getDictionaryName() const { return dictionary_name; }
 
+    void drop() override;
+
     /// Specifies where the table is located relative to the dictionary.
     enum class Location
     {
@@ -78,6 +81,9 @@ private:
     LoadablesConfigurationPtr configuration;
 
     scope_guard remove_repository_callback;
+
+    /// used for dropping dictionary and cleaning source
+    std::shared_ptr<const IDictionary> drop_holder;
 
     void removeDictionaryConfigurationFromRepository();
 

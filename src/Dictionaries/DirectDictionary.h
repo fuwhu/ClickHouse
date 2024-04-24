@@ -95,6 +95,8 @@ public:
 
     Pipe read(const Names & column_names, size_t max_block_size, size_t num_streams) const override;
 
+    void cleanSource() const override;
+
 private:
     Pipe getSourceBlockInputStream(const Columns & key_columns, const PaddedPODArray<KeyType> & requested_keys) const;
 
