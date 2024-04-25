@@ -11,6 +11,7 @@ struct Settings;
 class AggregateFunctionFactory;
 void registerAggregateFunctionAvg(AggregateFunctionFactory &);
 void registerAggregateFunctionAvgWeighted(AggregateFunctionFactory &);
+void registerAggregateFunctionBsiAddAgg(AggregateFunctionFactory &);
 void registerAggregateFunctionCount(AggregateFunctionFactory &);
 void registerAggregateFunctionDeltaSum(AggregateFunctionFactory &);
 void registerAggregateFunctionDeltaSumTimestamp(AggregateFunctionFactory &);
@@ -59,6 +60,7 @@ void registerAggregateFunctionNothing(AggregateFunctionFactory &);
 void registerAggregateFunctionExponentialMovingAverage(AggregateFunctionFactory &);
 void registerAggregateFunctionSparkbar(AggregateFunctionFactory &);
 void registerAggregateFunctionIntervalLengthSum(AggregateFunctionFactory &);
+void registerAggregateFunctionBsiBuild(AggregateFunctionFactory &);
 
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
@@ -82,6 +84,7 @@ void registerAggregateFunctions()
 
         registerAggregateFunctionAvg(factory);
         registerAggregateFunctionAvgWeighted(factory);
+        registerAggregateFunctionBsiAddAgg(factory);
         registerAggregateFunctionCount(factory);
         registerAggregateFunctionDeltaSum(factory);
         registerAggregateFunctionDeltaSumTimestamp(factory);
@@ -130,6 +133,7 @@ void registerAggregateFunctions()
         registerAggregateFunctionIntervalLengthSum(factory);
         registerAggregateFunctionExponentialMovingAverage(factory);
         registerAggregateFunctionSparkbar(factory);
+        registerAggregateFunctionBsiBuild(factory);
 
         registerWindowFunctions(factory);
     }
