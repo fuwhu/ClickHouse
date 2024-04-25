@@ -23,7 +23,7 @@ namespace ErrorCodes
 
 DataTypePtr recursiveRemoveLowCardinality(const DataTypePtr & type)
 {
-    if (!type)
+    if (!type || type->getName() == "BSI")
         return type;
 
     if (const auto * array_type = typeid_cast<const DataTypeArray *>(type.get()))

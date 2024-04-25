@@ -2,11 +2,11 @@
 
 #include <Functions/FunctionFactory.h>
 
-
 namespace DB
 {
 void registerFunctionsArithmetic(FunctionFactory &);
 void registerFunctionsArray(FunctionFactory &);
+void registerFunctionsBsi(FunctionFactory &);
 void registerFunctionsTuple(FunctionFactory &);
 void registerFunctionsMap(FunctionFactory &);
 void registerFunctionsBitmap(FunctionFactory &);
@@ -75,6 +75,7 @@ void registerFunctions()
 
     registerFunctionsArithmetic(factory);
     registerFunctionsArray(factory);
+    registerFunctionsBsi(factory);
     registerFunctionsTuple(factory);
     registerFunctionsMap(factory);
     registerFunctionsBitmap(factory);

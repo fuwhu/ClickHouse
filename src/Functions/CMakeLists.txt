@@ -128,3 +128,6 @@ endif ()
 
 add_subdirectory(udf)
 target_link_libraries(clickhouse_functions PRIVATE clickhouse_functions_udf)
+
+add_subdirectory(bsi)
+target_link_libraries(clickhouse_functions PRIVATE clickhouse_functions_bsi)

@@ -215,6 +215,7 @@ DataTypeFactory::DataTypeFactory()
     registerDataTypeMap(*this);
     registerDataTypeMapV2(*this);
     registerDataTypeObject(*this);
+    registerDataTypeCustomBSI(*this); 
 }
 
 DataTypeFactory & DataTypeFactory::instance()
