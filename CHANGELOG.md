@@ -2,7 +2,6 @@
 #### New Feature
 
 * Support skipping slow/hang shards for distributed query. ([hufuwang](https://git.bilibili.co/hufuwang)) [#358](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/358) [#366](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/366)
-* Add BlockNumberCleaner which cleans up the znodes in 'block_numbers' in case the partition is empty and specified conditions met. ([chenjian04](https://git.bilibili.co/chenjian04)) [#348]()
 
 #### Improvement
 * Improve the insert performance for unique engine table by using LevelDB as unique key index. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#351](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/351)
