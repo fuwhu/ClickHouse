@@ -121,7 +121,7 @@ struct StringHashMapUniqueKeyIndex : public IUniqueKeyIndex
         const String & /*index_path*/,
         IndexFile::IndexFileInfo & /*file_info*/,
         const String & /*temp_unique_key_index_dir*/,
-        rocksdb::DB & /*temp_unique_key_index*/) const override
+        std::unique_ptr<rocksdb::DB> & /*temp_unique_key_index*/) const override
     {
     }
     void deserializeBinary(
@@ -170,7 +170,7 @@ struct StandardMapUniqueKeyIndex : public IUniqueKeyIndex
         const String & /*index_path*/,
         IndexFile::IndexFileInfo & /*file_info*/,
         const String & /*temp_unique_key_index_dir*/,
-        rocksdb::DB & /*temp_unique_key_index*/) const override
+        std::unique_ptr<rocksdb::DB> & /*temp_unique_key_index*/) const override
     {
     }
     void deserializeBinary(
@@ -219,7 +219,7 @@ struct StandardUnOrderedMapUniqueKeyIndex : public IUniqueKeyIndex
         const String & /*index_path*/,
         IndexFile::IndexFileInfo & /*file_info*/,
         const String & /*temp_unique_key_index_dir*/,
-        rocksdb::DB & /*temp_unique_key_index*/) const override
+        std::unique_ptr<rocksdb::DB> & /*temp_unique_key_index*/) const override
     {
     }
     void deserializeBinary(
@@ -265,7 +265,7 @@ struct LevelDBUniqueKeyIndex : public IUniqueKeyIndex
         const String & index_path,
         IndexFile::IndexFileInfo & file_info,
         const String & temp_unique_key_index_dir,
-        rocksdb::DB & temp_unique_key_index) const override;
+        std::unique_ptr<rocksdb::DB> & temp_unique_key_index) const override;
     void deserializeBinary(
         const DiskPtr & /*disk*/,
         const String & /*index_path*/,

@@ -1183,7 +1183,7 @@ void LevelDBUniqueKeyIndex::serializeBinary(
     const String & index_path, 
     IndexFile::IndexFileInfo & file_info, 
     const String & tmp_rocksdb_index_dir,
-    rocksdb::DB & tmp_rocksdb_index_writer) const
+    std::unique_ptr<rocksdb::DB> & tmp_rocksdb_index_writer) const
 {
     IndexFile::Options options;
     options.filter_policy.reset(IndexFile::NewBloomFilterPolicy(10));
@@ -1193,7 +1193,7 @@ void LevelDBUniqueKeyIndex::serializeBinary(
         throw Exception(ErrorCodes::CANNOT_OPEN_FILE, "Error while opening file {}: {}", index_path, status.ToString());
 
     /// merge case : create index file from temp index
-    std::unique_ptr<rocksdb::Iterator> iter(tmp_rocksdb_index_writer.NewIterator(rocksdb::ReadOptions()));
+    std::unique_ptr<rocksdb::Iterator> iter(tmp_rocksdb_index_writer->NewIterator(rocksdb::ReadOptions()));
     for (iter->SeekToFirst(); iter->Valid(); iter->Next())
     {
         auto key = iter->key();

@@ -196,7 +196,7 @@ struct IUniqueKeyIndex
         const String & /*index_path*/,
         IndexFile::IndexFileInfo & /*file_info*/,
         const String & /*tmp_rocksdb_index_dir*/,
-        rocksdb::DB & /*tmp_rocksdb_index_writer*/) const
+        std::unique_ptr<rocksdb::DB> & /*tmp_rocksdb_index_writer*/) const
     {
         throw Exception("Method is not supported for map index.", ErrorCodes::NOT_IMPLEMENTED);
     }
