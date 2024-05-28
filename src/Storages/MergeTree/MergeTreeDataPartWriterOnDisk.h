@@ -192,7 +192,7 @@ private:
     /// we first use "tmp_rocksdb_index_writer" to sort and persist index entries, 
     /// then generate the key index file from "tmp_rocksdb_index_writer"
     String tmp_rocksdb_index_dir;
-    rocksdb::DB * tmp_rocksdb_index_writer = nullptr;
+    std::unique_ptr<rocksdb::DB> tmp_rocksdb_index_writer;
 
     /// If the part contains more than one blocks (merge case) and unique key is a prefix of sorting key, 
     /// we store unique key directly into levelDB.

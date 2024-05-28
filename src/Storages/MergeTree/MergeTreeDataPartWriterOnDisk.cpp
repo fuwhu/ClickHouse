@@ -485,9 +485,11 @@ void MergeTreeDataPartWriterOnDisk::calculateUniqueData(const Block & unique_key
                     opts.write_buffer_size = 16 << 20; /// 16MB
                     tmp_rocksdb_index_dir
                         = fs::path(data_part->getFullPath(false) + UniqueEngineDataWriter::TEMP_MERGING_STAGE_DIR_SUFFIX);
-                    auto status = rocksdb::DB::Open(opts, tmp_rocksdb_index_dir, &tmp_rocksdb_index_writer);
+                    rocksdb::DB * db;
+                    auto status = rocksdb::DB::Open(opts, tmp_rocksdb_index_dir, &db);
+                    tmp_rocksdb_index_writer = std::unique_ptr<rocksdb::DB>(db);
                     if (!status.ok())
-                        throw Exception("Can't create temp unique key index at " + tmp_rocksdb_index_dir, ErrorCodes::LOGICAL_ERROR);
+                        throw Exception("Can't create temp unique key, status str " + status.ToString(), ErrorCodes::LOGICAL_ERROR);
                 }
                 else
                 {
@@ -623,27 +625,9 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
                     unique_key_index->serializeBinary(
                         data_part->getFullPath() + UNIQUE_ENGINE_KEY_INDEX, file_info, tmp_rocksdb_index_dir, *tmp_rocksdb_index_writer);
 
-                    try
-                    {
-                        auto status = tmp_rocksdb_index_writer->Close();
-                        if (!status.ok())
-                            LOG_WARNING(
-                                &Poco::Logger::get("UniqueMergeTreeIndex"),
-                                "Failed to close {} : {}",
-                                tmp_rocksdb_index_dir,
-                                status.ToString());
-
-                        delete tmp_rocksdb_index_writer;
-                        tmp_rocksdb_index_writer = nullptr;
-
-                        const auto & disk = data_part->volume->getDisk();
-                        if (disk->exists(tmp_rocksdb_index_dir))
-                            disk->removeRecursive(tmp_rocksdb_index_dir);
-                    }
-                    catch (...)
-                    {
-                        LOG_WARNING(&Poco::Logger::get("UniqueMergeTreeIndex"), " {}", getCurrentExceptionMessage(false));
-                    }
+                    const auto & disk = data_part->volume->getDisk();
+                    if (disk->exists(tmp_rocksdb_index_dir))
+                        disk->removeRecursive(tmp_rocksdb_index_dir);
                 }
                 else
                 {
