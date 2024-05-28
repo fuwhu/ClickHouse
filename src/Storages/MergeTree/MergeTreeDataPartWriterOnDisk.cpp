@@ -623,7 +623,7 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
                 if (tmp_rocksdb_index_writer)
                 {
                     unique_key_index->serializeBinary(
-                        data_part->getFullPath() + UNIQUE_ENGINE_KEY_INDEX, file_info, tmp_rocksdb_index_dir, *tmp_rocksdb_index_writer);
+                        data_part->getFullPath() + UNIQUE_ENGINE_KEY_INDEX, file_info, tmp_rocksdb_index_dir, tmp_rocksdb_index_writer);
 
                     const auto & disk = data_part->volume->getDisk();
                     if (disk->exists(tmp_rocksdb_index_dir))
