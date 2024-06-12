@@ -121,8 +121,6 @@ void BlockNumberCleaner::checkAndCleanZnodes(StorageReplicatedMergeTree * replic
 
     if (partitions.empty() || std::find(partitions.begin(), partitions.end(), "all") != partitions.end())  return;
 
-    ::sort(partitions.begin(), partitions.end());
-
     Coordination::Requests ops;
 
     auto do_clean_znodes = [&]() {
@@ -162,7 +160,7 @@ void BlockNumberCleaner::checkAndCleanZnodes(StorageReplicatedMergeTree * replic
             ops.emplace_back(zkutil::makeRemoveRequest(block_numbers_path / *it, -1));
         }
         else 
-            break;
+            continue;
         
         if (ops.size() > 4 * zkutil::MULTI_BATCH_SIZE)
         {
