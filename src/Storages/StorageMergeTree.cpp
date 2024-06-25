@@ -1443,6 +1443,7 @@ PartitionCommandsResultInfo StorageMergeTree::attachPartition(
     {
         LOG_INFO(log, "Attaching part {} from {}", loaded_parts[i]->name, renamed_parts.old_and_new_names[i].new_name);
         String old_name = renamed_parts.old_and_new_names[i].old_name;
+        loaded_parts[i]->info.level = 0;
         renameTempPartAndAdd(loaded_parts[i], &increment);
         renamed_parts.old_and_new_names[i].old_name.clear();
 
