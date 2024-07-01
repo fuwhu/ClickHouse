@@ -75,7 +75,7 @@ struct AggregateFunctionBsiAddAggData
             if (rhs_max_slice_number == -1)
                 rhs_max_slice_number = 1;
 
-            size_t new_slice_number = std::max(max_slice_number, rhs_max_slice_number) + 2;
+            size_t new_slice_number = std::max(max_slice_number, rhs_max_slice_number) + 1;
             AggregateFunctionGroupBitmapData<UInt64> bitmap_carry_out;
 
             for (int i = 1; i <= std::min(max_slice_number, rhs_max_slice_number); ++i)
@@ -124,10 +124,11 @@ struct AggregateFunctionBsiAddAggData
 
             if (bitmap_carry_out.rbs.size())
             {
-                bsi_slices[new_slice_number - 1].rbs.rb_or(bitmap_carry_out.rbs);
+                bsi_slices[new_slice_number].rbs.rb_or(bitmap_carry_out.rbs);
+                max_number = new_slice_number;
             }
-
-            max_number = new_slice_number - 1;
+            else
+                max_number = new_slice_number - 1;
             
         }
 
