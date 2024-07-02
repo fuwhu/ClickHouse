@@ -514,7 +514,7 @@ public:
     size_t getTotalActiveSizeInRows() const;
 
     size_t getPartsCount() const;
-    size_t getMaxImplicitColumnsCount() const;
+    std::map<String, std::set<String>> getImplicitColumnsMap() const;
     size_t getMaxPartsCountForPartitionWithState(DataPartState state) const;
     size_t getMaxPartsCountForPartition() const;
     size_t getMaxInactivePartsCountForPartition() const;

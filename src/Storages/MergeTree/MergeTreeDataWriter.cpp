@@ -47,6 +47,7 @@ namespace ProfileEvents
     extern const Event MergeTreeDataProjectionWriterRows;
     extern const Event MergeTreeDataProjectionWriterUncompressedBytes;
     extern const Event MergeTreeDataProjectionWriterCompressedBytes;
+    extern const Event RejectedInserts;
 }
 
 namespace DB
@@ -56,6 +57,7 @@ namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
     extern const int TOO_MANY_PARTS;
+    extern const int TOO_MANY_IMPLICIT_COLUMNS;
 }
 
 namespace
@@ -307,6 +309,7 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
     }
 
     const auto & data_settings = data.getSettings();
+    std::map<String, std::set<String>> current_implicit_columns_map = data.getImplicitColumnsMap();
 
     //Insert implicit columns to block
     for (auto & col : columns)
@@ -324,13 +327,35 @@ MergeTreeDataWriter::TemporaryPart MergeTreeDataWriter::writeTempPart(
             String map_name = col.name;
             if (column_map_v2.getColumns().empty())
                 column_map_v2.constructImplicitColumns();
+            
+            std::set<String> past_implicit_cols;
+            if (current_implicit_columns_map.find(map_name) != current_implicit_columns_map.end())
+                past_implicit_cols = current_implicit_columns_map[map_name];
+
+            size_t new_count = 0;
+
             for (const auto & implicit_column : column_map_v2.getColumns())
             {
                 const auto & implicit_column_name = map_name + IMPLICIT_DELIMITER + implicit_column.name;
+                
+                if (!past_implicit_cols.empty() && !past_implicit_cols.contains(implicit_column_name)) 
+                    new_count++;
+                else if (past_implicit_cols.empty()) 
+                    new_count++;
+
                 implicit_columns.emplace_back(implicit_column_name, implicit_column.type);
                 new_columns.emplace_back(implicit_column_name, implicit_column.type);
                 const ColumnWithTypeAndName & new_col = {implicit_column.column, implicit_column.type, implicit_column_name};
                 block.insert(new_col);
+            }
+            if (past_implicit_cols.size() + new_count > data_settings->max_implicit_columns)
+            {
+                ProfileEvents::increment(ProfileEvents::RejectedInserts);
+                throw Exception(
+                    "Too many implicit columns (" + toString(past_implicit_cols.size() + new_count) + ") in one MapV2 column " + map_name + ", " + "maximum: ("
+                        + data_settings->max_implicit_columns.toString() + "). "
+                        + "The threshold can be modified with mergetree setting 'max_implicit_columns'",
+                    ErrorCodes::TOO_MANY_IMPLICIT_COLUMNS);
             }
 
             implicit_columns_map.insert(std::make_pair(map_name, implicit_columns));

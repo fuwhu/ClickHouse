@@ -3098,7 +3098,7 @@ size_t MergeTreeData::getPartsCount() const
     return total_active_size_parts.load(std::memory_order_acquire);
 }
 
-size_t MergeTreeData::getMaxImplicitColumnsCount() const
+std::map<String, std::set<String>> MergeTreeData::getImplicitColumnsMap() const
 {
     std::map<String, std::set<String>> map_implicit_columns;
 
@@ -3125,12 +3125,7 @@ size_t MergeTreeData::getMaxImplicitColumnsCount() const
         }
     }
 
-    size_t res = 0;
-
-    for (const auto & map_columns : map_implicit_columns)
-        res = map_columns.second.size() > res ? map_columns.second.size() : res;
-
-    return res;
+    return map_implicit_columns;
 }
 
 size_t MergeTreeData::getMaxPartsCountForPartitionWithState(DataPartState state) const
@@ -3195,18 +3190,6 @@ void MergeTreeData::delayInsertOrThrowIfNeeded(Poco::Event * until) const
     {
         ProfileEvents::increment(ProfileEvents::RejectedInserts);
         throw Exception("Too many parts (" + toString(parts_count_in_total) + ") in all partitions in total. This indicates wrong choice of partition key. The threshold can be modified with 'max_parts_in_total' setting in <merge_tree> element in config.xml or with per-table setting.", ErrorCodes::TOO_MANY_PARTS);
-    }
-
-    const size_t implicit_columns_count = getMaxImplicitColumnsCount();
-
-    if (implicit_columns_count >= settings->max_implicit_columns)
-    {
-        ProfileEvents::increment(ProfileEvents::RejectedInserts);
-        throw Exception(
-            "Too many implicit columns (" + toString(implicit_columns_count) + ") in one MapV2 column in total, " + "maximum: ("
-                + settings->max_implicit_columns.toString() + "). "
-                + "The threshold can be modified with mergetree setting 'max_implicit_columns'",
-            ErrorCodes::TOO_MANY_IMPLICIT_COLUMNS);
     }
 
     size_t parts_count_in_partition = getMaxPartsCountForPartition();
