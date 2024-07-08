@@ -164,9 +164,7 @@ std::pair<bool, ReplicatedMergeMutateTaskBase::PartLogWriter> MergeFromLogEntryT
     }
 
     /// Start to make the main work
-    size_t need_total_size = 0;
-    if (entry.merge_type != MergeType::TTL_DROP)
-        need_total_size = MergeTreeDataMergerMutator::estimateNeededDiskSpace(parts);
+    size_t need_total_size = MergeTreeDataMergerMutator::estimateNeededDiskSpace(parts);
 
     /// Can throw an exception while reserving space.
     IMergeTreeDataPart::TTLInfos ttl_infos;

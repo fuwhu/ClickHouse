@@ -77,6 +77,10 @@ void MergePlainMergeTreeTask::prepare()
     future_part = merge_mutate_entry->future_part;
     stopwatch_ptr = std::make_unique<Stopwatch>();
 
+    /// Account TTL merge
+    if (isTTLMergeType(future_part->merge_type))
+        storage.getContext()->getMergeList().bookMergeWithTTL();
+
     const Settings & settings = storage.getContext()->getSettingsRef();
     merge_list_entry = storage.getContext()->getMergeList().insert(
         storage.getStorageID(),
