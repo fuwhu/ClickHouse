@@ -17,8 +17,10 @@ MergeType checkAndGetMergeType(UInt64 merge_type)
         return MergeType::TTL_DELETE;
     else if (merge_type == static_cast<UInt64>(MergeType::TTL_RECOMPRESS))
         return MergeType::TTL_RECOMPRESS;
-    else if (merge_type == static_cast<UInt64>(MergeType::TTL_DROP))
-        return MergeType::TTL_DROP;
+    
+    /// TTL_DROP, for backward compatibility
+    if (merge_type == static_cast<UInt64>(4)) 
+        return MergeType::TTL_DELETE;
 
     throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unknown MergeType {}", static_cast<UInt64>(merge_type));
 }
@@ -33,8 +35,6 @@ String toString(MergeType merge_type)
         return "TTL_DELETE";
     case MergeType::TTL_RECOMPRESS:
         return "TTL_RECOMPRESS";
-    case MergeType::TTL_DROP:
-        return "TTL_DROP";
     }
 
     throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unknown MergeType {}", static_cast<UInt64>(merge_type));
@@ -42,7 +42,7 @@ String toString(MergeType merge_type)
 
 bool isTTLMergeType(MergeType merge_type)
 {
-    return merge_type == MergeType::TTL_DELETE || merge_type == MergeType::TTL_RECOMPRESS || merge_type == MergeType::TTL_DROP;
+    return merge_type == MergeType::TTL_DELETE || merge_type == MergeType::TTL_RECOMPRESS;
 }
 
 }

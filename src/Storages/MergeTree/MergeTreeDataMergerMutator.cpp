@@ -246,18 +246,20 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
             true);
 
         parts_to_merge = drop_ttl_selector.select(parts_ranges, data_settings->max_bytes_to_merge_at_max_space_in_pool);
-        future_part->merge_type = MergeType::TTL_DROP;
+        if (!parts_to_merge.empty())
+            future_part->merge_type = MergeType::TTL_DELETE;
 
         if (parts_to_merge.empty() && !data_settings->ttl_only_drop_parts)
         {
             TTLDeleteMergeSelector delete_ttl_selector(
-                next_delete_ttl_merge_times_by_partition, 
+                next_delete_ttl_merge_times_by_partition,
                 current_time, 
                 data_settings->merge_with_ttl_timeout, 
                 false);
 
             parts_to_merge = delete_ttl_selector.select(parts_ranges, max_total_size_to_merge);
-            future_part->merge_type = MergeType::TTL_DELETE;
+            if (!parts_to_merge.empty())
+                future_part->merge_type = MergeType::TTL_DELETE;
         }
 
         if (parts_to_merge.empty() && metadata_snapshot->hasAnyRecompressionTTL())
@@ -269,7 +271,8 @@ SelectPartsDecision MergeTreeDataMergerMutator::selectPartsToMerge(
                 metadata_snapshot->getRecompressionTTLs());
 
             parts_to_merge = recompress_ttl_selector.select(parts_ranges, max_total_size_to_merge);
-            future_part->merge_type = MergeType::TTL_RECOMPRESS;
+            if (!parts_to_merge.empty())
+                future_part->merge_type = MergeType::TTL_RECOMPRESS;
         }
 
         if (parts_to_merge.empty())

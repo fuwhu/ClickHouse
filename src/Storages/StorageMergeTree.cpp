@@ -827,15 +827,7 @@ std::shared_ptr<MergeMutateSelectedEntry> StorageMergeTree::selectPartsToMerge(
         return {};
     }
 
-    /// Account TTL merge here to avoid exceeding the max_number_of_merges_with_ttl_in_pool limit
-    if (isTTLMergeType(future_part->merge_type))
-        getContext()->getMergeList().bookMergeWithTTL();
-
-    /// If merge_type is TTL_DROP, no need to reserve disk space
-    size_t need_total_size = 0;
-    if (future_part->merge_type != MergeType::TTL_DROP)
-        need_total_size = MergeTreeDataMergerMutator::estimateNeededDiskSpace(future_part->parts);
-
+    size_t need_total_size = MergeTreeDataMergerMutator::estimateNeededDiskSpace(future_part->parts);
     merging_tagger = std::make_unique<CurrentlyMergingPartsTagger>(future_part, need_total_size, *this, metadata_snapshot, false);
     return std::make_shared<MergeMutateSelectedEntry>(future_part, std::move(merging_tagger), MutationCommands::create());
 }
