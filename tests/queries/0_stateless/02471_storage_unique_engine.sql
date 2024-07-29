@@ -24,3 +24,48 @@ INSERT INTO test_unique_engine VALUES ('3', 'Rachel', '2023-08-21 10:00:00'), ('
 SELECT * FROM test_unique_engine ORDER BY id ASC;
 
 DROP TABLE IF EXISTS test_unique_engine;
+
+DROP TABLE test_unique_bitmap_filter;
+
+CREATE TABLE test_unique_bitmap_filter
+(
+    `id` UInt64,
+    `num` Int64,
+    `type` Nullable(UInt16),
+    `ctime` DateTime,
+    `mtime` DateTime
+)
+ENGINE = UniqueMergeTree(mtime)
+ORDER BY id
+UNIQUE KEY id
+SETTINGS unique_key_index_type = 3;
+
+INSERT INTO test_unique_bitmap_filter VALUES (1, 10, 0,'2024-07-29 11:58:00', '2024-07-29 11:58:00'), (2, 20, 1, '2024-07-29 11:58:00', '2024-07-29 11:58:00');
+INSERT INTO test_unique_bitmap_filter VALUES (1, 10, 2, '2024-07-29 11:58:00', '2024-07-29 12:00:00'), (3, 20, null, '2024-07-29 12:00:00', '2024-07-29 12:00:00');
+INSERT INTO test_unique_bitmap_filter VALUES (1, 10, 3, '2024-07-29 11:58:00', '2024-07-29 12:10:00'), (4, 20, 10, '2024-07-29 12:10:00', '2024-07-29 12:10:00');
+
+SELECT
+    *,
+    multiIf((num >= 0) AND (num <= 100), '0-100', (num >= 100) AND (num <= 1000), '100-1k', (num >= 1000) AND (num <= 10000), '1k-1w', (num >= 10000) AND (num <= 30000), '1w-3w', (num >= 30000) AND (num <= 100000), '3w-10w', (num >= 100000) AND (num <= 500000), '10w-50w', (num >= 500000) AND (num <= 1000000), '50w-100w', (num >= 1000000) AND (num <= 5000000), '100w-500w', num > 5000000, '500w+', NULL) AS level
+FROM test_unique_bitmap_filter
+WHERE level IN ('0-100')
+ORDER BY id
+SETTINGS max_threads = 1;
+
+SELECT
+    *,
+    multiIf((num >= 0) AND (num <= 100), '0-100', (num >= 100) AND (num <= 1000), '100-1k', (num >= 1000) AND (num <= 10000), '1k-1w', (num >= 10000) AND (num <= 30000), '1w-3w', (num >= 30000) AND (num <= 100000), '3w-10w', (num >= 100000) AND (num <= 500000), '10w-50w', (num >= 500000) AND (num <= 1000000), '50w-100w', (num >= 1000000) AND (num <= 5000000), '100w-500w', num > 5000000, '500w+', NULL) AS level
+FROM test_unique_bitmap_filter
+WHERE num > 10
+ORDER BY id
+SETTINGS max_threads = 1;
+
+SELECT
+    *,
+    multiIf((num >= 0) AND (num <= 100), '0-100', (num >= 100) AND (num <= 1000), '100-1k', (num >= 1000) AND (num <= 10000), '1k-1w', (num >= 10000) AND (num <= 30000), '1w-3w', (num >= 30000) AND (num <= 100000), '3w-10w', (num >= 100000) AND (num <= 500000), '10w-50w', (num >= 500000) AND (num <= 1000000), '50w-100w', (num >= 1000000) AND (num <= 5000000), '100w-500w', num > 5000000, '500w+', NULL) AS level
+FROM test_unique_bitmap_filter
+WHERE type is not null
+ORDER BY id
+SETTINGS max_threads = 1;
+
+DROP TABLE test_unique_bitmap_filter;

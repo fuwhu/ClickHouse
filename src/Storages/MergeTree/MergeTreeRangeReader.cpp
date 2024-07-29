@@ -1017,10 +1017,17 @@ static ColumnPtr combineUniqueKeyDedupFilter(ColumnPtr first, ColumnPtr second)
     if (second_const_descr.always_false)
         return second;
 
-    auto mut_first = IColumn::mutate(std::move(first));
-    FilterDescription firsrt_descr(*mut_first);
+    FilterDescription first_descr(*first);
+
+    MutableColumnPtr mut_first;
+    if (first_descr.data_holder)
+        mut_first = IColumn::mutate(std::move(first_descr.data_holder));
+    else
+        mut_first = IColumn::mutate(std::move(first));
+
+    auto & first_data = typeid_cast<ColumnUInt8 *>(mut_first.get())->getData();
+
     FilterDescription second_descr(*second);
-    auto & first_data = const_cast<IColumn::Filter &>(*firsrt_descr.data);
     const auto * second_data = second_descr.data->data();
 
     for (auto & val : first_data)
