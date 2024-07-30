@@ -25,7 +25,7 @@ SELECT * FROM test_unique_engine ORDER BY id ASC;
 
 DROP TABLE IF EXISTS test_unique_engine;
 
-DROP TABLE test_unique_bitmap_filter;
+DROP TABLE IF EXISTS test_unique_bitmap_filter;
 
 CREATE TABLE test_unique_bitmap_filter
 (
@@ -68,4 +68,4 @@ WHERE type is not null
 ORDER BY id
 SETTINGS max_threads = 1;
 
-DROP TABLE test_unique_bitmap_filter;
+DROP TABLE IF EXISTS test_unique_bitmap_filter;
