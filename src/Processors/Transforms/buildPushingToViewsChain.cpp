@@ -343,7 +343,7 @@ Chain buildPushingToViewsChain(
         if (!no_destination)
         {
             context->getQueryContext()->addQueryAccessInfo(
-                backQuoteIfNeed(database_table.getDatabaseName()), views_data->views.back().runtime_stats->target_name, {}, "", database_table.getFullTableName());
+                backQuoteIfNeed(database_table.getDatabaseName()), views_data->views.back().runtime_stats->target_name, {}, {}, {}, "", database_table.getFullTableName());
         }
     }
 

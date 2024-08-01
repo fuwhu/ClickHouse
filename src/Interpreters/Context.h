@@ -253,6 +253,8 @@ private:
             databases = rhs.databases;
             tables = rhs.tables;
             columns = rhs.columns;
+            where_columns = rhs.where_columns;
+            group_by_columns = rhs.group_by_columns;
             projections = rhs.projections;
             views = rhs.views;
         }
@@ -270,6 +272,8 @@ private:
             std::swap(databases, rhs.databases);
             std::swap(tables, rhs.tables);
             std::swap(columns, rhs.columns);
+            std::swap(where_columns, rhs.where_columns);
+            std::swap(group_by_columns, rhs.group_by_columns);
             std::swap(projections, rhs.projections);
             std::swap(views, rhs.views);
         }
@@ -279,6 +283,8 @@ private:
         std::set<std::string> databases{};
         std::set<std::string> tables{};
         std::set<std::string> columns{};
+        std::map<std::string, std::set<std::string>> where_columns{};
+        std::set<std::string> group_by_columns{};
         std::set<std::string> projections{};
         std::set<std::string> views{};
     };
@@ -506,6 +512,8 @@ public:
         const String & quoted_database_name,
         const String & full_quoted_table_name,
         const Names & column_names,
+        const std::map<std::string, std::set<std::string>> & where_column_names,
+        const Names & group_by_column_names,
         const String & projection_name = {},
         const String & view_name = {});
 

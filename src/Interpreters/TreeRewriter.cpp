@@ -1144,6 +1144,34 @@ void TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
     {
         source_column_names.insert(column.name);
     }
+
+    if (is_select)
+    {
+        auto & required_where = columns_context.where_columns;
+        auto & required_group_by = columns_context.group_by_columns;
+
+        RequiredWhereColumns where_columns;
+        Names group_by_columns;
+
+        for (const auto & column : required_source_columns)
+        {
+            if (required_where["equality"].count(column.name))
+                where_columns["equality"].insert(column.name);
+            
+            if (required_where["range"].count(column.name))
+                where_columns["range"].insert(column.name);
+
+            if (required_where["other"].count(column.name))
+                where_columns["other"].insert(column.name);
+
+            if (required_group_by.count(column.name))
+                group_by_columns.emplace_back(column.name);
+        }
+
+        required_where_columns.swap(where_columns);
+        required_group_by_columns.swap(group_by_columns);
+    }
+
 }
 
 NameSet TreeRewriterResult::getArrayJoinSourceNameSet() const

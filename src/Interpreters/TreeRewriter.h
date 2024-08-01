@@ -21,6 +21,7 @@ struct StorageInMemoryMetadata;
 using StorageMetadataPtr = std::shared_ptr<const StorageInMemoryMetadata>;
 struct StorageSnapshot;
 using StorageSnapshotPtr = std::shared_ptr<const StorageSnapshot>;
+using RequiredWhereColumns = std::map<String, std::set<String>>;
 
 struct TreeRewriterResult
 {
@@ -33,6 +34,8 @@ struct TreeRewriterResult
     NameSet source_columns_set; /// Set of names of source_columns.
     /// Set of columns that are enough to read from the table to evaluate the expression. It does not include joined columns.
     NamesAndTypesList required_source_columns;
+    RequiredWhereColumns required_where_columns;
+    Names required_group_by_columns;
     /// Same as above but also record alias columns which are expanded. This is for RBAC access check.
     Names required_source_columns_before_expanding_alias_columns;
 

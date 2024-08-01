@@ -1,6 +1,7 @@
 #include <array>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnFixedString.h>
+#include <Columns/ColumnMap.h>
 #include <Columns/ColumnString.h>
 #include <Columns/ColumnsNumber.h>
 #include <DataTypes/DataTypeArray.h>
@@ -65,6 +66,11 @@ NamesAndTypesList QueryLogElement::getNamesAndTypes()
         {"tables", std::make_shared<DataTypeArray>(
             std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()))},
         {"columns", std::make_shared<DataTypeArray>(
+            std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()))},
+        {"where_columns", std::make_shared<DataTypeMap>(
+            std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()),
+            std::make_shared<DataTypeArray>(std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>())))},
+        {"group_by_columns", std::make_shared<DataTypeArray>(
             std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()))},
         {"projections", std::make_shared<DataTypeArray>(
             std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()))},
@@ -163,6 +169,8 @@ void QueryLogElement::appendToBlock(MutableColumns & columns) const
         auto & column_databases = typeid_cast<ColumnArray &>(*columns[i++]);
         auto & column_tables = typeid_cast<ColumnArray &>(*columns[i++]);
         auto & column_columns = typeid_cast<ColumnArray &>(*columns[i++]);
+        auto & column_where_columns = typeid_cast<ColumnMap &>(*columns[i++]);
+        auto & column_group_by_columns = typeid_cast<ColumnArray &>(*columns[i++]);
         auto & column_projections = typeid_cast<ColumnArray &>(*columns[i++]);
         auto & column_views = typeid_cast<ColumnArray &>(*columns[i++]);
 
@@ -178,9 +186,67 @@ void QueryLogElement::appendToBlock(MutableColumns & columns) const
             offsets.push_back(offsets.back() + size);
         };
 
+        auto fill_map_column = [](const std::map<String, std::set<String>> & data, ColumnMap & column)
+        {
+            auto fill_array_column = [](const std::set<String> & arr_data, ColumnArray & arr_column)
+            {
+                size_t size = 0;
+                for (const auto & name : arr_data)
+                {
+                    arr_column.getData().insertData(name.data(), name.size());
+                    ++size;
+                }
+                auto & offsets = arr_column.getOffsets();
+                offsets.push_back(offsets.back() + size);
+            };
+
+            auto & offsets = column.getNestedColumn().getOffsets();
+            auto & tuple_column = column.getNestedData();
+            auto & key_column = tuple_column.getColumn(0);
+            auto & value_column = tuple_column.getColumn(1);
+
+            size_t map_size = 0;
+            auto equality_it = data.find("equality");
+            if (equality_it != data.end())
+            {
+                key_column.insertData("equality", strlen("equality"));
+
+                auto & column_item = typeid_cast<ColumnArray &>(value_column);
+                fill_array_column(equality_it->second, column_item);
+
+                map_size++;
+            }
+
+            auto range_it = data.find("range");
+            if (range_it != data.end())
+            {
+                key_column.insertData("range", strlen("range"));
+
+                auto & column_item = typeid_cast<ColumnArray &>(value_column);
+                fill_array_column(range_it->second, column_item);
+
+                map_size++;
+            }
+
+            auto other_it = data.find("other");
+            if (other_it != data.end())
+            {
+                key_column.insertData("other", strlen("other"));
+
+                auto & column_item = typeid_cast<ColumnArray &>(value_column);
+                fill_array_column(other_it->second, column_item);
+
+                map_size++;
+            }
+
+            offsets.push_back(offsets.back() + map_size);
+        };
+
         fill_column(query_databases, column_databases);
         fill_column(query_tables, column_tables);
         fill_column(query_columns, column_columns);
+        fill_map_column(query_where_columns, column_where_columns);
+        fill_column(query_group_by_columns, column_group_by_columns);
         fill_column(query_projections, column_projections);
         fill_column(query_views, column_views);
     }

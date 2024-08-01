@@ -500,6 +500,8 @@ InterpreterSelectQuery::InterpreterSelectQuery(
         }
 
         required_columns = syntax_analyzer_result->requiredSourceColumns();
+        required_where_columns = syntax_analyzer_result->required_where_columns;
+        required_group_by_columns = syntax_analyzer_result->required_group_by_columns;
 
         if (storage)
         {
@@ -2036,6 +2038,8 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
                 backQuoteIfNeed(local_storage_id.getDatabaseName()),
                 local_storage_id.getFullTableName(),
                 required_columns,
+                required_where_columns,
+                required_group_by_columns,
                 query_info.projection ? query_info.projection->desc->name : "",
                 view_name);
         }

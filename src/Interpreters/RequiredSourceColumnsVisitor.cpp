@@ -2,6 +2,7 @@
 #include <Common/typeid_cast.h>
 #include <Core/Names.h>
 #include <Parsers/IAST.h>
+#include "Parsers/ASTLiteral.h"
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTSelectQuery.h>
@@ -133,6 +134,22 @@ void RequiredSourceColumnsMatcher::visit(const ASTSelectQuery & select, const AS
             Visitor(data).visit(node);
     }
 
+    /// Process PREWHERE, WHERE and GROUP BY sections
+    if (select.where())
+        processWhereSection(select.where(), data);
+
+    if (select.prewhere())
+        processWhereSection(select.prewhere(), data);
+
+    if (select.groupBy())
+    {
+        for (const auto & child : select.groupBy()->children)
+        {
+            if (const auto * identifier = child->as<ASTIdentifier>())
+                data.addGroupByColumn(identifier->name());
+        }
+    }
+
     /// revisit select_expression_list (with children) when all the aliases are set
     Visitor(data).visit(select.select());
 }
@@ -202,5 +219,39 @@ void RequiredSourceColumnsMatcher::visit(const ASTArrayJoin & node, const ASTPtr
     for (ASTPtr * add_node : out)
         Visitor(data).visit(*add_node);
 }
+
+void RequiredSourceColumnsMatcher::processWhereSection(const ASTPtr & where_node, Data & data)
+{
+    if (!where_node)
+        return;
+
+    const auto * function = where_node->as<ASTFunction>();
+    if (function && (function->name == "and" || function->name == "or"))
+    {
+        for (const auto & child : function->arguments->children)
+            processWhereSection(child, data);
+    }
+    else if (function)
+    {
+        if (function->arguments->children.size() == 2)
+        {
+            const auto * left = function->arguments->children[0]->as<ASTIdentifier>();
+            
+            if (left)
+            {
+                std::string column_name = left->name();
+                std::string comparison = function->name;
+
+                if (comparison == "equals" || comparison == "notEquals" || comparison == "in" || comparison == "notIn")
+                    data.addWhereCondition("equality", column_name);
+                else if (comparison == "greater" || comparison == "greaterOrEquals" || comparison == "less" || comparison == "lessOrEquals")
+                    data.addWhereCondition("range", column_name);
+                else
+                    data.addWhereCondition("other", column_name);
+            }
+        }
+    }
+}
+
 
 }

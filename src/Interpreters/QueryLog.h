@@ -60,6 +60,8 @@ struct QueryLogElement
     std::set<String> query_databases;
     std::set<String> query_tables;
     std::set<String> query_columns;
+    std::map<String, std::set<String>> query_where_columns;
+    std::set<String> query_group_by_columns;
     std::set<String> query_projections;
     std::set<String> query_views;
 
