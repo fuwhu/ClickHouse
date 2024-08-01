@@ -740,6 +740,8 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
                     elem.query_databases = info.databases;
                     elem.query_tables = info.tables;
                     elem.query_columns = info.columns;
+                    elem.query_where_columns = info.where_columns;
+                    elem.query_group_by_columns = info.group_by_columns;
                     elem.query_projections = info.projections;
                     elem.query_views = info.views;
                 }
