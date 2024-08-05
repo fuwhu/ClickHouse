@@ -271,7 +271,7 @@ void UniqueEngineDataWriter::executeDedupByIterator(
 
     std::vector<UniqueKeyIndexPtr> active_key_indices;
     for (const auto & active_part : data_parts)
-        active_key_indices.emplace_back(active_part->getUniqueKeyIndex());
+        active_key_indices.emplace_back(active_part->getUniqueKeyIndex(false, nullptr, nullptr, true));
 
     IndexFileIterators active_key_iterators;
     for (size_t i = 0; i < data_parts.size(); ++i)

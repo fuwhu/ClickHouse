@@ -69,3 +69,33 @@ ORDER BY id
 SETTINGS max_threads = 1;
 
 DROP TABLE IF EXISTS test_unique_bitmap_filter;
+
+DROP TABLE IF EXISTS test_uk_level_db_test_str;
+
+CREATE TABLE test_uk_level_db_test_str
+(
+    `uid` Int64,
+    `send_source` Int64,
+    `msg_id` String,
+    `award_type` Int64,
+    `award_id` String,
+    `version` Int64,
+    `ctime` DateTime
+)
+ENGINE = UniqueMergeTree(version)
+PARTITION BY toDate(ctime)
+ORDER BY award_id
+UNIQUE KEY award_id
+SETTINGS unique_key_index_type = 3, unique_delete_bitmap_type = 32, unique_key_deduplicate_level = 1;
+
+INSERT INTO test_uk_level_db_test_str VALUES (388091629, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 1, '2024-08-05 10:00:00');
+
+DETACH TABLE test_uk_level_db_test_str;
+
+ATTACH TABLE test_uk_level_db_test_str;
+
+INSERT INTO test_uk_level_db_test_str VALUES (388091629, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 2, '2024-08-05 10:00:00');
+
+SELECT * FROM test_uk_level_db_test_str;
+
+DROP TABLE IF EXISTS test_uk_level_db_test_str;

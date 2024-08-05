@@ -173,7 +173,7 @@ public:
     }
 
     UniqueKeyIndexPtr getUniqueKeyIndex(bool keep_loaded_in_memory = false, LoadingBucketPoolPtr loading_bucket_pool = nullptr,
-                                        BucketIndexRangePtr bucket_range = nullptr);
+                                        BucketIndexRangePtr bucket_range = nullptr, bool use_meta_cache = false);
 
     UniqueKeyBucketIndexPtr & getUniqueKeyBucketIndex() { return unique_key_bucket_index; }
 

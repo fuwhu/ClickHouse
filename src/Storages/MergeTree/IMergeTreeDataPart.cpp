@@ -1934,7 +1934,7 @@ String IMergeTreeDataPart::getZeroLevelPartBlockID(std::string_view token) const
 }
 
 UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
-    bool keep_loaded_in_memory, LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
+    bool keep_loaded_in_memory, LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range, bool use_meta_cache)
 {
     const auto & unique_key_index_type = storage.getSettings()->unique_key_index_type;
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
@@ -1955,9 +1955,14 @@ UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
     }
     else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
     {
-        UUIDAndPartName key(storage.getStorageID().uuid, info.getPartName());
-        auto load_func = [&]() { return loadUniqueIndex(); };
-        return storage.getContext()->getUniqueKeyIndexCache()->getOrSet(key, load_func).first;
+        if (use_meta_cache && storage.getStorageID().hasUUID())
+        {
+            UUIDAndPartName key(storage.getStorageID().uuid, info.getPartName());
+            auto load_func = [&]() { return loadUniqueIndex(); };
+            return storage.getContext()->getUniqueKeyIndexCache()->getOrSet(key, load_func).first;
+        }
+        else
+            return loadUniqueIndex();
     }
     else
         throw Exception(
