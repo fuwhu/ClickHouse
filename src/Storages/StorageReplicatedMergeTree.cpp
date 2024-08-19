@@ -2100,13 +2100,23 @@ bool StorageReplicatedMergeTree::executeReplaceRange(const LogEntry & entry)
     }
 
     /// Check that we could cover whole range
+    auto zookeeper = getZooKeeper();
+    ReplicatedMergeTreeMergePredicate merge_pred = queue.getMergePredicate(zookeeper);
+
     for (PartDescriptionPtr & part_desc : parts_to_add)
     {
-        if (adding_parts_active_set.getContainingPart(part_desc->new_part_info).empty())
+        if (!adding_parts_active_set.getContainingPart(part_desc->new_part_info).empty())
+            continue;
+
+        if (merge_pred.hasDropRange(part_desc->new_part_info))
         {
-            throw Exception("Not found part " + part_desc->new_part_name +
-                            " (or part covering it) neither source table neither remote replicas" , ErrorCodes::NO_REPLICA_HAS_PART);
+            LOG_WARNING(log, "Will not add part {} (while replacing {}) because it's going to be dropped",
+                        part_desc->new_part_name, entry_replace.drop_range_part_name);
+            continue;
         }
+
+        throw Exception("Not found part " + part_desc->new_part_name +
+                        " (or part covering it) neither source table neither remote replicas" , ErrorCodes::NO_REPLICA_HAS_PART);
     }
 
     /// Filter covered parts
@@ -2187,7 +2197,6 @@ bool StorageReplicatedMergeTree::executeReplaceRange(const LogEntry & entry)
     try
     {
         /// Commit parts
-        auto zookeeper = getZooKeeper();
         Transaction transaction(*this);
 
         Coordination::Requests ops;
