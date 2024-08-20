@@ -1,0 +1,62 @@
+(Expression)
+ExpressionTransform
+  (Sorting)
+  MergingSortedTransform 2 → 1
+    BufferChunks × 2
+      (Expression)
+      ExpressionTransform × 2
+        (SettingQuotaAndLimits)
+          (ReadFromMergeTree)
+          MergeTreeInOrder × 2 0 → 1
+(Expression)
+ExpressionTransform
+  (Limit)
+  Limit
+    (Sorting)
+      (Expression)
+      ExpressionTransform
+        (SettingQuotaAndLimits)
+          (ReadFromMergeTree)
+          MergeTreeInOrder 0 → 1
+(Expression)
+ExpressionTransform
+  (Limit)
+  Limit
+    (Sorting)
+    MergingSortedTransform 2 → 1
+      BufferChunks × 2
+        (Expression)
+        ExpressionTransform × 2
+          (SettingQuotaAndLimits)
+            (ReadFromMergeTree)
+            MergeTreeInOrder × 2 0 → 1
+(Expression)
+ExpressionTransform
+  (Sorting)
+  MergingSortedTransform 2 → 1
+    (Expression)
+    ExpressionTransform × 2
+      (SettingQuotaAndLimits)
+        (ReadFromMergeTree)
+        MergeTreeInOrder × 2 0 → 1
+(Expression)
+ExpressionTransform
+  (Limit)
+  Limit
+    (Sorting)
+      (Expression)
+      ExpressionTransform
+        (SettingQuotaAndLimits)
+          (ReadFromMergeTree)
+          MergeTreeInOrder 0 → 1
+(Expression)
+ExpressionTransform
+  (Limit)
+  Limit
+    (Sorting)
+    MergingSortedTransform 2 → 1
+      (Expression)
+      ExpressionTransform × 2
+        (SettingQuotaAndLimits)
+          (ReadFromMergeTree)
+          MergeTreeInOrder × 2 0 → 1

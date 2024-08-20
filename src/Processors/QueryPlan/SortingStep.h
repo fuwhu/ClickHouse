@@ -30,7 +30,8 @@ public:
         SortDescription prefix_description_,
         SortDescription result_description_,
         size_t max_block_size_,
-        UInt64 limit_);
+        UInt64 limit_,
+        bool read_in_order_use_buffering_ = false);
 
     /// MergingSorted
     SortingStep(
@@ -65,6 +66,9 @@ private:
     size_t max_block_size;
     UInt64 limit;
     SizeLimits size_limits;
+
+    size_t max_block_bytes = 0;
+    bool read_in_order_use_buffering = false;
 
     size_t max_bytes_before_remerge = 0;
     double remerge_lowered_memory_bytes_ratio = 0;

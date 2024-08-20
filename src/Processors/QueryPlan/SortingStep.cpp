@@ -5,6 +5,7 @@
 #include <Processors/Transforms/FinishSortingTransform.h>
 #include <Processors/Merges/MergingSortedTransform.h>
 #include <Processors/Transforms/LimitsCheckingTransform.h>
+#include <Processors/Transforms/BufferChunksTransform.h>
 #include <IO/Operators.h>
 #include <Common/JSONBuilder.h>
 
@@ -59,13 +60,15 @@ SortingStep::SortingStep(
     SortDescription prefix_description_,
     SortDescription result_description_,
     size_t max_block_size_,
-    UInt64 limit_)
+    UInt64 limit_,
+    bool read_in_order_use_buffering_)
     : ITransformingStep(input_stream_, input_stream_.header, getTraits(limit_))
     , type(Type::FinishSorting)
     , prefix_description(std::move(prefix_description_))
     , result_description(std::move(result_description_))
     , max_block_size(max_block_size_)
     , limit(limit_)
+    , read_in_order_use_buffering(read_in_order_use_buffering_)
 {
     /// TODO: check input_stream is sorted by prefix_description.
     output_stream->sort_description = result_description;
@@ -105,6 +108,14 @@ void SortingStep::transformPipeline(QueryPipelineBuilder & pipeline, const Build
         if (pipeline.getNumStreams() > 1)
         {
             UInt64 limit_for_merging = (need_finish_sorting ? 0 : limit);
+
+            if (read_in_order_use_buffering)
+            {
+                pipeline.addSimpleTransform(
+                    [&](const Block & header)
+                    { return std::make_shared<BufferChunksTransform>(header, max_block_size, max_block_bytes, limit_for_merging); });
+            }
+
             auto transform = std::make_shared<MergingSortedTransform>(
                     pipeline.getHeader(),
                     pipeline.getNumStreams(),
