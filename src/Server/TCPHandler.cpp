@@ -78,9 +78,9 @@ namespace ErrorCodes
     extern const int POCO_EXCEPTION;
     extern const int SOCKET_TIMEOUT;
     extern const int UNEXPECTED_PACKET_FROM_CLIENT;
-    extern const int SUPPORT_IS_DISABLED;
     extern const int UNKNOWN_PROTOCOL;
     extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
+    extern const int AUTHENTICATION_FAILED;
 }
 
 TCPHandler::TCPHandler(IServer & server_, TCPServer & tcp_server_, const Poco::Net::StreamSocket & socket_, bool parse_proxy_protocol_, std::string server_display_name_)
@@ -112,7 +112,6 @@ void TCPHandler::runImpl()
     setThreadName("TCPHandler");
     ThreadStatus thread_status;
 
-    session = std::make_unique<Session>(server.context(), ClientInfo::Interface::TCP);
     extractConnectionSettingsFromContext(server.context());
 
     socket().setReceiveTimeout(receive_timeout);
@@ -397,6 +396,21 @@ void TCPHandler::runImpl()
         }
         catch (const Exception & e)
         {
+            /// Authentication failure with interserver secret
+            /// - early exit without trying to send the exception to the client.
+            /// Because the server should not try to skip (parse, decompress) the remaining packets sent by the client,
+            /// as it will lead to additional work and unneeded exposure to unauthenticated connections.
+
+            /// Note that the exception AUTHENTICATION_FAILED can be here in two cases:
+            /// 1. The authentication in receiveHello is skipped with "interserver secret",
+            /// postponed to receiving the query, and then failed.
+            /// 2. Receiving exception from a query using a table function to authenticate with another server.
+            /// In this case, the user is already authenticated with this server,
+            /// is_interserver_mode is false, and we can send the exception to the client normally.
+
+            if (is_interserver_mode && e.code() == ErrorCodes::AUTHENTICATION_FAILED)
+                throw;
+
             state.io.onException();
             exception.emplace(e);
 
@@ -479,6 +493,13 @@ void TCPHandler::runImpl()
             LOG_WARNING(log, "Client has gone away.");
         }
 
+        /// Interserver authentication is done only after we read the query.
+        /// This fact can be abused by producing exception before or while we read the query.
+        /// To avoid any potential exploits, we simply close connection on any exceptions
+        /// that happen before the first query is authenticated with the cluster secret.
+        if (is_interserver_mode && exception && !is_interserver_authenticated)
+            exception->rethrow();
+        
         try
         {
             /// A query packet is always followed by one or more data packets.
@@ -515,6 +536,12 @@ void TCPHandler::runImpl()
 
         /// It is important to destroy query context here. We do not want it to live arbitrarily longer than the query.
         query_context.reset();
+
+        if (is_interserver_mode)
+        {
+            /// We don't really have session in interserver mode, new one is created for each query. It's better to reset it now.
+            session.reset();
+        }
 
         if (network_error)
             break;
@@ -749,7 +776,7 @@ void TCPHandler::processTablesStatusRequest()
     TablesStatusRequest request;
     request.read(*in, client_tcp_protocol_version);
 
-    ContextPtr context_to_resolve_table_names = session->sessionContext() ? session->sessionContext() : server.context();
+    ContextPtr context_to_resolve_table_names = (session && session->sessionContext()) ? session->sessionContext() : server.context();
 
     TablesStatusResponse response;
     for (const QualifiedTableName & table_name: request.tables)
@@ -949,7 +976,7 @@ bool TCPHandler::receiveProxyHeader()
     }
 
     LOG_TRACE(log, "Forwarded client address from PROXY header: {}", forwarded_address);
-    session->getClientInfo().forwarded_for = forwarded_address;
+    forwarded_for = std::move(forwarded_address);
     return true;
 }
 
@@ -976,6 +1003,29 @@ std::string formatHTTPErrorResponseWhenUserIsConnectedToWrongPort(const Poco::Ut
 
 }
 
+std::unique_ptr<Session> TCPHandler::makeSession()
+{
+    auto interface = is_interserver_mode ? ClientInfo::Interface::TCP_INTERSERVER : ClientInfo::Interface::TCP;
+
+    auto res = std::make_unique<Session>(server.context(), interface);
+
+    auto & client_info = res->getClientInfo();
+    client_info.forwarded_for = forwarded_for;
+    client_info.client_name = client_name;
+    client_info.client_version_major = client_version_major;
+    client_info.client_version_minor = client_version_minor;
+    client_info.client_version_patch = client_version_patch;
+    client_info.client_tcp_protocol_version = client_tcp_protocol_version;
+
+    client_info.connection_client_version_major = client_version_major;
+    client_info.connection_client_version_minor = client_version_minor;
+    client_info.connection_client_version_patch = client_version_patch;
+    client_info.connection_tcp_protocol_version = client_tcp_protocol_version;
+
+    client_info.interface = interface;
+
+    return res;
+}
 
 void TCPHandler::receiveHello()
 {
@@ -1019,26 +1069,14 @@ void TCPHandler::receiveHello()
         (!user.empty() ? ", user: " + user : "")
     );
 
-    auto & client_info = session->getClientInfo();
-    client_info.client_name = client_name;
-    client_info.client_version_major = client_version_major;
-    client_info.client_version_minor = client_version_minor;
-    client_info.client_version_patch = client_version_patch;
-    client_info.client_tcp_protocol_version = client_tcp_protocol_version;
-
-    client_info.connection_client_version_major = client_version_major;
-    client_info.connection_client_version_minor = client_version_minor;
-    client_info.connection_client_version_patch = client_version_patch;
-    client_info.connection_tcp_protocol_version = client_tcp_protocol_version;
-
-    is_interserver_mode = (user == USER_INTERSERVER_MARKER);
+    is_interserver_mode = (user == USER_INTERSERVER_MARKER) && password.empty();
     if (is_interserver_mode)
     {
-        client_info.interface = ClientInfo::Interface::TCP_INTERSERVER;
         receiveClusterNameAndSalt();
         return;
     }
 
+    session = makeSession();
     session->authenticate(user, password, socket().peerAddress());
 }
 
@@ -1218,25 +1256,6 @@ void TCPHandler::receiveClusterNameAndSalt()
 {
     readStringBinary(cluster, *in);
     readStringBinary(salt, *in, 32);
-
-    try
-    {
-        if (salt.empty())
-            throw NetException("Empty salt is not allowed", ErrorCodes::UNEXPECTED_PACKET_FROM_CLIENT);
-
-        cluster_secret = server.context()->getCluster(cluster)->getSecret();
-    }
-    catch (const Exception & e)
-    {
-        try
-        {
-            /// We try to send error information to the client.
-            sendException(e, send_exception_with_stack_trace);
-        }
-        catch (...) {}
-
-        throw;
-    }
 }
 
 void TCPHandler::receiveQuery()
@@ -1247,21 +1266,13 @@ void TCPHandler::receiveQuery()
     state.is_empty = false;
     readStringBinary(state.query_id, *in);
 
-    /// In interserer mode,
+    /// In interserver mode,
     /// initial_user can be empty in case of Distributed INSERT via Buffer/Kafka,
     /// (i.e. when the INSERT is done with the global context w/o user),
     /// so it is better to reset session to avoid using old user.
     if (is_interserver_mode)
     {
-        ClientInfo original_session_client_info = session->getClientInfo();
-
-        /// Cleanup fields that should not be reused from previous query.
-        original_session_client_info.current_user.clear();
-        original_session_client_info.current_query_id.clear();
-        original_session_client_info.current_address = {};
-
-        session = std::make_unique<Session>(server.context(), ClientInfo::Interface::TCP_INTERSERVER);
-        session->getClientInfo() = original_session_client_info;
+        session = makeSession();
     }
 
     /// Read client info.
@@ -1295,21 +1306,42 @@ void TCPHandler::receiveQuery()
 
     if (is_interserver_mode)
     {
+        client_info.interface = ClientInfo::Interface::TCP_INTERSERVER;
 #if USE_SSL
+        String cluster_secret;
+        try
+        {
+            cluster_secret = server.context()->getCluster(cluster)->getSecret();
+        }
+        catch (const Exception & e)
+        {
+            auto exception = Exception(ErrorCodes::AUTHENTICATION_FAILED, e.message());
+            session->onAuthenticationFailure(/* user_name= */ std::nullopt, socket().peerAddress(), exception);
+            throw exception; /// NOLINT
+        }
+
+        if (salt.empty() || cluster_secret.empty())
+        {
+            auto exception = Exception(ErrorCodes::AUTHENTICATION_FAILED, "Interserver authentication failed (no salt/cluster secret)");
+            session->onAuthenticationFailure(/* user_name= */ std::nullopt, socket().peerAddress(), exception);
+            throw exception; /// NOLINT
+        }
+
         std::string data(salt);
         data += cluster_secret;
         data += state.query;
         data += state.query_id;
         data += client_info.initial_user;
 
-        if (received_hash.size() != 32)
-            throw NetException("Unexpected hash received from client", ErrorCodes::UNEXPECTED_PACKET_FROM_CLIENT);
-
         std::string calculated_hash = encodeSHA256(data);
+        assert(calculated_hash.size() == 32);
 
         if (calculated_hash != received_hash)
-            throw NetException("Hash mismatch", ErrorCodes::UNEXPECTED_PACKET_FROM_CLIENT);
-        /// TODO: change error code?
+        {
+            auto exception = Exception(ErrorCodes::AUTHENTICATION_FAILED, "Interserver authentication failed");
+            session->onAuthenticationFailure(/* user_name */ std::nullopt, socket().peerAddress(), exception);
+            throw exception; /// NOLINT
+        }
 
         if (client_info.initial_user.empty())
         {
@@ -1320,10 +1352,13 @@ void TCPHandler::receiveQuery()
             LOG_DEBUG(log, "User (initial, interserver mode): {}", client_info.initial_user);
             session->authenticate(AlwaysAllowCredentials{client_info.initial_user}, client_info.initial_address);
         }
+
+        is_interserver_authenticated = true;
 #else
-        throw Exception(
-            "Inter-server secret support is disabled, because ClickHouse was built without SSL library",
-            ErrorCodes::SUPPORT_IS_DISABLED);
+        auto exception = Exception(ErrorCodes::AUTHENTICATION_FAILED,
+            "Inter-server secret support is disabled, because ClickHouse was built without SSL library");
+        session->onAuthenticationFailure(/* user_name */ std::nullopt, socket().peerAddress(), exception);
+        throw exception; /// NOLINT
 #endif
     }
 
