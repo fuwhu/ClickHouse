@@ -1,6 +1,6 @@
-DROP TABLE IF EXISTS default.test_mapv2;
+DROP TABLE IF EXISTS test_mapv2;
 
-CREATE TABLE default.test_mapv2
+CREATE TABLE test_mapv2
 (
     `id` UInt32,
     `string_map` MapV2(String, String),
