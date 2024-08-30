@@ -61,6 +61,15 @@ private:
         const NameAndTypePair & name_and_type,
         size_t current_task_last_mark,
         ISerialization::SubstreamsCache & cache);
+    
+    ReadBuffer * getStream(
+        bool seek_to_start,
+        const ISerialization::SubstreamPath & substream_path,
+        const MergeTreeDataPartChecksums & checksums,
+        const NameAndTypePair & name_and_type,
+        size_t from_mark, bool seek_to_mark,
+        size_t current_task_last_mark,
+        ISerialization::SubstreamsCache & cache);
 };
 
 }

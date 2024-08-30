@@ -27,6 +27,7 @@ namespace zkutil
     using ZooKeeperPtr = std::shared_ptr<ZooKeeper>;
 }
 
+constexpr static auto HASH_COLLISION_MAP = "hash_collision_map";
 namespace DB
 {
 
@@ -122,7 +123,7 @@ public:
     /// Return information about secondary indexes size on disk for all indexes in part
     IndexSize getTotalSeconaryIndicesSize() const { return total_secondary_indices_size; }
 
-    virtual String getFileNameForColumn(const NameAndTypePair & column) const = 0;
+    virtual std::optional<String> getFileNameForColumn(const NameAndTypePair & column) const = 0;
 
     virtual ~IMergeTreeDataPart();
 
@@ -558,6 +559,46 @@ public:
 
     UniqueKeyIndexPtr loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool = nullptr, BucketIndexRangePtr bucket_range = nullptr);
 
+    static std::optional<String> getStreamNameOrHash(
+        const String & name, 
+        const IMergeTreeDataPart::Checksums & checksums);
+
+    std::optional<String> getStreamNameOrHash(
+        const String & name,
+        const String & extension) const;
+
+    std::optional<String> getStreamNameForColumn(
+        const String & column_name,
+        const ISerialization::SubstreamPath & substream_path,
+        const Checksums & checksums_) const;
+
+    std::optional<String> getStreamNameForColumn(
+        const NameAndTypePair & column,
+        const ISerialization::SubstreamPath & substream_path,
+        const Checksums & checksums_) const;
+
+    std::optional<String> getStreamNameForColumn(
+        const String & column_name,
+        const ISerialization::SubstreamPath & substream_path,
+        const String & extension) const;
+
+    std::optional<String> getStreamNameForColumn(
+        const NameAndTypePair & column,
+        const ISerialization::SubstreamPath & substream_path,
+        const String & extension) const;
+
+    struct CollisionHashMap : std::unordered_map<String, String>
+    {
+        void serializeBinary(WriteBuffer & ostr);
+        void deserializeBinary(ReadBuffer & istr);
+    };
+
+    using CollisionHashMapPtr = std::shared_ptr<CollisionHashMap>;
+
+    CollisionHashMapPtr getHashCollisionMap() const { return hash_collision_map; }
+
+    void setHashCollision(const String & column_name, const String & hash_name) const { hash_collision_map->insert({column_name, hash_name}); }
+
 protected:
 
     /// Total size of all columns, calculated once in calcuateColumnSizesOnDisk
@@ -584,6 +625,9 @@ protected:
     UniqueKeyBucketIndexPtr unique_key_bucket_index;
     UniqueDeleteBitmapPtr unique_delete_bitmap;
     UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
+
+    /// Map for Hash collision of file name conversion
+    mutable CollisionHashMapPtr hash_collision_map; 
 
     std::map<String, NamesAndTypesList> implicit_columns_maps;
     const Type part_type;
@@ -624,6 +668,8 @@ private:
     void loadUniqueDeleteBitmap();
 
     void loadUniqueKeyMinMaxIndex();
+
+    void loadHashCollisionMap();
 
     /// If checksums.txt exists, reads file's checksums (and sizes) from it
     void loadChecksums(bool require);

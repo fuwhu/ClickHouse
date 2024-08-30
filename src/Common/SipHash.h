@@ -19,6 +19,7 @@
 #include <type_traits>
 #include <Core/Defines.h>
 #include <base/extended_types.h>
+#include "Common/hex.h"
 
 
 #define ROTL(x, b) static_cast<UInt64>(((x) << (b)) | ((x) >> (64 - (b))))
@@ -199,6 +200,16 @@ inline UInt128 sipHash128(const char * data, const size_t size)
     UInt128 res;
     hash.get128(res);
     return res;
+}
+
+inline String sipHash128String(const char * data, const size_t size) 
+{
+    return getHexUIntLowercase(sipHash128(data, size));
+}
+
+inline String sipHash128String(const String & str)
+{
+    return sipHash128String(str.data(), str.size());
 }
 
 inline UInt64 sipHash64(const char * data, const size_t size)

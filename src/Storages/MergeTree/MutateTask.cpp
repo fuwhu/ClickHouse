@@ -310,9 +310,12 @@ NameSet collectFilesToSkip(
     {
         ISerialization::StreamCallback callback = [&](const ISerialization::SubstreamPath & substream_path)
         {
-            String stream_name = ISerialization::getFileNameForStream({entry.name, entry.type}, substream_path);
-            files_to_skip.insert(stream_name + ".bin");
-            files_to_skip.insert(stream_name + mrk_extension);
+            auto stream_name = source_part->getStreamNameForColumn({entry.name, entry.type}, substream_path, source_part->checksums);
+            if (!stream_name)
+                return;
+            
+            files_to_skip.insert(*stream_name + ".bin");
+            files_to_skip.insert(*stream_name + mrk_extension);
         };
 
         source_part->getSerialization({entry.name, entry.type})->enumerateStreams(callback);
@@ -344,7 +347,9 @@ static NameToNameVector collectFilesForRenames(
         source_part->getSerialization(column)->enumerateStreams(
             [&](const ISerialization::SubstreamPath & substream_path)
             {
-                ++stream_counts[ISerialization::getFileNameForStream(column, substream_path)];
+                auto stream_name = source_part->getStreamNameForColumn(column, substream_path, source_part->checksums);
+                if (stream_name)
+                    ++stream_counts[*stream_name];
             });
     }
 
@@ -374,12 +379,13 @@ static NameToNameVector collectFilesForRenames(
         {
             ISerialization::StreamCallback callback = [&](const ISerialization::SubstreamPath & substream_path)
             {
-                String stream_name = ISerialization::getFileNameForStream({command.column_name, command.data_type}, substream_path);
+                auto stream_name = source_part->getStreamNameForColumn(command.column_name, substream_path, source_part->checksums);
+                
                 /// Delete files if they are no longer shared with another column.
-                if (--stream_counts[stream_name] == 0)
+                if (stream_name && --stream_counts[*stream_name] == 0)
                 {
-                    rename_vector.emplace_back(stream_name + ".bin", "");
-                    rename_vector.emplace_back(stream_name + mrk_extension, "");
+                    rename_vector.emplace_back(*stream_name + ".bin", "");
+                    rename_vector.emplace_back(*stream_name + mrk_extension, "");
                 }
             };
 
@@ -394,14 +400,25 @@ static NameToNameVector collectFilesForRenames(
 
             ISerialization::StreamCallback callback = [&](const ISerialization::SubstreamPath & substream_path)
             {
-                String stream_from = ISerialization::getFileNameForStream({command.column_name, command.data_type}, substream_path);
+                String full_stream_from = ISerialization::getFileNameForStream({command.column_name, command.data_type}, substream_path);
+                String full_stream_to = boost::replace_first_copy(full_stream_from, escaped_name_from, escaped_name_to);
 
-                String stream_to = boost::replace_first_copy(stream_from, escaped_name_from, escaped_name_to);
+                auto stream_from = IMergeTreeDataPart::getStreamNameOrHash(full_stream_from, source_part->checksums);
+                if (!stream_from)
+                    return;
 
+                String stream_to;
+                auto storage_settings = source_part->storage.getSettings();
+
+                if (storage_settings->replace_long_file_name_to_hash && full_stream_to.size() > storage_settings->max_file_name_length)
+                    stream_to = sipHash128String(full_stream_to);
+                else
+                    stream_to = full_stream_to;
+                
                 if (stream_from != stream_to)
                 {
-                    rename_vector.emplace_back(stream_from + ".bin", stream_to + ".bin");
-                    rename_vector.emplace_back(stream_from + mrk_extension, stream_to + mrk_extension);
+                    rename_vector.emplace_back(*stream_from + ".bin", stream_to + ".bin");
+                    rename_vector.emplace_back(*stream_from + mrk_extension, stream_to + mrk_extension);
                 }
             };
 

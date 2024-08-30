@@ -10,6 +10,7 @@
 #include <Compression/CompressedReadBuffer.h>
 #include <IO/HashingReadBuffer.h>
 #include <Common/CurrentMetrics.h>
+#include "Storages/MergeTree/IMergeTreeDataPart.h"
 
 
 namespace CurrentMetrics
@@ -29,6 +30,7 @@ namespace ErrorCodes
     extern const int CANNOT_MUNMAP;
     extern const int CANNOT_MREMAP;
     extern const int UNEXPECTED_FILE_IN_DATA_PART;
+    extern const int NO_FILE_IN_DATA_PART;
 }
 
 
@@ -153,8 +155,12 @@ IMergeTreeDataPart::Checksums checkDataPart(
                     get_serialization(projection_column)->enumerateStreams(
                         [&](const ISerialization::SubstreamPath & substream_path)
                         {
-                            String projection_file_name = ISerialization::getFileNameForStream(projection_column, substream_path) + ".bin";
-                            projection_checksums_data.files[projection_file_name] = checksum_compressed_file(disk, projection_path + projection_file_name);
+                            auto projection_file_name = data_part->getStreamNameForColumn(projection_column, substream_path, ".bin");
+                            
+                            if (!projection_file_name)
+                                return;
+
+                            projection_checksums_data.files[*projection_file_name + ".bin"] = checksum_compressed_file(disk, projection_path + *projection_file_name + ".bin");
                         });
                 }
             }
@@ -224,7 +230,14 @@ IMergeTreeDataPart::Checksums checkDataPart(
         {
             get_serialization(column)->enumerateStreams([&](const ISerialization::SubstreamPath & substream_path)
             {
-                String file_name = ISerialization::getFileNameForStream(column, substream_path) + ".bin";
+                auto stream_name = data_part->getStreamNameForColumn(column, substream_path, ".bin");
+                
+                if (!stream_name)
+                    throw Exception(ErrorCodes::NO_FILE_IN_DATA_PART,
+                        "There is no file for column '{}' in data part '{}'",
+                        column.name, data_part->name);
+                
+                auto file_name = *stream_name + ".bin";
                 checksums_data.files[file_name] = checksum_compressed_file(disk, path + file_name);
             });
         }

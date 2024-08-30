@@ -29,14 +29,14 @@ public:
 
     void write(const Block & block, const IColumn::Permutation * permutation) override;
 
-    void fillChecksums(IMergeTreeDataPart::Checksums & checksums) final;
+    void fillChecksums(IMergeTreeDataPart::Checksums & checksums, NameSet & checksums_to_remove) final;
 
     void finish(bool sync) final;
 
 private:
     /// Finish serialization of data: write final mark if required and compute checksums
     /// Also validate written data in debug mode
-    void fillDataChecksums(IMergeTreeDataPart::Checksums & checksums);
+    void fillDataChecksums(IMergeTreeDataPart::Checksums & checksums, NameSet & checksums_to_remove);
     void finishDataSerialization(bool sync);
 
     /// Write data of one column.
@@ -84,6 +84,12 @@ private:
         const NameAndTypePair & column,
         const ASTPtr & effective_codec_desc);
 
+    void initHashCollisionMapStream();
+
+    void fillHashCollisionMapCheckSums(MergeTreeData::DataPart::Checksums & checksums);
+
+    void finishHashCollisionMapSerialization(bool sync);
+
     /// Method for self check (used in debug-build only). Checks that written
     /// data and corresponding marks are consistent. Otherwise throws logical
     /// errors.
@@ -104,6 +110,7 @@ private:
     void adjustLastMarkIfNeedAndFlushToDisk(size_t new_rows_in_last_mark);
 
     ISerialization::OutputStreamGetter createStreamGetter(const NameAndTypePair & column, WrittenOffsetColumns & offset_columns) const;
+    const String & getStreamName(const NameAndTypePair & column, const ISerialization::SubstreamPath & substream_path) const;
 
     using SerializationState = ISerialization::SerializeBinaryBulkStatePtr;
     using SerializationStates = std::unordered_map<String, SerializationState>;
@@ -112,6 +119,15 @@ private:
 
     using ColumnStreams = std::map<String, StreamPtr>;
     ColumnStreams column_streams;
+
+    /// Some long column names may be replaced to hashes.
+    /// Below are mapping from original stream name to actual
+    /// stream name (probably hash of the stream) and vice versa.
+    std::unordered_map<String, String> full_name_to_stream_name;
+    std::unordered_map<String, String> stream_name_to_full_name;
+
+    std::unique_ptr<WriteBufferFromFileBase> hash_collision_map_file_stream;
+    std::unique_ptr<HashingWriteBuffer> hash_collision_map_stream;
 
     /// Non written marks to disk (for each column). Waiting until all rows for
     /// this marks will be written to disk.

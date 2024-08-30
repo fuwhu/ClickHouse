@@ -5,6 +5,7 @@
 #include <Compression/CompressionFactory.h>
 #include <Compression/CompressedReadBufferFromFile.h>
 #include <DataTypes/Serializations/ISerialization.h>
+#include <Common/SipHash.h>
 #include <Common/escapeForFileName.h>
 #include "Storages/IndicesDescription.h"
 #include <Columns/ColumnSparse.h>
@@ -15,6 +16,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
+    extern const int INCORRECT_FILE_NAME;
 }
 
 namespace
@@ -88,6 +90,17 @@ MergeTreeDataPartWriterWide::MergeTreeDataPartWriterWide(
     const auto & columns = metadata_snapshot->getColumns();
     for (const auto & it : columns_list)
         addStreams(it, columns.getCodecDescOrDefault(it.name, default_codec));
+    
+    if (!data_part_->getHashCollisionMap()->empty())
+        initHashCollisionMapStream();
+}
+
+void MergeTreeDataPartWriterWide::initHashCollisionMapStream()
+{
+    const auto & disk = data_part->volume->getDisk();
+    String path = data_part->getFullRelativePath();
+    hash_collision_map_file_stream = disk->writeFile(path + HASH_COLLISION_MAP, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Rewrite);
+    hash_collision_map_stream = std::make_unique<HashingWriteBuffer>(*hash_collision_map_file_stream);    
 }
 
 void MergeTreeDataPartWriterWide::addStreams(
@@ -97,7 +110,30 @@ void MergeTreeDataPartWriterWide::addStreams(
     ISerialization::StreamCallback callback = [&](const auto & substream_path)
     {
         assert(!substream_path.empty());
-        String stream_name = ISerialization::getFileNameForStream(column, substream_path);
+        
+        auto storage_settings = storage.getSettings();
+        auto full_stream_name = ISerialization::getFileNameForStream(column, substream_path);
+
+        String stream_name;
+        if (storage_settings->replace_long_file_name_to_hash && full_stream_name.size() > storage_settings->max_file_name_length)
+            stream_name = sipHash128String(full_stream_name);
+        else
+            stream_name = full_stream_name;
+
+        auto it = stream_name_to_full_name.find(stream_name);
+        bool has_collision = false;
+        if (it != stream_name_to_full_name.end() && it->second != full_stream_name)
+            has_collision = true;
+        
+        if (has_collision)
+        {
+            while (it != stream_name_to_full_name.end() && it->second != full_stream_name)
+            {
+                stream_name = sipHash128String(stream_name);
+                it = stream_name_to_full_name.find(stream_name);
+            }
+            data_part->setHashCollision(full_stream_name, stream_name);
+        }
 
         /// Shared offsets for Nested type.
         if (column_streams.count(stream_name))
@@ -119,10 +155,21 @@ void MergeTreeDataPartWriterWide::addStreams(
             part_path + stream_name, marks_file_extension,
             compression_codec,
             settings.max_compress_block_size);
+
+        full_name_to_stream_name.emplace(full_stream_name, stream_name);
+        stream_name_to_full_name.emplace(stream_name, full_stream_name);
     };
 
     ISerialization::SubstreamPath path;
     data_part->getSerialization(column)->enumerateStreams(path, callback, column.type);
+}
+
+const String & MergeTreeDataPartWriterWide::getStreamName(
+    const NameAndTypePair & column,
+    const ISerialization::SubstreamPath & substream_path) const
+{
+    auto full_stream_name = ISerialization::getFileNameForStream(column, substream_path);
+    return full_name_to_stream_name.at(full_stream_name);
 }
 
 
@@ -133,7 +180,7 @@ ISerialization::OutputStreamGetter MergeTreeDataPartWriterWide::createStreamGett
     {
         bool is_offsets = !substream_path.empty() && substream_path.back().type == ISerialization::Substream::ArraySizes;
 
-        String stream_name = ISerialization::getFileNameForStream(column, substream_path);
+        auto stream_name = getStreamName(column, substream_path);
 
         /// Don't write offsets more than one time for Nested type.
         if (is_offsets && offset_columns.count(stream_name))
@@ -282,6 +329,9 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumn::Perm
     if (unique_key_version_block)
         calculateUniqueData(unique_key_version_block, granules_to_write);
 
+    if (!data_part->getHashCollisionMap()->empty())
+        data_part->getHashCollisionMap()->serializeBinary(*hash_collision_map_stream);
+
     calculateAndSerializeSkipIndices(skip_indexes_block, granules_to_write);
 
     shiftCurrentMark(granules_to_write);
@@ -317,7 +367,7 @@ StreamsWithMarks MergeTreeDataPartWriterWide::getCurrentMarksForColumn(
     {
         bool is_offsets = !substream_path.empty() && substream_path.back().type == ISerialization::Substream::ArraySizes;
 
-        String stream_name = ISerialization::getFileNameForStream(column, substream_path);
+        auto stream_name = getStreamName(column, substream_path);
 
         /// Don't write offsets more than one time for Nested type.
         if (is_offsets && offset_columns.count(stream_name))
@@ -356,13 +406,13 @@ void MergeTreeDataPartWriterWide::writeSingleGranule(
     {
         bool is_offsets = !substream_path.empty() && substream_path.back().type == ISerialization::Substream::ArraySizes;
 
-        String stream_name = ISerialization::getFileNameForStream(name_and_type, substream_path);
+        auto stream_name = getStreamName(name_and_type, substream_path);
 
         /// Don't write offsets more than one time for Nested type.
         if (is_offsets && offset_columns.count(stream_name))
             return;
 
-        column_streams[stream_name]->compressed.nextIfAtEnd();
+        column_streams.at(stream_name)->compressed.nextIfAtEnd();
     }, serialize_settings.path);
 }
 
@@ -429,10 +479,8 @@ void MergeTreeDataPartWriterWide::writeColumn(
     {
         bool is_offsets = !substream_path.empty() && substream_path.back().type == ISerialization::Substream::ArraySizes;
         if (is_offsets)
-        {
-            String stream_name = ISerialization::getFileNameForStream(name_and_type, substream_path);
-            offset_columns.insert(stream_name);
-        }
+            offset_columns.insert(getStreamName(name_and_type, substream_path));
+        
     }, serialize_settings.path);
 }
 
@@ -557,7 +605,29 @@ void MergeTreeDataPartWriterWide::validateColumnOfFixedSize(const NameAndTypePai
 
 }
 
-void MergeTreeDataPartWriterWide::fillDataChecksums(IMergeTreeDataPart::Checksums & checksums)
+void MergeTreeDataPartWriterWide::fillHashCollisionMapCheckSums(MergeTreeData::DataPart::Checksums & checksums)
+{
+    if (hash_collision_map_stream)
+    {
+        hash_collision_map_stream->next();
+        checksums.files[HASH_COLLISION_MAP].file_size = hash_collision_map_stream->count();
+        checksums.files[HASH_COLLISION_MAP].file_hash = hash_collision_map_stream->getHash();
+        hash_collision_map_file_stream->preFinalize();
+    }
+}
+
+void MergeTreeDataPartWriterWide::finishHashCollisionMapSerialization(bool sync)
+{
+    if (hash_collision_map_stream)
+    {
+        hash_collision_map_file_stream->finalize();
+        if (sync)
+            hash_collision_map_file_stream->sync();
+        hash_collision_map_stream = nullptr;
+    }
+}
+
+void MergeTreeDataPartWriterWide::fillDataChecksums(IMergeTreeDataPart::Checksums & checksums, NameSet & checksums_to_remove)
 {
     const auto & global_settings = storage.getContext()->getSettingsRef();
     ISerialization::SerializeBinaryBulkSettings serialize_settings;
@@ -591,10 +661,19 @@ void MergeTreeDataPartWriterWide::fillDataChecksums(IMergeTreeDataPart::Checksum
         }
     }
 
-    for (auto & stream : column_streams)
+    for (auto & [stream_name, stream] : column_streams)
     {
-        stream.second->preFinalize();
-        stream.second->addToChecksums(checksums);
+        /// some hash collision checksums would be removed below, so don't remove them.
+        /// Remove checksums for old stream name if file was
+        /// renamed due to replacing the name to the hash of name.
+        const auto & full_stream_name = stream_name_to_full_name.at(stream_name);
+        if (stream_name != full_stream_name && !column_streams.contains(full_stream_name))
+        {
+            checksums_to_remove.insert(full_stream_name + stream->data_file_extension);
+            checksums_to_remove.insert(full_stream_name + stream->marks_file_extension);
+        }
+        stream->preFinalize();
+        stream->addToChecksums(checksums);
     }
 }
 
@@ -626,17 +705,20 @@ void MergeTreeDataPartWriterWide::finishDataSerialization(bool sync)
 
 }
 
-void MergeTreeDataPartWriterWide::fillChecksums(IMergeTreeDataPart::Checksums & checksums)
+void MergeTreeDataPartWriterWide::fillChecksums(IMergeTreeDataPart::Checksums & checksums, NameSet & checksums_to_remove)
 {
     // If we don't have anything to write, skip finalization.
     if (!columns_list.empty())
-        fillDataChecksums(checksums);
+        fillDataChecksums(checksums, checksums_to_remove);
 
     if (settings.rewrite_primary_key)
         fillPrimaryIndexChecksums(checksums);
 
     if (settings.rewrite_unique_key)
         fillUniqueDataChecksums(checksums);
+    
+    if (!data_part->getHashCollisionMap()->empty())
+        fillHashCollisionMapCheckSums(checksums);
 
     fillSkipIndicesChecksums(checksums);
 }
@@ -653,6 +735,9 @@ void MergeTreeDataPartWriterWide::finish(bool sync)
     if (settings.rewrite_unique_key)
         finishUniqueDataSerialization(sync);
 
+    if (!data_part->getHashCollisionMap()->empty())
+        finishHashCollisionMapSerialization(sync);
+
     finishSkipIndicesSerialization(sync);
 }
 
@@ -667,10 +752,8 @@ void MergeTreeDataPartWriterWide::writeFinalMark(
     {
         bool is_offsets = !substream_path.empty() && substream_path.back().type == ISerialization::Substream::ArraySizes;
         if (is_offsets)
-        {
-            String stream_name = ISerialization::getFileNameForStream(column, substream_path);
-            offset_columns.insert(stream_name);
-        }
+            offset_columns.insert(getStreamName(column, substream_path));
+
     }, path);
 }
 

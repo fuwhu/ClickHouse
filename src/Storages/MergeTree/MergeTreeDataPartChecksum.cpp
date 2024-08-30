@@ -59,40 +59,32 @@ void MergeTreeDataPartChecksum::checkSize(const DiskPtr & disk, const String & p
 
 void MergeTreeDataPartChecksums::checkEqual(const MergeTreeDataPartChecksums & rhs, bool have_uncompressed) const
 {
-    for (const auto & it : rhs.files)
-    {
-        const String & name = it.first;
-
+    for (const auto & [name, _] : rhs.files)
         if (!files.count(name))
             throw Exception("Unexpected file " + name + " in data part", ErrorCodes::UNEXPECTED_FILE_IN_DATA_PART);
-    }
+    
 
-    for (const auto & it : files)
+    for (const auto & [name, checksum] : files)
     {
-        const String & name = it.first;
-
-        auto jt = rhs.files.find(name);
-        if (jt == rhs.files.end())
+        auto it = rhs.files.find(name);
+        if (it == rhs.files.end())
             throw Exception("No file " + name + " in data part", ErrorCodes::NO_FILE_IN_DATA_PART);
 
-        it.second.checkEqual(jt->second, have_uncompressed, name);
+        checksum.checkEqual(it->second, have_uncompressed, name);
     }
 }
 
 void MergeTreeDataPartChecksums::checkSizes(const DiskPtr & disk, const String & path) const
 {
-    for (const auto & it : files)
-    {
-        const String & name = it.first;
-        it.second.checkSize(disk, path + name);
-    }
+    for (const auto & [name, checksum] : files)
+        checksum.checkSize(disk, path + name);
 }
 
 UInt64 MergeTreeDataPartChecksums::getTotalSizeOnDisk() const
 {
     UInt64 res = 0;
-    for (const auto & it : files)
-        res += it.second.file_size;
+    for (const auto & [_, checksum] : files)
+        res += checksum.file_size;
     return res;
 }
 
@@ -206,11 +198,8 @@ void MergeTreeDataPartChecksums::write(WriteBuffer & to) const
 
     writeVarUInt(files.size(), out);
 
-    for (const auto & it : files)
+    for (const auto & [name, sum] : files)
     {
-        const String & name = it.first;
-        const Checksum & sum = it.second;
-
         writeBinary(name, out);
         writeVarUInt(sum.file_size, out);
         writePODBinary(sum.file_hash, out);
@@ -243,11 +232,8 @@ void MergeTreeDataPartChecksums::add(MergeTreeDataPartChecksums && rhs_checksums
 void MergeTreeDataPartChecksums::computeTotalChecksumDataOnly(SipHash & hash) const
 {
     /// We use fact that iteration is in deterministic (lexicographical) order.
-    for (const auto & it : files)
+    for (const auto & [name, sum] : files)
     {
-        const String & name = it.first;
-        const Checksum & sum = it.second;
-
         if (!endsWith(name, ".bin"))
             continue;
 

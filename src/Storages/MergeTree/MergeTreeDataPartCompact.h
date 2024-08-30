@@ -60,7 +60,7 @@ public:
 
     bool hasColumnFiles(const NameAndTypePair & column) const override;
 
-    String getFileNameForColumn(const NameAndTypePair & /* column */) const override { return DATA_FILE_NAME; }
+    std::optional<String> getFileNameForColumn(const NameAndTypePair & /* column */) const override { return DATA_FILE_NAME; }
 
     ~MergeTreeDataPartCompact() override;
 
