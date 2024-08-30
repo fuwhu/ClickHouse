@@ -54,7 +54,7 @@ public:
 
     bool supportsVerticalMerge() const override { return true; }
 
-    String getFileNameForColumn(const NameAndTypePair & column) const override;
+    std::optional<String> getFileNameForColumn(const NameAndTypePair & column) const override;
 
     ~MergeTreeDataPartWide() override;
 

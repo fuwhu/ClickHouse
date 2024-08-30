@@ -1271,6 +1271,9 @@ private:
     virtual std::optional<ZeroCopyLock> tryCreateZeroCopyExclusiveLock(const String &, const DiskPtr &) { return std::nullopt; }
 
     TemporaryParts temporary_parts;
+
+    void checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata, bool throw_on_error) const;
+    void checkColumnFilenamesForCollision(const ColumnsDescription & columns, const MergeTreeSettings & settings, bool throw_on_error) const;
 };
 
 /// RAII struct to record big parts that are submerging or emerging.

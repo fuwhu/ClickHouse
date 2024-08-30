@@ -11,12 +11,16 @@
 #include <Storages/MergeTree/localBackup.h>
 #include <Storages/MergeTree/checkDataPart.h>
 #include <Storages/StorageReplicatedMergeTree.h>
+#include "Common/SipHash.h"
 #include <Common/StringUtils/StringUtils.h>
 #include <Common/escapeForFileName.h>
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Common/CurrentMetrics.h>
 #include <Common/FieldVisitorsAccurateComparison.h>
 #include <Common/MemoryTrackerBlockerInThread.h>
+#include "Core/NamesAndTypes.h"
+#include "DataTypes/Serializations/ISerialization.h"
+#include "Storages/SelectQueryInfo.h"
 #include <base/JSON.h>
 #include <base/logger_useful.h>
 #include <Compression/getCompressionCodecForFile.h>
@@ -306,6 +310,7 @@ IMergeTreeDataPart::IMergeTreeDataPart(
     incrementTypeMetric(part_type);
 
     minmax_idx = std::make_shared<MinMaxIndex>();
+    hash_collision_map = std::make_shared<CollisionHashMap>();
 }
 
 IMergeTreeDataPart::IMergeTreeDataPart(
@@ -331,6 +336,7 @@ IMergeTreeDataPart::IMergeTreeDataPart(
     incrementTypeMetric(part_type);
 
     minmax_idx = std::make_shared<MinMaxIndex>();
+    hash_collision_map = std::make_shared<CollisionHashMap>();
 }
 
 IMergeTreeDataPart::~IMergeTreeDataPart()
@@ -667,6 +673,7 @@ void IMergeTreeDataPart::loadColumnsChecksumsIndexes(bool require_columns_checks
         checkConsistency(require_columns_checksums);
 
     loadDefaultCompressionCodec();
+    loadHashCollisionMap();
 }
 
 void IMergeTreeDataPart::loadProjections(bool require_columns_checksums, bool check_consistency)
@@ -834,11 +841,15 @@ CompressionCodecPtr IMergeTreeDataPart::detectDefaultCompressionCodec() const
             {
                 if (path_to_data_file.empty())
                 {
-                    String candidate_path = fs::path(getFullRelativePath()) / (ISerialization::getFileNameForStream(part_column, substream_path) + ".bin");
+                    auto stream_name = getStreamNameForColumn(part_column, substream_path, ".bin");
+                    if (!stream_name)
+                        return;
+                    
+                    auto file_name = *stream_name + ".bin";
 
                     /// We can have existing, but empty .bin files. Example: LowCardinality(Nullable(...)) columns and column_name.dict.null.bin file.
-                    if (volume->getDisk()->exists(candidate_path) && volume->getDisk()->getFileSize(candidate_path) != 0)
-                        path_to_data_file = candidate_path;
+                    if (volume->getDisk()->getFileSize(file_name) != 0)
+                        path_to_data_file = file_name;
                 }
             });
 
@@ -1226,6 +1237,16 @@ void IMergeTreeDataPart::loadUniqueKeyMinMaxIndex()
     }
 }
 
+void IMergeTreeDataPart::loadHashCollisionMap()
+{
+    String path = fs::path(getFullRelativePath()) / HASH_COLLISION_MAP;
+    if (volume->getDisk()->exists(path))
+    {
+        const auto & disk = volume->getDisk();
+        hash_collision_map->deserializeBinary(*disk->readFile(path));
+    }   
+}
+
 void IMergeTreeDataPart::loadColumns(bool require)
 {
     String path = fs::path(getFullRelativePath()) / "columns.txt";
@@ -1243,7 +1264,7 @@ void IMergeTreeDataPart::loadColumns(bool require)
 
         /// If there is no file with a list of columns, write it down.
         for (const NameAndTypePair & column : metadata_snapshot->getColumns().getAllPhysical())
-            if (volume->getDisk()->exists(fs::path(getFullRelativePath()) / (getFileNameForColumn(column) + ".bin")))
+            if (getFileNameForColumn(column))
                 loaded_columns.push_back(column);
 
         if (columns.empty())
@@ -1931,6 +1952,125 @@ String IMergeTreeDataPart::getZeroLevelPartBlockID(std::string_view token) const
     hash.get128(hash_value.bytes);
 
     return info.partition_id + "_" + toString(hash_value.words[0]) + "_" + toString(hash_value.words[1]);
+}
+
+void IMergeTreeDataPart::CollisionHashMap::serializeBinary(WriteBuffer & ostr)
+{
+    size_t map_size = size();
+    DB::writeBinary(map_size, ostr);
+
+    for (const auto & it : *this)
+    {
+        writeStringBinary(it.first, ostr);
+        writeStringBinary(it.second, ostr);
+    }
+}
+
+void IMergeTreeDataPart::CollisionHashMap::deserializeBinary(ReadBuffer &istr)
+{
+    size_t map_size;
+    DB::readBinary(map_size, istr);
+
+    for (size_t i = 0; i < map_size; ++i)
+    {
+        String key;
+        String value;
+
+        readStringBinary(key, istr);
+        readStringBinary(value, istr);
+
+        insert({key, value});
+    }
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameOrHash(
+    const String & stream_name,
+    const Checksums & checksums_)
+{
+    if (checksums_.files.contains(stream_name + ".bin"))
+        return stream_name;
+    
+    auto hash = sipHash128String(stream_name);
+    if (checksums_.files.contains(hash + ".bin"))
+        return hash;
+
+    return {};
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameOrHash(
+    const String & stream_name,
+    const String & extension) const
+{
+    String stream_path = fs::path(getFullRelativePath()) / (stream_name + extension);
+    if (volume->getDisk()->exists(stream_path))
+        return stream_name;
+
+    auto hash = sipHash128String(stream_name);
+    String hash_path = fs::path(getFullRelativePath()) / (hash + extension);
+    if (volume->getDisk()->exists(hash_path))
+        return hash;
+
+    return {};
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
+    const String & column_name,
+    const ISerialization::SubstreamPath & substream_path,
+    const Checksums & checksums_) const
+{
+    const auto & collision_map = getHashCollisionMap();
+    String full_stream_name = ISerialization::getFileNameForStream(column_name, substream_path);
+    std::optional<String> stream_name;
+    if (!collision_map->empty() && collision_map->contains(full_stream_name))
+        stream_name = collision_map->at(full_stream_name);
+    else
+        stream_name = IMergeTreeDataPart::getStreamNameOrHash(full_stream_name, checksums_);
+    return stream_name;
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
+    const NameAndTypePair & column,
+    const ISerialization::SubstreamPath & substream_path,
+    const Checksums & checksums_) const
+{
+    const auto & collision_map = getHashCollisionMap();
+    String full_stream_name = ISerialization::getFileNameForStream(column, substream_path);
+    std::optional<String> stream_name;
+    if (!collision_map->empty() && collision_map->contains(full_stream_name))
+        stream_name = collision_map->at(full_stream_name);
+    else
+        stream_name = getStreamNameOrHash(full_stream_name, checksums_);
+    return stream_name;
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
+    const String & column_name,
+    const ISerialization::SubstreamPath & substream_path,
+    const String & extension) const
+{
+    const auto & collision_map = getHashCollisionMap();
+    String full_stream_name = ISerialization::getFileNameForStream(column_name, substream_path);
+    std::optional<String> stream_name;
+    if (!collision_map->empty() && collision_map->contains(full_stream_name))
+        stream_name = collision_map->at(full_stream_name);
+    else
+        stream_name = getStreamNameOrHash(full_stream_name, extension);
+    return stream_name;
+}
+
+std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
+    const NameAndTypePair & column,
+    const ISerialization::SubstreamPath & substream_path,
+    const String & extension) const
+{
+    const auto & collision_map = getHashCollisionMap();
+    String full_stream_name = ISerialization::getFileNameForStream(column, substream_path);
+    std::optional<String> stream_name;
+    if (!collision_map->empty() && collision_map->contains(full_stream_name))
+        stream_name = collision_map->at(full_stream_name);
+    else
+        stream_name = getStreamNameOrHash(full_stream_name, extension);
+    return stream_name;
 }
 
 UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(

@@ -1,6 +1,7 @@
 #include <Storages/MergeTree/IMergedBlockOutputStream.h>
 #include <Storages/MergeTree/MergeTreeIOSettings.h>
 #include <Storages/MergeTree/IMergeTreeDataPartWriter.h>
+#include "Storages/MergeTree/IMergeTreeDataPart.h"
 
 namespace DB
 {
@@ -48,7 +49,9 @@ NameSet IMergedBlockOutputStream::removeEmptyColumnsFromPart(
         data_part->getSerialization(column)->enumerateStreams(
             [&](const ISerialization::SubstreamPath & substream_path)
             {
-                ++stream_counts[ISerialization::getFileNameForStream(column, substream_path)];
+                auto stream_name = data_part->getStreamNameForColumn(column, substream_path, checksums);
+                if (stream_name)
+                    ++stream_counts[*stream_name];
             });
     }
 
@@ -62,12 +65,13 @@ NameSet IMergedBlockOutputStream::removeEmptyColumnsFromPart(
 
         ISerialization::StreamCallback callback = [&](const ISerialization::SubstreamPath & substream_path)
         {
-            String stream_name = ISerialization::getFileNameForStream(*column_with_type, substream_path);
+            auto stream_name = data_part->getStreamNameForColumn(column_name, substream_path, checksums);
+            
             /// Delete files if they are no longer shared with another column.
-            if (--stream_counts[stream_name] == 0)
+            if (stream_name && --stream_counts[*stream_name] == 0)
             {
-                remove_files.emplace(stream_name + ".bin");
-                remove_files.emplace(stream_name + mrk_extension);
+                remove_files.emplace(*stream_name + ".bin");
+                remove_files.emplace(*stream_name + mrk_extension);
             }
         };
 
@@ -80,12 +84,13 @@ NameSet IMergedBlockOutputStream::removeEmptyColumnsFromPart(
             {
                 ISerialization::StreamCallback implicit_callback = [&](const ISerialization::SubstreamPath & substream_path)
                 {
-                    String stream_name = ISerialization::getFileNameForStream(implicit_column, substream_path);
+                    auto stream_name = data_part->getStreamNameForColumn(implicit_column, substream_path, checksums);   
+                
                     /// Delete files if they are no longer shared with another column.
-                    if (--stream_counts[stream_name] == 0)
+                    if (stream_name && --stream_counts[*stream_name] == 0)
                     {
-                        remove_files.emplace(stream_name + ".bin");
-                        remove_files.emplace(stream_name + mrk_extension);
+                        remove_files.emplace(*stream_name + ".bin");
+                        remove_files.emplace(*stream_name + mrk_extension);
                     }
                 };
 

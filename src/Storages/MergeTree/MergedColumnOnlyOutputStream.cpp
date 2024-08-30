@@ -61,7 +61,11 @@ MergedColumnOnlyOutputStream::fillChecksums(
 {
     /// Finish columns serialization.
     MergeTreeData::DataPart::Checksums checksums;
-    writer->fillChecksums(checksums);
+    NameSet checksums_to_remove;
+    writer->fillChecksums(checksums, checksums_to_remove);
+
+    for (const auto & filename : checksums_to_remove)
+        all_checksums.files.erase(filename);
 
     for (const auto & [projection_name, projection_part] : new_part->getProjectionParts())
         checksums.addFile(
@@ -82,9 +86,8 @@ MergedColumnOnlyOutputStream::fillChecksums(
         /// Can be called multiple times, don't need to remove file twice
         if (disk->exists(file_path))
             disk->removeFile(file_path);
-
-        if (all_checksums.files.count(removed_file))
-            all_checksums.files.erase(removed_file);
+    
+        all_checksums.files.erase(removed_file);
     }
 
     new_part->setColumns(columns);
