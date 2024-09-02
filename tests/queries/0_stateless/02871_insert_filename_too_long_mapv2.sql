@@ -23,6 +23,6 @@ ALTER TABLE test_mapv2 ADD COLUMN test_col UInt32;
 
 ALTER TABLE test_mapv2 RENAME COLUMN test_col TO f8fc46b1b59c6e8a8fb40c5951717f83;
 
-ALTER TABLE test_mapv2 ADD COLUMN f8fc46b1b59c6e8a8fb40c5951717f83 UInt32; -- { serverError BAD_ARGUMENTS }
+ALTER TABLE test_mapv2 ADD COLUMN f8fc46b1b59c6e8a8fb40c5951717f83 UInt32; -- { serverError 15 }
 
 DROP TABLE test_mapv2;
