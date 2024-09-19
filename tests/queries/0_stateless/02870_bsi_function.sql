@@ -15,12 +15,13 @@ SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_functions ORDER BY i
 SELECT arrayMap(x->bitmapToArray(x), bsi_add_agg(bsi)) FROM test_bsi_functions;
 DROP TABLE IF EXISTS test_bsi_functions;
 
+SELECT '==========================';
 
-DROP TABLE IF EXISTS test_bsi_merge_functions;
-CREATE TABLE test_bsi_merge_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY tuple();
+DROP TABLE IF EXISTS test_bsi_agg_functions;
+CREATE TABLE test_bsi_agg_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY tuple();
 
 
-INSERT INTO test_bsi_merge_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+INSERT INTO test_bsi_agg_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
 (
     select 1 as u_id, 2 as gmv
     union all
@@ -29,16 +30,47 @@ INSERT INTO test_bsi_merge_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
     select 2 as u_id, 10 as gmv
 );
 
-INSERT INTO test_bsi_merge_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+INSERT INTO test_bsi_agg_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
 (
     select 1 as u_id, 2 as gmv
     union all
     select 2 as u_id, 10 as gmv
 );
 
-SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_merge_functions ORDER BY id;
-SELECT arrayMap(x->bitmapToArray(x), bsi_add_agg(bsi)) FROM test_bsi_merge_functions;
-SELECT bsi_sum(agg) from (select bsi_add_agg(bsi) as agg from test_bsi_merge_functions);
-SELECT arrayMap(x->bitmapToArray(x), bsi_merge_agg(bsi)) FROM test_bsi_merge_functions;
-SELECT bsi_sum(agg) from (select bsi_merge_agg(bsi) as agg from test_bsi_merge_functions);
-DROP TABLE IF EXISTS test_bsi_merge_functions;
+SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_agg_functions ORDER BY id;
+SELECT arrayMap(x->bitmapToArray(x), bsi_add_agg(bsi)) FROM test_bsi_agg_functions;
+SELECT bsi_sum(agg) from (select bsi_add_agg(bsi) as agg from test_bsi_agg_functions);
+SELECT arrayMap(x->bitmapToArray(x), bsi_merge_agg(bsi)) FROM test_bsi_agg_functions;
+SELECT bsi_sum(agg) from (select bsi_merge_agg(bsi) as agg from test_bsi_agg_functions);
+DROP TABLE IF EXISTS test_bsi_agg_functions;
+
+SELECT '==========================';
+
+DROP TABLE IF EXISTS test_bsi_zero_metric_functions;
+CREATE TABLE test_bsi_zero_metric_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY tuple();
+
+
+INSERT INTO test_bsi_zero_metric_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+(
+    select 1 as u_id, 0 as gmv
+    union all
+    select 3 as u_id, 0 as gmv
+    union all
+    select 2 as u_id, 0 as gmv
+);
+
+INSERT INTO test_bsi_zero_metric_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+(
+    select 1 as u_id, 0 as gmv
+    union all
+    select 2 as u_id, 0 as gmv
+    union all
+    select 5 as u_id, 0 as gmv
+);
+
+SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_zero_metric_functions ORDER BY id;
+SELECT arrayMap(x->bitmapToArray(x), bsi_add_agg(bsi)) FROM test_bsi_zero_metric_functions;
+SELECT bsi_sum(agg) from (select bsi_add_agg(bsi) as agg from test_bsi_zero_metric_functions);
+SELECT arrayMap(x->bitmapToArray(x), bsi_merge_agg(bsi)) FROM test_bsi_zero_metric_functions;
+SELECT bsi_sum(agg) from (select bsi_merge_agg(bsi) as agg from test_bsi_zero_metric_functions);
+DROP TABLE IF EXISTS test_bsi_zero_metric_functions;
