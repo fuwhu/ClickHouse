@@ -4,6 +4,7 @@
 #include <memory>
 #include <utility>
 #include <Poco/Logger.h>
+#include "AggregateFunctions/AggregateFunctionBsiCommon.h"
 #include "DataTypes/DataTypeCustom.h"
 #include "DataTypes/DataTypeCustomBSI.h"
 #include "DataTypes/DataTypeFactory.h"
@@ -30,340 +31,10 @@
 namespace DB
 {
 
-struct AggregateFunctionBsiAddAggData
-{
-    std::vector<AggregateFunctionGroupBitmapData<UInt64>> bsi_slices;
-    int max_number = -1;
-
-    AggregateFunctionBsiAddAggData() : bsi_slices(65) {}
-
-    void add(const DB::ColumnAggregateFunction::Container & data, const size_t & start, const size_t & rhs_size)
-    {
-        AggregateFunctionGroupBitmapData<UInt64> & not_null_rb = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start]);
-
-        if (!bsi_slices[0].rbs.rb_and_cardinality(not_null_rb.rbs))
-        {
-            doMergeOperation(data, start, rhs_size);
-        }
-        else   
-        {
-            bsi_slices[0].rbs.rb_or(not_null_rb.rbs);
-            int max_slice_number = max_number;
-            int rhs_max_slice_number = -1;
-
-            if (max_slice_number == -1)
-            {
-                for (int i = bsi_slices.size() - 1; i >= 1; --i)
-                {
-                    if (bsi_slices[i].rbs.size())
-                    {
-                        max_slice_number = i;
-                        break;
-                    }
-                }
-            }
-            
-
-            for (int i = rhs_size - 1; i >= 1; --i)
-            {
-                AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-
-                if (rhs_bsi_slice.rbs.size())
-                {
-                    rhs_max_slice_number = i;
-                    break;
-                }
-            }
-            if (max_slice_number == -1)
-                max_slice_number = 0;
-            if (rhs_max_slice_number == -1)
-                rhs_max_slice_number = 0;
-
-            size_t new_slice_number = std::max(max_slice_number, rhs_max_slice_number) + 1;
-            AggregateFunctionGroupBitmapData<UInt64> bitmap_carry_out;
-
-            for (int i = 1; i <= std::min(max_slice_number, rhs_max_slice_number); ++i)
-            {
-                AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-
-                AggregateFunctionGroupBitmapData<UInt64> tmp1;
-                tmp1.rbs.rb_or(bsi_slices[i].rbs);
-                bsi_slices[i].rbs.rb_xor(rhs_bsi_slice.rbs);
-                bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                AggregateFunctionGroupBitmapData<UInt64> tmp2;
-                AggregateFunctionGroupBitmapData<UInt64> tmp3;
-            
-
-                tmp2.rbs.rb_or(tmp1.rbs);
-                tmp2.rbs.rb_and(rhs_bsi_slice.rbs);
-
-                tmp3.rbs.rb_or(bitmap_carry_out.rbs);
-                tmp3.rbs.rb_and(tmp1.rbs);
-
-                bitmap_carry_out.rbs.rb_and(rhs_bsi_slice.rbs);
-                bitmap_carry_out.rbs.rb_or(tmp3.rbs);
-                bitmap_carry_out.rbs.rb_or(tmp2.rbs);
-            }
-
-            if (max_slice_number > rhs_max_slice_number)
-            {
-                for (int i = rhs_max_slice_number + 1; i <= max_slice_number; ++i)
-                {
-                    AggregateFunctionGroupBitmapData<UInt64> tmp;
-                    tmp.rbs.rb_or(bsi_slices[i].rbs);
-                    bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                    bitmap_carry_out.rbs.rb_and(tmp.rbs);
-                }
-            }
-            else 
-            {
-                for (int i = max_slice_number + 1; i <= rhs_max_slice_number; ++i)
-                {
-                    AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-
-                    bsi_slices[i].rbs.rb_or(rhs_bsi_slice.rbs);
-                    bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                    bitmap_carry_out.rbs.rb_and(rhs_bsi_slice.rbs);
-                }    
-            }
-
-            if (bitmap_carry_out.rbs.size())
-            {
-                bsi_slices[new_slice_number].rbs.rb_or(bitmap_carry_out.rbs);
-                max_number = new_slice_number;
-            }
-            else
-                max_number = new_slice_number - 1;
-            
-        } 
-    }
-
-    void add(const std::vector<AggregateFunctionGroupBitmapData<UInt64>> & rhs_bsi_slices)
-    {
-        if (!bsi_slices[0].rbs.rb_and_cardinality(rhs_bsi_slices[0].rbs))
-        {
-            doMergeOperation(rhs_bsi_slices);
-        }
-        else   
-        {
-            bsi_slices[0].rbs.rb_or(rhs_bsi_slices[0].rbs);
-            int max_slice_number = max_number;
-            int rhs_max_slice_number = -1;
-
-            if (max_slice_number == -1)
-            {
-                for (int i = bsi_slices.size() - 1; i >= 1; --i)
-                {
-                    if (bsi_slices[i].rbs.size())
-                    {
-                        max_slice_number = i;
-                        break;
-                    }
-                }
-            }
-            
-
-            for (int i = rhs_bsi_slices.size() - 1; i >= 1; --i)
-            {
-                if (rhs_bsi_slices[i].rbs.size())
-                {
-                    rhs_max_slice_number = i;
-                    break;
-                }
-            }
-            if (max_slice_number == -1)
-                max_slice_number = 0;
-            if (rhs_max_slice_number == -1)
-                rhs_max_slice_number = 0;
-
-            size_t new_slice_number = std::max(max_slice_number, rhs_max_slice_number) + 1;
-            AggregateFunctionGroupBitmapData<UInt64> bitmap_carry_out;
-
-            for (int i = 1; i <= std::min(max_slice_number, rhs_max_slice_number); ++i)
-            {
-                AggregateFunctionGroupBitmapData<UInt64> tmp1;
-                tmp1.rbs.rb_or(bsi_slices[i].rbs);
-                bsi_slices[i].rbs.rb_xor(rhs_bsi_slices[i].rbs);
-                bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                AggregateFunctionGroupBitmapData<UInt64> tmp2;
-                AggregateFunctionGroupBitmapData<UInt64> tmp3;
-            
-
-                tmp2.rbs.rb_or(tmp1.rbs);
-                tmp2.rbs.rb_and(rhs_bsi_slices[i].rbs);
-
-                tmp3.rbs.rb_or(bitmap_carry_out.rbs);
-                tmp3.rbs.rb_and(tmp1.rbs);
-
-                bitmap_carry_out.rbs.rb_and(rhs_bsi_slices[i].rbs);
-                bitmap_carry_out.rbs.rb_or(tmp3.rbs);
-                bitmap_carry_out.rbs.rb_or(tmp2.rbs);
-            }
-
-            if (max_slice_number > rhs_max_slice_number)
-            {
-                for (int i = rhs_max_slice_number + 1; i <= max_slice_number; ++i)
-                {
-                    AggregateFunctionGroupBitmapData<UInt64> tmp;
-                    tmp.rbs.rb_or(bsi_slices[i].rbs);
-                    bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                    bitmap_carry_out.rbs.rb_and(tmp.rbs);
-                }
-            }
-            else 
-            {
-                for (int i = max_slice_number + 1; i <= rhs_max_slice_number; ++i)
-                {
-                    bsi_slices[i].rbs.rb_or(rhs_bsi_slices[i].rbs);
-                    bsi_slices[i].rbs.rb_xor(bitmap_carry_out.rbs);
-
-                    bitmap_carry_out.rbs.rb_and(rhs_bsi_slices[i].rbs);
-                }    
-            }
-
-            if (bitmap_carry_out.rbs.size())
-            {
-                bsi_slices[new_slice_number].rbs.rb_or(bitmap_carry_out.rbs);
-                max_number = new_slice_number;
-            }
-            else
-                max_number = new_slice_number - 1;
-            
-        }
-
-    }
-
-    void doMergeOperation(const std::vector<AggregateFunctionGroupBitmapData<UInt64>> & rhs_bsi_slices)
-    {
-        bsi_slices[0].rbs.rb_or(rhs_bsi_slices[0].rbs);
-        int max_slice_number = max_number;
-        int rhs_max_slice_number = -1;
-
-        if (max_slice_number == -1)
-        {
-            for (int i = bsi_slices.size() - 1; i > 0; --i)
-            {
-                if (bsi_slices[i].rbs.size())
-                {
-                    max_slice_number = i;
-                    break;
-                }
-            }
-        }
-
-        for (int i = rhs_bsi_slices.size() - 1; i >= 1; --i)
-        {
-            if (rhs_bsi_slices[i].rbs.size())
-            {
-                rhs_max_slice_number = i;
-                break;
-            }
-        }
-
-        max_slice_number = max_slice_number == -1 ? 0 : max_slice_number;
-        rhs_max_slice_number = rhs_max_slice_number == -1 ? 0 : rhs_max_slice_number;
-
-        for (int i = 1; i <= std::min(max_slice_number, rhs_max_slice_number); ++i)
-        {
-            bsi_slices[i].rbs.rb_or(rhs_bsi_slices[i].rbs);
-        }
-
-        if (max_slice_number < rhs_max_slice_number)
-        {
-            for (int i = max_slice_number + 1; i <= rhs_max_slice_number; ++i)
-            {
-                bsi_slices[i].rbs.rb_or(rhs_bsi_slices[i].rbs);
-            }
-        } 
-
-        max_number = std::max(max_slice_number, rhs_max_slice_number);
-    }
-
-    void doMergeOperation(const DB::ColumnAggregateFunction::Container & data, const size_t & start, const size_t & rhs_size)
-    {
-        AggregateFunctionGroupBitmapData<UInt64> & not_null_rb = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start]);
-
-        bsi_slices[0].rbs.rb_or(not_null_rb.rbs);
-        int max_slice_number = max_number;
-        int rhs_max_slice_number = -1;
-
-        if (max_slice_number == -1)
-        {
-            for (int i = bsi_slices.size() - 1; i > 0; --i)
-            {
-                if (bsi_slices[i].rbs.size())
-                {
-                    max_slice_number = i;
-                    break;
-                }
-            }
-        }
-
-        for (int i = rhs_size - 1; i >= 1; --i)
-        {
-            AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-
-            if (rhs_bsi_slice.rbs.size())
-            {
-                rhs_max_slice_number = i;
-                break;
-            }
-        }
-
-        max_slice_number = max_slice_number == -1 ? 0 : max_slice_number;
-        rhs_max_slice_number = rhs_max_slice_number == -1 ? 0 : rhs_max_slice_number;
-
-        for (int i = 1; i <= std::min(max_slice_number, rhs_max_slice_number); ++i)
-        {
-            AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-            bsi_slices[i].rbs.rb_or(rhs_bsi_slice.rbs);
-        }
-
-        if (max_slice_number < rhs_max_slice_number)
-        {
-            for (int i = max_slice_number + 1; i <= rhs_max_slice_number; ++i)
-            {
-                AggregateFunctionGroupBitmapData<UInt64> & rhs_bsi_slice = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(data[start + i]); 
-                bsi_slices[i].rbs.rb_or(rhs_bsi_slice.rbs);
-            }
-        } 
-
-        max_number = std::max(max_slice_number, rhs_max_slice_number);
-    }
-
-    void merge(const AggregateFunctionBsiAddAggData & rhs)
-    {
-        add(rhs.bsi_slices);
-    }
-
-    void serialize(WriteBuffer & buffer) const
-    {
-        writeVarUInt(bsi_slices.size(), buffer);
-        for (const auto & slice : bsi_slices)
-            slice.rbs.write(buffer);
-    }   
-
-    void deserialize(ReadBuffer & buffer)
-    {
-        size_t size_bsi_slices;
-        readVarUInt(size_bsi_slices, buffer);
-        for (size_t i = 0; i < size_bsi_slices; ++i)
-        {
-            bsi_slices[i].rbs.read(buffer);
-        }
-    }
-
-};
-
-class AggregateFunctionBsiAddAgg final : public IAggregateFunctionDataHelper<AggregateFunctionBsiAddAggData, AggregateFunctionBsiAddAgg>
+class AggregateFunctionBsiAddAgg final : public IAggregateFunctionDataHelper<AggregateFunctionBsiAggData, AggregateFunctionBsiAddAgg>
 {
 public:
-    explicit AggregateFunctionBsiAddAgg(const DataTypes & argument_types_) : IAggregateFunctionDataHelper<AggregateFunctionBsiAddAggData, AggregateFunctionBsiAddAgg>(argument_types_, {}) {}
+    explicit AggregateFunctionBsiAddAgg(const DataTypes & argument_types_) : IAggregateFunctionDataHelper<AggregateFunctionBsiAggData, AggregateFunctionBsiAddAgg>(argument_types_, {}) {}
 
     String getName() const override { return "bsi_add_agg"; }
 
@@ -407,14 +78,14 @@ public:
     {
         const auto & state = this->data(place);
 
-        if (!state.bsi_slices[0].rbs.size())
+        if (!state.ids_with_bsi[0].rbs.size())
             return;
         
         int highest_non_empty_index = -1;
 
-        for (int i = state.bsi_slices.size() - 1; i > 0; --i)
+        for (int i = state.ids_with_bsi.size() - 1; i > 0; --i)
         {
-            const auto & item = state.bsi_slices[i];
+            const auto & item = state.ids_with_bsi[i];
             if (item.rbs.size())
             {
                 highest_non_empty_index = i;
@@ -435,13 +106,13 @@ public:
         AggregateFunctionGroupBitmapData<UInt64> & bitmap_data
             = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(arr_to_data.getData()[arr_to_data.size() - 1]);
 
-        bitmap_data.rbs.merge(state.bsi_slices[0].rbs);
+        bitmap_data.rbs.merge(state.ids_with_bsi[0].rbs);
 
         if (highest_non_empty_index != -1)
         {
             for (int i = 1; i < highest_non_empty_index + 1; i++)
             {
-                const auto & item = state.bsi_slices[i];
+                const auto & item = state.ids_with_bsi[i];
                 arr_to_data.insertDefault();
                 AggregateFunctionGroupBitmapData<UInt64> & bitmap_data_idx
                     = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(arr_to_data.getData()[arr_to_data.size() - 1]);
