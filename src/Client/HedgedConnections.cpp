@@ -68,6 +68,20 @@ HedgedConnections::HedgedConnections(
     epoll.add(remote_query_timeout.getDescriptor());
 }
 
+HedgedConnections::~HedgedConnections()
+{
+    try
+    {
+        /// remote query timeout fd may not being added in epoll if this shard is not available.
+        if (!epoll.empty())
+            epoll.remove(remote_query_timeout.getDescriptor());
+    }
+    catch (...)
+    {
+        tryLogCurrentException(&Poco::Logger::get("HedgedConnections"), __PRETTY_FUNCTION__);
+    }
+}
+
 void HedgedConnections::Pipeline::add(std::function<void(ReplicaState & replica)> send_function)
 {
     pipeline.push_back(send_function);
@@ -262,7 +276,8 @@ Packet HedgedConnections::drain()
     Packet res;
     res.type = Protocol::Server::EndOfStream;
 
-    while (!epoll.empty())
+    /// Wait until all connections finish, skip remote query timeout fd, which will be removed from epoll in dtor.
+    while (epoll.size() > 1)
     {
         ReplicaLocation location = getReadyReplicaLocation(DrainCallback{drain_timeout});
         if (location.generated_by_remote_query_timeout)
@@ -340,7 +355,6 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
             checkNewReplica();
         else if (event_fd == remote_query_timeout.getDescriptor())
         {
-            epoll.remove(event_fd);
             return ReplicaLocation{0, 0, 0, true};
         }
         else if (fd_to_replica_location.contains(event_fd))

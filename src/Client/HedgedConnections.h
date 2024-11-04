@@ -79,6 +79,8 @@ public:
                       PoolMode pool_mode,
                       std::shared_ptr<QualifiedTableName> table_to_check_ = nullptr);
 
+    ~HedgedConnections() override;
+
     void sendScalarsData(Scalars & data) override;
 
     void sendExternalTablesData(std::vector<ExternalTablesData> & data) override;
