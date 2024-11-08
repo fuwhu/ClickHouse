@@ -5179,7 +5179,7 @@ void StorageReplicatedMergeTree::rename(const String & new_path_to_table_data, c
     /// TODO: You can update names of loggers.
 }
 
-void StorageReplicatedMergeTree::erasePathCache(const std::string & path)
+void StorageReplicatedMergeTree::erasePathCache(const std::string & path) const
 {
     std::lock_guard lock(existing_nodes_cache_mutex);
     existing_nodes_cache.erase(path);
@@ -5263,6 +5263,8 @@ StorageReplicatedMergeTree::allocateBlockNumber(
     }
     catch (const Coordination::Exception & e)
     {
+        if (e.code == Coordination::Error::ZNONODE)
+            erasePathCache(partition_path);
         throw Exception("Cannot allocate block number in ZooKeeper: " + e.displayText(), ErrorCodes::KEEPER_EXCEPTION);
     }
 
