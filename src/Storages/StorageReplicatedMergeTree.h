@@ -304,7 +304,7 @@ public:
     /// Check if there are new broken disks and enqueue part recovery tasks.
     void checkBrokenDisks();
 
-    void erasePathCache(const std::string & path);
+    void erasePathCache(const std::string & path) const;
 
 private:
     std::atomic_bool are_restoring_replica {false};
