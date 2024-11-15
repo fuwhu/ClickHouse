@@ -1037,6 +1037,13 @@ void Context::addQueryAccessInfo(
             query_access_info.where_columns["equality"].insert(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
     }
 
+    auto not_equality_it = where_column_names.find("not_equality");
+    if (not_equality_it != where_column_names.end())
+    {
+        for (const auto & column_name : not_equality_it->second)
+            query_access_info.where_columns["not_equality"].insert(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+    }
+
     auto range_it = where_column_names.find("range");
     if (range_it != where_column_names.end())
     {

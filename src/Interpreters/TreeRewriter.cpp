@@ -1157,6 +1157,9 @@ void TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         {
             if (required_where["equality"].count(column.name))
                 where_columns["equality"].insert(column.name);
+
+            if (required_where["not_equality"].count(column.name))
+                where_columns["not_equality"].insert(column.name);
             
             if (required_where["range"].count(column.name))
                 where_columns["range"].insert(column.name);
