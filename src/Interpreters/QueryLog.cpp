@@ -217,6 +217,17 @@ void QueryLogElement::appendToBlock(MutableColumns & columns) const
                 map_size++;
             }
 
+            auto not_equality_it = data.find("not_equality");
+            if (not_equality_it != data.end())
+            {
+                key_column.insertData("not_equality", strlen("not_equality"));
+
+                auto & column_item = typeid_cast<ColumnArray &>(value_column);
+                fill_array_column(not_equality_it->second, column_item);
+
+                map_size++;
+            }
+
             auto range_it = data.find("range");
             if (range_it != data.end())
             {

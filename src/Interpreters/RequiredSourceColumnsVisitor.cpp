@@ -242,8 +242,10 @@ void RequiredSourceColumnsMatcher::processWhereSection(const ASTPtr & where_node
                 std::string column_name = left->name();
                 std::string comparison = function->name;
 
-                if (comparison == "equals" || comparison == "notEquals" || comparison == "in" || comparison == "notIn")
+                if (comparison == "equals" || comparison == "in")
                     data.addWhereCondition("equality", column_name);
+                else if (comparison == "notEquals" || comparison == "notIn")
+                    data.addWhereCondition("not_equality", column_name);
                 else if (comparison == "greater" || comparison == "greaterOrEquals" || comparison == "less" || comparison == "lessOrEquals")
                     data.addWhereCondition("range", column_name);
                 else
