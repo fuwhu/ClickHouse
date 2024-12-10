@@ -1,14 +1,14 @@
-#include "BitmapDictionaryStorage.h"
+#include "BidirectionalStorage.h"
 
-#include <filesystem>
-#include <Columns/ColumnNullable.h>
-#include <Columns/ColumnString.h>
-#include <Columns/ColumnVector.h>
-#include <IO/ReadHelpers.h>
-#include <base/logger_useful.h>
-#include <base/range.h>
-#include <rocksdb/table.h>
+#if USE_GRPC
+#    include <filesystem>
+#    include <IO/ReadHelpers.h>
+#    include <base/logger_useful.h>
+#    include <base/range.h>
+#    include <rocksdb/table.h>
 
+using dictionary::api::DictMetaReq;
+using dictionary::api::DictMetaResp;
 using dictionary::api::GetKeyReq;
 using dictionary::api::GetValueReq;
 using dictionary::api::KeyValueResp;
@@ -20,22 +20,24 @@ namespace ErrorCodes
 {
     extern const int GRPC_ERROR;
     extern const int ROCKSDB_ERROR;
+    extern const int BAD_ARGUMENTS;
 }
 
 static constexpr size_t MAX_PROXY_BATCH_SIZE = 1000;
 static constexpr size_t MAX_PROXY_TIMEOUT_SECONDS = 5;
 
-BitmapDictionaryStorageRocksDB::BitmapDictionaryStorageRocksDB(
-    const String & dict_,
-    const String & local_path_,
-    const std::shared_ptr<rocksdb::Cache> & lru_cache_,
-    BitmapDictionaryStoragePtr fallback_)
-    : log(&Poco::Logger::get("BitmapDictionaryStorageRocksDB(" + dict_ + ")")), dict(dict_), local_path(local_path_), fallback(fallback_)
+BidirectionalStorageRocksDB::BidirectionalStorageRocksDB(
+    const String & dict_, const String & uuid_, const String & local_base_path_, BidirectionalStoragePtr fallback_)
+    : log(&Poco::Logger::get("BidirectionalStorageRocksDB(" + dict_ + ")"))
+    , dict(dict_)
+    , uuid(uuid_)
+    , local_base_path(local_base_path_)
+    , fallback(fallback_)
 {
-    initDB(lru_cache_);
+    initDB();
 }
 
-BitmapDictionaryStorageRocksDB::~BitmapDictionaryStorageRocksDB()
+BidirectionalStorageRocksDB::~BidirectionalStorageRocksDB()
 {
     try
     {
@@ -47,13 +49,13 @@ BitmapDictionaryStorageRocksDB::~BitmapDictionaryStorageRocksDB()
     }
 }
 
-void BitmapDictionaryStorageRocksDB::clean()
+void BidirectionalStorageRocksDB::clean()
 {
     closeDB(true);
     rocksdb.reset(nullptr);
 }
 
-void BitmapDictionaryStorageRocksDB::initDB(const std::shared_ptr<rocksdb::Cache> & lru_cache)
+void BidirectionalStorageRocksDB::initDB()
 {
     rocksdb::DB * db;
     rocksdb::DBOptions db_opts;
@@ -72,17 +74,10 @@ void BitmapDictionaryStorageRocksDB::initDB(const std::shared_ptr<rocksdb::Cache
            rocksdb::kZSTD,
            rocksdb::kZSTD};
 
-    if (lru_cache)
-    {
-        rocksdb::BlockBasedTableOptions table_opts;
-        table_opts.block_cache = lru_cache;
-        cf_opts.table_factory.reset(NewBlockBasedTableFactory(table_opts));
-    }
-
     column_families.push_back(rocksdb::ColumnFamilyDescriptor(rocksdb::kDefaultColumnFamilyName, cf_opts));
     column_families.push_back(rocksdb::ColumnFamilyDescriptor("inverse", cf_opts));
 
-    String rocksdb_dir = std::filesystem::path(local_path) / dict;
+    String rocksdb_dir = std::filesystem::path(local_base_path) / (dict + "." + uuid);
     auto status = rocksdb::DB::Open(db_opts, rocksdb_dir, column_families, &handles, &db);
     if (!status.ok())
         throw Exception(ErrorCodes::ROCKSDB_ERROR, "Fail to open rocksdb path at: {}: {}", rocksdb_dir, status.ToString());
@@ -90,7 +85,7 @@ void BitmapDictionaryStorageRocksDB::initDB(const std::shared_ptr<rocksdb::Cache
     rocksdb = std::unique_ptr<rocksdb::DB>(db);
 }
 
-void BitmapDictionaryStorageRocksDB::closeDB(bool clean)
+void BidirectionalStorageRocksDB::closeDB(bool clean)
 {
     if (rocksdb)
     {
@@ -101,11 +96,11 @@ void BitmapDictionaryStorageRocksDB::closeDB(bool clean)
         rocksdb->Close();
 
         if (clean)
-            std::filesystem::remove_all(std::filesystem::path(local_path) / dict);
+            std::filesystem::remove_all(std::filesystem::path(local_base_path) / (dict + "." + uuid));
     }
 }
 
-std::vector<UInt64> BitmapDictionaryStorageRocksDB::getValues(const std::vector<StringRef> & keys, size_t start, size_t size)
+std::vector<UInt64> BidirectionalStorageRocksDB::getValues(const std::vector<StringRef> & keys, size_t start, size_t size)
 {
     LOG_TRACE(log, "Get {} values from rocksdb", size);
 
@@ -139,7 +134,7 @@ std::vector<UInt64> BitmapDictionaryStorageRocksDB::getValues(const std::vector<
         }
     }
 
-    if (fallback && !missed_keys.empty())
+    if (!missed_keys.empty())
     {
         auto fallback_values = fallback->getValues(missed_keys, 0, missed_keys.size());
         rocksdb::WriteBatch batch;
@@ -165,7 +160,7 @@ std::vector<UInt64> BitmapDictionaryStorageRocksDB::getValues(const std::vector<
     return ret;
 }
 
-std::vector<String> BitmapDictionaryStorageRocksDB::getKeys(const std::vector<UInt64> & values, size_t start, size_t size)
+std::vector<String> BidirectionalStorageRocksDB::getKeys(const std::vector<UInt64> & values, size_t start, size_t size)
 {
     LOG_TRACE(log, "Get {} keys from rocksdb", size);
 
@@ -201,7 +196,7 @@ std::vector<String> BitmapDictionaryStorageRocksDB::getKeys(const std::vector<UI
         }
     }
 
-    if (fallback && !missed_values.empty())
+    if (!missed_values.empty())
     {
         auto fallback_keys = fallback->getKeys(missed_values, 0, missed_values.size());
         rocksdb::WriteBatch batch;
@@ -223,13 +218,14 @@ std::vector<String> BitmapDictionaryStorageRocksDB::getKeys(const std::vector<UI
     return ret;
 }
 
-BitmapDictionaryStorageRemote::BitmapDictionaryStorageRemote(const String & dict_, const String & target_)
-    : log(&Poco::Logger::get("BitmapDictionaryStorageRemote(" + dict_ + ")")), dict(dict_), target(target_)
+BidirectionalStorageRemote::BidirectionalStorageRemote(const String & dict_, const String & target_)
+    : log(&Poco::Logger::get("BidirectionalStorageRemote(" + dict_ + ")")), dict(dict_), target(target_)
 {
     initClient();
+    checkDict();
 }
 
-void BitmapDictionaryStorageRemote::initClient()
+void BidirectionalStorageRemote::initClient()
 {
     grpc::ChannelArguments args;
     args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
@@ -237,7 +233,25 @@ void BitmapDictionaryStorageRemote::initClient()
     stub = dictionary::api::Dictionary::NewStub(channel);
 }
 
-std::vector<UInt64> BitmapDictionaryStorageRemote::getValues(const std::vector<StringRef> & keys, size_t start, size_t size)
+void BidirectionalStorageRemote::checkDict()
+{
+    DictMetaReq req;
+    DictMetaResp resp;
+    req.set_dict(dict);
+
+    grpc::ClientContext context;
+    context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(MAX_PROXY_TIMEOUT_SECONDS));
+
+    auto status = stub->GetDictMeta(&context, req, &resp);
+    if (!status.ok()) [[unlikely]]
+        throw Exception(
+            ErrorCodes::GRPC_ERROR, "Request to dictionary proxy error: {}({})", status.error_message(), status.error_details());
+
+    if (!resp.exists())
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Dictionary '{}' not found", dict);
+}
+
+std::vector<UInt64> BidirectionalStorageRemote::getValues(const std::vector<StringRef> & keys, size_t start, size_t size)
 {
     LOG_TRACE(log, "Get {} values from remote proxy", size);
 
@@ -263,7 +277,8 @@ std::vector<UInt64> BitmapDictionaryStorageRemote::getValues(const std::vector<S
 
         auto status = stub->GetValue(&context, req, &resp);
         if (!status.ok()) [[unlikely]]
-            throw Exception(ErrorCodes::GRPC_ERROR, "Request to dictionary proxy error: {}", status.error_details());
+            throw Exception(
+                ErrorCodes::GRPC_ERROR, "Request to dictionary proxy error: {}({})", status.error_message(), status.error_details());
 
         std::move(resp.values().begin(), resp.values().end(), std::back_inserter(ret));
         cursor += needs;
@@ -272,7 +287,7 @@ std::vector<UInt64> BitmapDictionaryStorageRemote::getValues(const std::vector<S
     return ret;
 }
 
-std::vector<String> BitmapDictionaryStorageRemote::getKeys(const std::vector<UInt64> & values, size_t start, size_t size)
+std::vector<String> BidirectionalStorageRemote::getKeys(const std::vector<UInt64> & values, size_t start, size_t size)
 {
     LOG_TRACE(log, "Get {} keys from remote proxy", size);
 
@@ -298,7 +313,8 @@ std::vector<String> BitmapDictionaryStorageRemote::getKeys(const std::vector<UIn
 
         auto status = stub->GetKey(&context, req, &resp);
         if (!status.ok()) [[unlikely]]
-            throw Exception(ErrorCodes::GRPC_ERROR, "Request to dictionary proxy error: {}", status.error_details());
+            throw Exception(
+                ErrorCodes::GRPC_ERROR, "Request to dictionary proxy error: {}({})", status.error_message(), status.error_details());
 
         std::move(resp.keys().begin(), resp.keys().end(), std::back_inserter(ret));
         cursor += needs;
@@ -306,76 +322,5 @@ std::vector<String> BitmapDictionaryStorageRemote::getKeys(const std::vector<UIn
 
     return ret;
 }
-
-BitmapSource::BitmapSource(
-    BitmapDictionaryStoragePtr storage_,
-    const DB::Block & sample_block_,
-    std::vector<StringRef> keys_,
-    std::vector<UInt64> values_,
-    size_t max_block_size_)
-    : SourceWithProgress(sample_block_)
-    , storage(storage_)
-    , keys(std::move(keys_))
-    , values(std::move(values_))
-    , max_block_size(max_block_size_)
-{
-    description.init(sample_block_);
 }
-
-Chunk BitmapSource::generate()
-{
-    if (description.sample_block.rows() == 0 || (cursor >= keys.size() && values.empty()) || (cursor >= values.size() && keys.empty()))
-    {
-        all_read = true;
-    }
-
-    if (all_read)
-        return {};
-
-    const size_t size = description.sample_block.columns();
-    MutableColumns columns(size);
-
-    for (size_t i = 0; i < size; ++i)
-        columns[i] = description.sample_block.getByPosition(i).column->cloneEmpty();
-
-    size_t needs = 0;
-    if (!keys.empty())
-    {
-        needs = std::min(max_block_size, keys.size() - cursor);
-
-        std::vector<UInt64> output = storage->getValues(keys, cursor, needs);
-        for (auto row : collections::range(output.size()))
-        {
-            const auto & k = keys[cursor + row];
-            const auto & v = output[row];
-
-            columns[2]->insertData(k.data, k.size);
-            assert_cast<ColumnVector<UInt64> &>(*columns[3]).insertValue(v);
-        }
-
-        assert_cast<ColumnNullable &>(*columns[0]).insertRangeFromNotNullable(*columns[2], 0, output.size());
-        columns[1]->insertManyDefaults(output.size());
-    }
-    else if (!values.empty())
-    {
-        needs = std::min(max_block_size, values.size() - cursor);
-
-        std::vector<String> output = storage->getKeys(values, cursor, needs);
-        for (auto row : collections::range(output.size()))
-        {
-            const auto & k = output[row];
-            const auto & v = values[cursor + row];
-
-            columns[2]->insertData(k.data(), k.size());
-            assert_cast<ColumnVector<UInt64> &>(*columns[3]).insertValue(v);
-        }
-
-        columns[0]->insertManyDefaults(output.size());
-        assert_cast<ColumnNullable &>(*columns[1]).insertRangeFromNotNullable(*columns[3], 0, output.size());
-    }
-
-    cursor += needs;
-
-    return Chunk(std::move(columns), needs);
-}
-}
+#endif

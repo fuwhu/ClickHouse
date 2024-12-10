@@ -753,9 +753,6 @@ public:
     std::shared_ptr<MMappedFileCache> getMMappedFileCache() const;
     void dropMMappedFileCache() const;
 
-    std::shared_ptr<rocksdb::Cache> getRocksDBLRUCache() const;
-    void setRocksDBLRUCacheForBitmapDict(size_t rocksdb_lru_cache_size_for_bitmap_dict);
-
     /** Clear the caches of the uncompressed blocks and marks.
       * This is usually done when renaming tables, changing the type of columns, deleting a table.
       *  - since caches are linked to file names, and become incorrect.

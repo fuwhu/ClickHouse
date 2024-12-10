@@ -1161,11 +1161,6 @@ if (ThreadFuzzer::instance().isEffective())
     if (mmap_cache_size)
         global_context->setMMappedFileCache(mmap_cache_size);
 
-    /// For bitmap dictionary local rocksdb cache
-    size_t rocksdb_lru_cache_size_for_bitmap_dict = config().getUInt64("rocksdb_lru_cache_size_for_bitmap_dict", 0);
-    if (rocksdb_lru_cache_size_for_bitmap_dict)
-        global_context->setRocksDBLRUCacheForBitmapDict(rocksdb_lru_cache_size_for_bitmap_dict);
-
     /// Meta cache is used for the index and bloom blocks, it should be set to a large number to keep hit rate near 100%.
     /// Data cache is used for the data blocks, it's ok to have a lower hit cache than meta cache
     size_t uki_meta_cache_size = config().getUInt64("unique_key_index_meta_cache_size", 104857600); /// 100MB
