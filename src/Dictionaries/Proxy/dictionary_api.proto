@@ -30,13 +30,19 @@ message GetKeyReq {
   bool nocache = 4;
 }
 
-message DictExistsReq {
-  string dict = 1;
+enum DictDataType {
+  UNKNOWN = 0;
+  INT = 1;
+  LONG = 2;
+  STRING = 3;
 }
 
-message DictExistsResp {
+message DictMetaReq { string dict = 1; }
+
+message DictMetaResp {
   string dict = 1;
   bool exists = 2;
+  DictDataType datatype = 3;
 }
 
 service Dictionary {
@@ -44,5 +50,5 @@ service Dictionary {
 
   rpc GetKey(GetKeyReq) returns (KeyValueResp);
 
-  rpc DictExists(DictExistsReq) returns (DictExistsResp);
+  rpc GetDictMeta(DictMetaReq) returns (DictMetaResp);
 }

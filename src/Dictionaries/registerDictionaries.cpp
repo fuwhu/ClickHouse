@@ -19,7 +19,7 @@ void registerDictionarySourceExecutable(DictionarySourceFactory & source_factory
 void registerDictionarySourceExecutablePool(DictionarySourceFactory & source_factory);
 void registerDictionarySourceHTTP(DictionarySourceFactory & source_factory);
 void registerDictionarySourceLibrary(DictionarySourceFactory & source_factory);
-void registerDictionarySourceBitmap(DictionarySourceFactory & source_factory);
+void registerDictionarySourceBidirectional(DictionarySourceFactory & source_factory);
 
 class DictionaryFactory;
 void registerDictionaryRangeHashed(DictionaryFactory & factory);
@@ -50,7 +50,7 @@ void registerDictionaries()
         registerDictionarySourceExecutablePool(source_factory);
         registerDictionarySourceHTTP(source_factory);
         registerDictionarySourceLibrary(source_factory);
-        registerDictionarySourceBitmap(source_factory);
+        registerDictionarySourceBidirectional(source_factory);
     }
 
     {

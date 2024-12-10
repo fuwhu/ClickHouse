@@ -1,10 +1,11 @@
 #pragma once
 
-#include "BitmapDictionaryStorage.h"
+#include "BidirectionalSource.h"
 
-#include <Core/Block.h>
-#include <Dictionaries/DictionaryStructure.h>
-#include <Dictionaries/IDictionarySource.h>
+#if USE_GRPC
+#    include <Core/Block.h>
+#    include <Dictionaries/DictionaryStructure.h>
+#    include <Dictionaries/IDictionarySource.h>
 
 namespace DB
 {
@@ -13,7 +14,7 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
 }
 
-class BitmapDictionarySource final : public IDictionarySource
+class BidirectionalDictionarySource final : public IDictionarySource, private boost::noncopyable
 {
 public:
     struct Configuration
@@ -24,29 +25,28 @@ public:
         const String dict_rocksdb_path;
     };
 
-    BitmapDictionarySource(
+    BidirectionalDictionarySource(
         const DictionaryStructure & dict_struct_, const Configuration & configuration_, const Block & sample_block_, ContextPtr context_);
 
-    BitmapDictionarySource(const BitmapDictionarySource & other);
-
-    BitmapDictionarySource & operator=(const BitmapDictionarySource &) = delete;
-
-    ~BitmapDictionarySource() override = default;
+    ~BidirectionalDictionarySource() override = default;
 
     void initStorage();
 
-    Pipe loadAll() override { throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadAll is unsupported for BitmapDictionarySource"); }
+    Pipe loadAll() override
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadAll is unsupported for BidirectionaDictionarySource");
+    }
 
     Pipe loadUpdatedAll() override
     {
-        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadUpdatedAll is unsupported for BitmapDictionarySource");
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadUpdatedAll is unsupported for BidirectionaDictionarySource");
     }
 
     bool supportsSelectiveLoad() const override { return true; }
 
     Pipe loadIds(const std::vector<UInt64> &) override
     {
-        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadIds is unsupported for BitmapDictionarySource");
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method loadIds is unsupported for BidirectionaDictionarySource");
     }
 
     Pipe loadKeys(const Columns & key_columns, const std::vector<size_t> & requested_rows) override;
@@ -55,7 +55,10 @@ public:
 
     bool hasUpdateField() const override { return false; }
 
-    DictionarySourcePtr clone() const override { return std::make_shared<BitmapDictionarySource>(*this); }
+    DictionarySourcePtr clone() const override
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "BidirectionaDictionarySource is not cloneable");
+    }
 
     std::string toString() const override;
 
@@ -67,8 +70,9 @@ private:
     const DictionaryStructure dict_struct;
     const Configuration configuration;
 
-    BitmapDictionaryStoragePtr storage;
+    BidirectionalStoragePtr storage;
     Block sample_block;
     ContextPtr context;
 };
 }
+#endif
