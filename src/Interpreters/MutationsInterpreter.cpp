@@ -297,6 +297,24 @@ MutationsInterpreter::MutationsInterpreter(
     mutation_ast = prepare(!can_execute);
 }
 
+MutationsInterpreter::MutationsInterpreter(
+    StoragePtr storage_,
+    const StorageMetadataPtr & metadata_snapshot_,
+    MutationCommands commands_,
+    ContextPtr context_,
+    bool can_execute_,
+    MergeTreeData::DataPartsVector parts_)
+    : storage(std::move(storage_))
+    , metadata_snapshot(metadata_snapshot_)
+    , commands(std::move(commands_))
+    , context(Context::createCopy(context_))
+    , can_execute(can_execute_)
+    , parts(parts_)
+    , select_limits(SelectQueryOptions().analyze(!can_execute).ignoreLimits().ignoreProjections())
+{
+    mutation_ast = prepare(!can_execute);
+}
+
 static NameSet getKeyColumns(const StoragePtr & storage, const StorageMetadataPtr & metadata_snapshot)
 {
     const MergeTreeData * merge_tree_data = dynamic_cast<const MergeTreeData *>(storage.get());
@@ -759,6 +777,40 @@ ASTPtr MutationsInterpreter::prepare(bool dry_run)
 ASTPtr MutationsInterpreter::prepareInterpreterSelectQuery(std::vector<Stage> & prepared_stages, bool dry_run)
 {
     NamesAndTypesList all_columns = metadata_snapshot->getColumns().getAllPhysical();
+    
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
+    for (const auto & part : parts) 
+    {
+        if (metadata_snapshot->hasImplicitColumn())
+        {
+            for (const auto & implicit_map_name : metadata_snapshot->getImplicitMapNames())
+            {
+                auto it = implicit_columns_maps.find(implicit_map_name);
+                std::shared_ptr<NamesAndTypesList> implicit_columns = part->getImplicitColumnsForMap(implicit_map_name);
+                if (it != implicit_columns_maps.end())
+                {
+                    for (const auto & implicit_column  : *implicit_columns)
+                    {
+                        if (!it->second.contains(implicit_column.name))
+                            it->second.emplace_back(implicit_column);
+                    }
+                }
+                else
+                    implicit_columns_maps.emplace(std::make_pair(implicit_map_name, *implicit_columns));
+            }
+        }              
+    }
+
+    for (const auto & implicit_columns_map : implicit_columns_maps) 
+    {
+        std::erase_if(all_columns, [&](NameAndTypePair name_type){ return implicit_columns_map.first == name_type.name; });
+
+        for (const auto & implicit_column : implicit_columns_map.second) 
+        {
+            all_columns.emplace_back(implicit_column);
+        }
+    }
+    
 
     /// Next, for each stage calculate columns changed by this and previous stages.
     for (size_t i = 0; i < prepared_stages.size(); ++i)

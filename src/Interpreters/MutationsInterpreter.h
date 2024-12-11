@@ -6,6 +6,7 @@
 #include <Interpreters/Context.h>
 #include <Storages/IStorage_fwd.h>
 #include <Storages/MutationCommands.h>
+#include "Storages/MergeTree/MutateTask.h"
 
 
 namespace DB
@@ -44,6 +45,14 @@ public:
         MutationCommands commands_,
         ContextPtr context_,
         bool can_execute_);
+
+    MutationsInterpreter(
+        StoragePtr storage_,
+        const StorageMetadataPtr & metadata_snapshot_,
+        MutationCommands commands_,
+        ContextPtr context_,
+        bool can_execute_,
+        MergeTreeData::DataPartsVector parts_);    
 
     void validate();
 
@@ -95,6 +104,7 @@ private:
     MutationCommands commands;
     ContextPtr context;
     bool can_execute;
+    MergeTreeData::DataPartsVector parts;
     SelectQueryOptions select_limits;
 
     ASTPtr mutation_ast;
