@@ -1307,7 +1307,7 @@ bool MutateTask::prepare()
     if (!ctx->for_interpreter.empty())
     {
         ctx->interpreter = std::make_unique<MutationsInterpreter>(
-            storage_from_source_part, ctx->metadata_snapshot, ctx->for_interpreter, context_for_reading, true);
+            storage_from_source_part, ctx->metadata_snapshot, ctx->for_interpreter, context_for_reading, true, ctx->future_part->parts);
         ctx->materialized_indices = ctx->interpreter->grabMaterializedIndices();
         ctx->materialized_projections = ctx->interpreter->grabMaterializedProjections();
         ctx->mutation_kind = ctx->interpreter->getMutationKind();
@@ -1334,6 +1334,30 @@ bool MutateTask::prepare()
     ctx->new_data_part->setColumns(new_columns);
     ctx->new_data_part->setSerializationInfos(new_infos);
     ctx->new_data_part->partition.assign(ctx->source_part->partition);
+
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
+    for (const auto & part : ctx->future_part->parts) 
+    {
+        if (ctx->metadata_snapshot->hasImplicitColumn())
+        {
+            for (const auto & implicit_map_name : ctx->metadata_snapshot->getImplicitMapNames())
+            {
+                auto it = implicit_columns_maps.find(implicit_map_name);
+                std::shared_ptr<NamesAndTypesList> implicit_columns = part->getImplicitColumnsForMap(implicit_map_name);
+                if (it != implicit_columns_maps.end())
+                {
+                    for (const auto & implicit_column  : *implicit_columns)
+                    {
+                        if (!it->second.contains(implicit_column.name))
+                            it->second.emplace_back(implicit_column);
+                    }
+                }
+                else
+                    implicit_columns_maps.emplace(std::make_pair(implicit_map_name, *implicit_columns));
+            }
+        }              
+    }
+    ctx->new_data_part->setImplicitColumns(implicit_columns_maps);
 
     ctx->disk = ctx->new_data_part->volume->getDisk();
     ctx->new_part_tmp_path = ctx->new_data_part->getFullRelativePath();
