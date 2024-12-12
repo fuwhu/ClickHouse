@@ -30,7 +30,7 @@ INSERT INTO test_bsi_agg_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
     select 2 as u_id, 10 as gmv
 );
 
-INSERT INTO test_bsi_agg_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+INSERT INTO test_bsi_agg_functions SELECT 2, bsi_build(u_id, gmv) AS bsi FROM
 (
     select 1 as u_id, 2 as gmv
     union all
@@ -59,7 +59,7 @@ INSERT INTO test_bsi_zero_metric_functions SELECT 1, bsi_build(u_id, gmv) AS bsi
     select 2 as u_id, 0 as gmv
 );
 
-INSERT INTO test_bsi_zero_metric_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
+INSERT INTO test_bsi_zero_metric_functions SELECT 2, bsi_build(u_id, gmv) AS bsi FROM
 (
     select 1 as u_id, 0 as gmv
     union all
@@ -74,3 +74,16 @@ SELECT bsi_sum(agg) from (select bsi_add_agg(bsi) as agg from test_bsi_zero_metr
 SELECT arrayMap(x->bitmapToArray(x), bsi_merge_agg(bsi)) FROM test_bsi_zero_metric_functions;
 SELECT bsi_sum(agg) from (select bsi_merge_agg(bsi) as agg from test_bsi_zero_metric_functions);
 DROP TABLE IF EXISTS test_bsi_zero_metric_functions;
+
+SELECT '==========================';
+
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0, 3));
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0, 1));
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0, 2));
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 5, 3));
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 10, 20));
+SELECT bitmapToArray(bsi_range([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0, 100));
+SELECT bitmapToArray(bsi_gt([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
+SELECT bitmapToArray(bsi_ge([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
+SELECT bitmapToArray(bsi_lt([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
+SELECT bitmapToArray(bsi_le([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));

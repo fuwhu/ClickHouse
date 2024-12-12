@@ -80,6 +80,9 @@ public:
     {
         return executeBsiData(arguments, input_rows_count);
     }
+
+    bool useDefaultImplementationForConstants() const override { return true; }
+
 private:
     ColumnPtr executeBsiData(const ColumnsWithTypeAndName & arguments, size_t /*input_row_count*/) const
     {
@@ -354,8 +357,11 @@ public:
         return executeBsiData(arguments, input_rows_count);       
 
     }
+
+    bool useDefaultImplementationForConstants() const override { return true; }
+
 private:
-    ColumnPtr executeBsiData(const ColumnsWithTypeAndName & arguments, size_t /*input_row_count*/) const
+    static ColumnPtr executeBsiData(const ColumnsWithTypeAndName & arguments, size_t /*input_row_count*/) 
     {
         /// input data
         bool is_column_const[2];
@@ -418,9 +424,6 @@ private:
             AggregateFunctionGroupBitmapData<UInt64> bitmap_existence_for_less;
             bitmap_existence_for_less.rbs.rb_or(bitmap_existence.rbs);
 
-            AggregateFunctionGroupBitmapData<UInt64> bitmap_res_for_less;
-            bitmap_res_for_less.rbs.rb_or(bitmap_res.rbs);
-
             pos++;
 
             size_t slice_number = row_size - pos;
@@ -455,9 +458,11 @@ private:
 
                 pos++;
             }
+            bitmap_res.rbs.rb_or(bitmap_existence.rbs);
 
             if (data2 >> slice_number == 0)
             {
+                AggregateFunctionGroupBitmapData<UInt64> bitmap_res_for_less;
                 for (int i = slice_number - 1; i >= 0; --i)
                 {
                     AggregateFunctionGroupBitmapData<UInt64> & bitmap_data = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(col_nested.getData()[row_start + i]);
@@ -478,6 +483,7 @@ private:
                         bitmap_existence_for_less.rbs.rb_andnot(bitmap_data.rbs);
                     }  
                 }
+                bitmap_res_for_less.rbs.rb_or(bitmap_existence_for_less.rbs);
                 bitmap_res.rbs.rb_and(bitmap_res_for_less.rbs);
             }
 
