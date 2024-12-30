@@ -1164,8 +1164,9 @@ if (ThreadFuzzer::instance().isEffective())
     /// Meta cache is used for the index and bloom blocks, it should be set to a large number to keep hit rate near 100%.
     /// Data cache is used for the data blocks, it's ok to have a lower hit cache than meta cache
     size_t uki_meta_cache_size = config().getUInt64("unique_key_index_meta_cache_size", 104857600); /// 100MB
+    size_t uki_meta_cache_elements_size = config().getUInt64("unique_key_index_meta_cache_elements_size", 5000); /// 5000
     size_t uki_data_cache_size = config().getUInt64("unique_key_index_data_cache_size", 1073741824); /// 1GB
-    global_context->setUniqueKeyIndexCache(uki_meta_cache_size);
+    global_context->setUniqueKeyIndexCache(uki_meta_cache_size, uki_meta_cache_elements_size);
     global_context->setUniqueKeyIndexBlockCache(uki_data_cache_size);
 
 #if USE_EMBEDDED_COMPILER
