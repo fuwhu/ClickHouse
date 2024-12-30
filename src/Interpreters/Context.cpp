@@ -3089,12 +3089,12 @@ void Context::setReadTaskCallback(ReadTaskCallback && callback)
     next_task_callback = callback;
 }
 
-void Context::setUniqueKeyIndexCache(size_t cache_size_in_bytes)
+void Context::setUniqueKeyIndexCache(size_t cache_size_in_bytes, size_t cache_elements_size)
 {
     auto lock = getLock();
     if (shared->unique_key_index_cache)
         throw Exception("Unique key index cache has been already created", ErrorCodes::LOGICAL_ERROR);
-    shared->unique_key_index_cache = std::make_shared<UniqueKeyIndexCache>(cache_size_in_bytes);
+    shared->unique_key_index_cache = std::make_shared<UniqueKeyIndexCache>(cache_size_in_bytes, cache_elements_size);
 }
 
 UniqueKeyIndexCachePtr Context::getUniqueKeyIndexCache() const

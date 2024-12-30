@@ -911,7 +911,7 @@ public:
     void setMergeTreeReadTaskCallback(MergeTreeReadTaskCallback && callback);
 
     /// Create a cache of UniqueKeyIndex objects.
-    void setUniqueKeyIndexCache(size_t cache_size_in_bytes);
+    void setUniqueKeyIndexCache(size_t cache_size_in_bytes, size_t cache_elements_size);
     UniqueKeyIndexCachePtr getUniqueKeyIndexCache() const;
     
     /// Create a memory cache of data blocks reading from unique key index files.
