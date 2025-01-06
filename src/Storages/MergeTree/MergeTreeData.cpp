@@ -358,6 +358,23 @@ MergeTreeData::MergeTreeData(
         else
             background_moves_assignee.trigger();
     };
+
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::PARTITION)
+        {
+            if (settings->eanble_unique_key_partition_lock)
+                unique_engine_partition_mutexes = std::make_shared<UniqueEnginePartitionMutexes>(settings->unique_key_partition_lock_lru_size);
+            else 
+                unique_engine_table_mutex = std::make_shared<std::mutex>();
+        }
+        else if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::TABLE)
+            unique_engine_table_mutex = std::make_shared<std::mutex>();
+        else
+            throw Exception(
+                "Invalid level " + std::to_string(settings->unique_key_deduplicate_level) + " for setting unique_key_deduplicate_level.",
+                ErrorCodes::BAD_ARGUMENTS);
+    }
 }
 
 StoragePolicyPtr MergeTreeData::getStoragePolicy() const
@@ -2276,6 +2293,17 @@ void MergeTreeData::checkMutationIsPossible(const MutationCommands & /*commands*
     /// Some validation will be added
 }
 
+MergeTreeData::UniqueEngineWriteLock MergeTreeData::lockUniqueEngineForWrite(const String & partition_id) const
+{
+    if (unique_engine_partition_mutexes)
+    {
+        auto mutex_ptr = unique_engine_partition_mutexes->getOrSet(partition_id, load_partition_mutex_func).first;
+        return UniqueEngineWriteLock(*mutex_ptr);
+    }
+    else
+        return UniqueEngineWriteLock(*unique_engine_table_mutex);
+}
+
 MergeTreeDataPartType MergeTreeData::choosePartType(size_t bytes_uncompressed, size_t rows_count) const
 {
     const auto settings = getSettings();
@@ -2577,7 +2605,8 @@ bool MergeTreeData::renameTempPartAndAdd(
         if (merging_params.mode == MergingParams::Unique && !out_transaction)
         {
             /// TODO :: check if the part is covered/covering existing active data parts for non-replicated unique engine table as well.?
-            uniq_engine_write_lock = lockUniqueEngineForWrite();
+            uniq_engine_write_lock = lockUniqueEngineForWrite(part->info.partition_id);
+
             uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
             uniq_engine_data_writer->prepare();
         }
@@ -2760,7 +2789,8 @@ MergeTreeData::DataPartsVector MergeTreeData::renameTempPartAndReplace(
         if (merging_params.mode == MergingParams::Unique && !out_transaction)
         {
             /// TODO :: check if the part is covered/covering existing active data parts for non-replicated unique engine table as well.?
-            uniq_engine_write_lock = lockUniqueEngineForWrite();
+            uniq_engine_write_lock = lockUniqueEngineForWrite(part->info.partition_id);
+
             uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
             uniq_engine_data_writer->prepare();
         }
@@ -3290,7 +3320,8 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy)
     {
         MutableDataPartPtr mu_part_copy = const_pointer_cast<DataPart>(part_copy);
         mu_part_copy->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MOVE;
-        uniq_engine_write_lock = lockUniqueEngineForWrite();
+        uniq_engine_write_lock = lockUniqueEngineForWrite(mu_part_copy->info.partition_id);
+
         uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(mu_part_copy);
         uniq_engine_data_writer->prepare();
     }
@@ -4510,11 +4541,13 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(MergeTreeData:
 
     if (!isEmpty())
     {
-        UniqueEngineWriteLock uniq_engine_write_lock;
+        std::vector<UniqueEngineWriteLock> uniq_engine_write_locks;
         if (data.merging_params.mode == MergingParams::Unique)
         {
             /// TODO :: make sure the `MergeTreeData::unique_engine_write_mutex` can block drop_part/drop_partition operators as well.
-            uniq_engine_write_lock = data.lockUniqueEngineForWrite();
+            for (const DataPartPtr & part : precommitted_parts)
+                uniq_engine_write_locks.emplace_back(data.lockUniqueEngineForWrite(part->info.partition_id));
+            
             prepareForUniqueEngineWrite();
         }
 
