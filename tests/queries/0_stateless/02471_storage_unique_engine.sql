@@ -99,3 +99,34 @@ INSERT INTO test_uk_level_db_test_str VALUES (388091629, 1006, '2d88ff16-77de-4d
 SELECT * FROM test_uk_level_db_test_str;
 
 DROP TABLE IF EXISTS test_uk_level_db_test_str;
+
+
+DROP TABLE IF EXISTS test_uk_partition_lock;
+
+CREATE TABLE test_uk_partition_lock
+(
+    `uid` Int64,
+    `send_source` Int64,
+    `msg_id` String,
+    `award_type` Int64,
+    `award_id` String,
+    `version` Int64,
+    `ctime` DateTime
+)
+ENGINE = UniqueMergeTree(version)
+PARTITION BY toDate(ctime)
+ORDER BY award_id
+UNIQUE KEY award_id
+SETTINGS unique_key_deduplicate_level = 1;
+
+INSERT INTO test_uk_partition_lock VALUES (1, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 1, '2024-12-30 10:00:00');
+
+INSERT INTO test_uk_partition_lock VALUES (2, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 2, '2024-12-31 10:00:00');
+
+INSERT INTO test_uk_partition_lock VALUES (3, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 3, '2024-12-30 10:00:00');
+
+INSERT INTO test_uk_partition_lock VALUES (4, 1006, '2d88ff16-77de-4d03-811f-07f792e9aead', 10, '33989', 4, '2024-12-31 10:00:00');
+
+SELECT * FROM test_uk_partition_lock ORDER BY uid;
+
+DROP TABLE IF EXISTS test_uk_partition_lock;

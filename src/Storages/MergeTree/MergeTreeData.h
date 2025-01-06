@@ -218,6 +218,16 @@ public:
         }
     };
 
+    class UniqueEnginePartitionMutexes: public LRUCache<String, std::mutex>
+    {
+        private:
+            using Base = LRUCache<String, std::mutex>;
+
+        public:
+            explicit UniqueEnginePartitionMutexes(size_t max_size)
+                : Base(max_size) {}
+    };
+
     using DataParts = std::set<DataPartPtr, LessDataPart>;
     using DataPartsVector = std::vector<DataPartPtr>;
 
@@ -225,9 +235,16 @@ public:
     using UniqueEngineDataWriters = std::map<String, UniqueEngineDataWriterPtr>;
 
     using DataPartsLock = std::unique_lock<std::mutex>;
+    using UniqueEngineTableMutexPtr = std::shared_ptr<std::mutex>;
+    using UniqueEnginePartitionMutexesPtr = std::shared_ptr<UniqueEnginePartitionMutexes>;
     using UniqueEngineWriteLock = std::unique_lock<std::mutex>;
     DataPartsLock lockParts() const { return DataPartsLock(data_parts_mutex); }
-    UniqueEngineWriteLock lockUniqueEngineForWrite() const { return UniqueEngineWriteLock(unique_engine_write_mutex); }
+
+    /// Lock for writing data to unique engine table, including merged data part.
+    UniqueEngineTableMutexPtr unique_engine_table_mutex;
+    UniqueEnginePartitionMutexesPtr unique_engine_partition_mutexes;
+    std::function<std::shared_ptr<std::mutex>()> load_partition_mutex_func = []() { return std::make_shared<std::mutex>(); };
+    UniqueEngineWriteLock lockUniqueEngineForWrite(const String & partition_id) const;
 
     MergeTreeDataPartType choosePartType(size_t bytes_uncompressed, size_t rows_count) const;
     MergeTreeDataPartType choosePartTypeOnDisk(size_t bytes_uncompressed, size_t rows_count) const;
@@ -1023,8 +1040,6 @@ protected:
 
     /// Current set of data parts.
     mutable std::mutex data_parts_mutex;
-    /// Lock for writing data to unique engine table, including merged data part.
-    mutable std::mutex unique_engine_write_mutex;
     DataPartsIndexes data_parts_indexes;
     DataPartsIndexes::index<TagByInfo>::type & data_parts_by_info;
     DataPartsIndexes::index<TagByStateAndInfo>::type & data_parts_by_state_and_info;
