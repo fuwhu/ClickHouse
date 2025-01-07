@@ -7,9 +7,11 @@
 
 #include <Columns/ColumnsNumber.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <DataTypes/DataTypeArray.h>
 #include <IO/ReadHelpers.h>
 #include <IO/WriteHelpers.h>
 #include <Common/assert_cast.h>
+#include <Core/Field.h>
 
 #include <list>
 
@@ -272,10 +274,11 @@ struct AggregateFunctionWindowFunnelStrictOnceData
   *
   * Usage:
   * - windowFunnel(window)(timestamp, cond1, cond2, cond3, ....)
+  * - windowFunnel(window)(Array(timestamp), cond1, cond2, cond3, ....)
   */
-template <typename T, typename Data>
+template <typename T, typename Data, bool is_array>
 class AggregateFunctionWindowFunnel final
-    : public IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data>>
+    : public IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data, is_array>>
 {
 private:
     UInt64 window;
@@ -476,7 +479,7 @@ public:
     }
 
     AggregateFunctionWindowFunnel(const DataTypes & arguments, const Array & params)
-        : IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data>>(arguments, params, std::make_shared<DataTypeUInt8>())
+        : IAggregateFunctionDataHelper<Data, AggregateFunctionWindowFunnel<T, Data, is_array>>(arguments, params, std::make_shared<DataTypeUInt8>())
     {
         events_size = arguments.size() - 1;
         window = params.at(0).safeGet<UInt64>();
@@ -508,6 +511,35 @@ public:
     void add(AggregateDataPtr __restrict place, const IColumn ** columns, const size_t row_num, Arena *) const override
     {
         bool has_event = false;
+
+        if constexpr (is_array)
+        {
+            const auto & col_array = assert_cast<const ColumnArray &>(*columns[0]);
+            const auto timestamps = col_array[row_num].safeGet<Array>();
+            for (auto i = events_size; i > 0; --i)
+            {
+                auto event = assert_cast<const ColumnVector<UInt8> *>(columns[i])->getData()[row_num];
+                if (event)
+                {
+                    for (const auto & timestamp : timestamps)
+                    {
+                        this->data(place).add(static_cast<T>(timestamp.safeGet<T>()), i);
+                    }
+
+                    has_event = true;
+                }
+            }
+
+            if (strict_order && !has_event)
+            {
+                for (const auto & timestamp : timestamps)
+                {
+                    this->data(place).add(static_cast<T>(timestamp.safeGet<T>()), 0);
+                }
+            }
+            return;
+        }
+
         const auto timestamp = assert_cast<const ColumnVector<T> *>(columns[0])->getData()[row_num];
         /// reverse iteration and stable sorting are needed for events that are qualified by more than one condition.
         for (auto i = events_size; i > 0; --i)
@@ -548,6 +580,24 @@ public:
     }
 };
 
+template <template <typename, typename, bool> class AggregateFunctionTemplate, template <typename> class Data, bool is_array, typename... TArgs>
+IAggregateFunction * createWindowFunnelWithUnsignedIntegerType(const IDataType & argument_type, TArgs &&... args)
+{
+    WhichDataType which(argument_type);
+    if (which.idx == TypeIndex::UInt8)
+        return new AggregateFunctionTemplate<UInt8, Data<UInt8>, is_array>(std::forward<TArgs>(args)...);
+    if (which.idx == TypeIndex::UInt16)
+        return new AggregateFunctionTemplate<UInt16, Data<UInt16>, is_array>(std::forward<TArgs>(args)...);
+    if (which.idx == TypeIndex::UInt32)
+        return new AggregateFunctionTemplate<UInt32, Data<UInt32>, is_array>(std::forward<TArgs>(args)...);
+    if (which.idx == TypeIndex::UInt64)
+        return new AggregateFunctionTemplate<UInt64, Data<UInt64>, is_array>(std::forward<TArgs>(args)...);
+    if (which.idx == TypeIndex::UInt128)
+        return new AggregateFunctionTemplate<UInt128, Data<UInt128>, is_array>(std::forward<TArgs>(args)...);
+    if (which.idx == TypeIndex::UInt256)
+        return new AggregateFunctionTemplate<UInt256, Data<UInt256>, is_array>(std::forward<TArgs>(args)...);
+    return nullptr;
+}
 
 AggregateFunctionPtr
 createAggregateFunctionWindowFunnel(const std::string & name, const DataTypes & arguments, const Array & params, const Settings *)
@@ -576,29 +626,59 @@ createAggregateFunctionWindowFunnel(const std::string & name, const DataTypes & 
     bool strict_once = params.size() > 1 && std::any_of(params.begin() + 1, params.end(), [](const auto & f) { return f.template safeGet<String>() == "strict_once"; });
     if (strict_once)
     {
-        AggregateFunctionPtr res(createWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelStrictOnceData>(*arguments[0], arguments, params));
+        AggregateFunctionPtr res(createWindowFunnelWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelStrictOnceData, false>(*arguments[0], arguments, params));
         WhichDataType which(arguments.front().get());
         if (res)
             return res;
         if (which.isDate())
-            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDate::FieldType>>>(arguments, params);
+            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDate::FieldType>, false>>(arguments, params);
         if (which.isDateTime())
-            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDateTime::FieldType>>>(arguments, params);
+            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDateTime::FieldType>, false>>(arguments, params);
+        if (which.isArray())
+        {
+            // get nested data type
+            const auto & type_array = assert_cast<const DataTypeArray &>(*arguments[0]);
+            WhichDataType nested_type(type_array.getNestedType());
+            if (nested_type.isUInt())
+                return AggregateFunctionPtr(createWindowFunnelWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelStrictOnceData, true>(
+                    *type_array.getNestedType(), arguments, params));
+            if ((nested_type.isDate()))
+                return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDate::FieldType>, true>>(
+                    arguments, params);
+            if (nested_type.isDateTime())
+                return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelStrictOnceData<DataTypeDateTime::FieldType>, true>>(
+                    arguments, params);
+        }
     }
     else
     {
-        AggregateFunctionPtr res(createWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelData>(*arguments[0], arguments, params));
+        AggregateFunctionPtr res(createWindowFunnelWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelData, false>(*arguments[0], arguments, params));
         WhichDataType which(arguments.front().get());
         if (res)
             return res;
         if (which.isDate())
-            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelData<DataTypeDate::FieldType>>>(arguments, params);
+            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelData<DataTypeDate::FieldType>, false>>(arguments, params);
         if (which.isDateTime())
-            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelData<DataTypeDateTime::FieldType>>>(arguments, params);
+            return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelData<DataTypeDateTime::FieldType>, false>>(arguments, params);
+        if (which.isArray())
+        {
+            // get nested data type
+            const auto & type_array = assert_cast<const DataTypeArray &>(*arguments[0]);
+            WhichDataType nested_type(type_array.getNestedType());
+            if (nested_type.isUInt())
+                return AggregateFunctionPtr(createWindowFunnelWithUnsignedIntegerType<AggregateFunctionWindowFunnel, AggregateFunctionWindowFunnelData, true>(
+                    *type_array.getNestedType(), arguments, params));
+            if ((nested_type.isDate()))
+                return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDate::FieldType, AggregateFunctionWindowFunnelData<DataTypeDate::FieldType>, true>>(
+                    arguments, params);
+            if (nested_type.isDateTime())
+                return std::make_shared<AggregateFunctionWindowFunnel<DataTypeDateTime::FieldType, AggregateFunctionWindowFunnelData<DataTypeDateTime::FieldType>, true>>(
+                    arguments, params);
+        }
     }
     throw Exception(ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
                     "Illegal type {} of first argument of aggregate function {}, must "
-                    "be Unsigned Number, Date, DateTime", arguments.front().get()->getName(), name);
+                    "be Unsigned Number, Date, DateTime or Array with above nested types", arguments.front().get()->getName(), name);
 }
 
 }
