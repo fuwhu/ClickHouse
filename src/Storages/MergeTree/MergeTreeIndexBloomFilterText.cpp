@@ -3,6 +3,8 @@
 #include <Columns/ColumnArray.h>
 #include <Common/OptimizedRegularExpression.h>
 #include <Common/quoteString.h>
+#include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/DataTypeMap.h>
 #include <Core/Defines.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeLowCardinality.h>
@@ -128,6 +130,36 @@ void MergeTreeIndexAggregatorBloomFilterText::update(const Block & block, size_t
                 }
 
                 current_position += 1;
+            }
+        }
+        else if (isMap(column_with_type.type))
+        {
+            const auto & column_map = assert_cast<const ColumnMap &>(*column);
+            const auto & column_offsets = column_map.getNestedColumn().getOffsets();
+            const auto & column_key = column_map.getNestedData().getColumn(0);
+
+            for (size_t i = 0; i < rows_read; ++i)
+            {
+                size_t element_start_row = column_offsets[current_position - 1];
+                size_t elements_size = column_offsets[current_position] - element_start_row;
+
+                for (size_t row_num = 0; row_num < elements_size; ++row_num)
+                {
+                    auto ref = column_key.getDataAt(element_start_row + row_num);
+                    token_extractor->stringPaddedToBloomFilter(ref.data, ref.size, granule->bloom_filters[col]);
+                }
+
+                current_position += 1;
+            }
+        }
+        else if (column_with_type.type->isNullable())
+        {
+            const auto & column_nullable = assert_cast<const ColumnNullable &>(*column);
+            const auto & nested_column = column_nullable.getNestedColumn();
+            for (size_t i = 0; i < rows_read; ++i)
+            {
+                auto ref = nested_column.getDataAt(current_position + i);
+                token_extractor->stringPaddedToBloomFilter(ref.data, ref.size, granule->bloom_filters[col]);
             }
         }
         else
@@ -369,6 +401,7 @@ bool MergeTreeConditionBloomFilterText::extractAtomFromTree(const RPNBuilderTree
                  function_name == "notEquals" ||
                  function_name == "has" ||
                  function_name == "mapContains" ||
+                 function_name == "mapContainsKeyLike" ||
                  function_name == "match" ||
                  function_name == "like" ||
                  function_name == "notLike" ||
@@ -434,7 +467,14 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
 
             auto first_argument = key_function_node.getArgumentAt(0);
             const auto map_column_name = first_argument.getColumnName();
-            if (const auto map_keys_index = getKeyIndex(fmt::format("mapKeys({})", map_column_name)))
+
+            auto map_keys_index = getKeyIndex(map_column_name);
+            if (!map_keys_index)
+                map_keys_index = getKeyIndex(fmt::format("mapKeys({})", map_column_name));
+
+            auto map_values_exists = getKeyIndex(fmt::format("mapValues({})", map_column_name));
+
+            if (map_keys_index)
             {
                 auto second_argument = key_function_node.getArgumentAt(1);
                 DataTypePtr const_type;
@@ -452,7 +492,7 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
                     return false;
                 }
             }
-            else if (const auto map_values_exists = getKeyIndex(fmt::format("mapValues({})", map_column_name)))
+            else if (map_values_exists)
             {
                 key_index = map_values_exists;
             }
@@ -483,22 +523,7 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
     if (!key_index && !map_key_index)
         return false;
 
-    if (map_key_index)
-    {
-        if (function_name == "has" || function_name == "mapContains")
-        {
-            out.key_column = *key_index;
-            out.function = RPNElement::FUNCTION_HAS;
-            out.bloom_filter = std::make_unique<BloomFilter>(params);
-            auto & value = const_value.safeGet<String>();
-            token_extractor->stringToBloomFilter(value.data(), value.size(), *out.bloom_filter);
-            return true;
-        }
-        // When map_key_index is set, we shouldn't use ngram/token bf for other functions
-        return false;
-    }
-
-    if (function_name == "has")
+    if (function_name == "has" || function_name == "mapContains")
     {
         out.key_column = *key_index;
         out.function = RPNElement::FUNCTION_HAS;
@@ -506,6 +531,12 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
         auto & value = const_value.safeGet<String>();
         token_extractor->stringToBloomFilter(value.data(), value.size(), *out.bloom_filter);
         return true;
+    }
+
+    if (map_key_index)
+    { 
+        // When map_key_index is set, we shouldn't use ngram/token bf for other functions
+        return false;
     }
 
     if (function_name == "notEquals")
@@ -526,7 +557,7 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
         token_extractor->stringToBloomFilter(value.data(), value.size(), *out.bloom_filter);
         return true;
     }
-    if (function_name == "like")
+    if (function_name == "like" || function_name == "mapContainsKeyLike")
     {
         out.key_column = *key_index;
         out.function = RPNElement::FUNCTION_EQUALS;
@@ -761,6 +792,16 @@ void bloomFilterIndexTextValidator(const IndexDescription & index, bool /*attach
             const auto & array_type = assert_cast<const DataTypeArray &>(*index_data_type);
             data_type = WhichDataType(array_type.getNestedType());
         }
+        else if (data_type.isMap())
+        {
+            const auto & map_type = assert_cast<const DataTypeMap &>(*index_data_type);
+            data_type = WhichDataType(map_type.getKeyType());
+        }
+        else if (data_type.isNullable())
+        {
+            const auto & nullable_type = assert_cast<const DataTypeNullable &>(*index_data_type);
+            data_type = WhichDataType(nullable_type.getNestedType());
+        }
         else if (data_type.isLowCardinality())
         {
             const auto & low_cardinality = assert_cast<const DataTypeLowCardinality &>(*index_data_type);
@@ -768,8 +809,11 @@ void bloomFilterIndexTextValidator(const IndexDescription & index, bool /*attach
         }
 
         if (!data_type.isString() && !data_type.isFixedString() && !data_type.isIPv6())
-            throw Exception(ErrorCodes::INCORRECT_QUERY,
-                "Ngram and token bloom filter indexes can only be used with column types `String`, `FixedString`, `LowCardinality(String)`, `LowCardinality(FixedString)`, `Array(String)` or `Array(FixedString)`");
+            throw Exception(
+                ErrorCodes::INCORRECT_QUERY,
+                "Ngram and token bloom filter indexes can only be used with column types"
+                "`String|FixedString`, `Nullable(String|FixedString)`, `LowCardinality(String|FixedString)`, "
+                " `Array(String|FixedString)` or `Map(String|FixedString, ...)`");
     }
 
     if (index.type == NgramTokenExtractor::getName())
