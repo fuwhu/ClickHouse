@@ -23,6 +23,7 @@ private:
 public:
     static constexpr bool is_parametric = true;
 
+    explicit DataTypeMap(const DataTypePtr & nested_);
     explicit DataTypeMap(const DataTypes & elems);
     DataTypeMap(const DataTypePtr & key_type_, const DataTypePtr & value_type_);
 

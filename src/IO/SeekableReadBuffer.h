@@ -1,6 +1,7 @@
 #pragma once
 
 #include <IO/ReadBuffer.h>
+#include "Common/Exception.h"
 #include <optional>
 
 namespace DB
@@ -27,6 +28,8 @@ public:
      * @return New position from the beginning of underlying buffer / file.
      */
     virtual off_t seek(off_t off, int whence) = 0;
+
+    virtual off_t seek(off_t /*off*/) { throw Exception("the seek with only offset as argument is not implemented.", ErrorCodes::NOT_IMPLEMENTED); }
 
     /**
      * Keep in mind that seekable buffer may encounter eof() once and the working buffer

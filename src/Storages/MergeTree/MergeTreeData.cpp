@@ -6415,15 +6415,15 @@ StorageSnapshotPtr MergeTreeData::getStorageSnapshot(const StorageMetadataPtr & 
     return std::make_shared<StorageSnapshot>(*this, metadata_snapshot, object_columns, std::move(snapshot_data));
 }
 
-void MergeTreeData::checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata, bool throw_on_error) const
+void MergeTreeData::checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata_, bool throw_on_error) const
 {
     auto settings = getDefaultSettings();
-    if (metadata.settings_changes) 
+    if (metadata_.settings_changes)
     {
-        const auto & changes = metadata.settings_changes->as<const ASTSetQuery &>().changes;
+        const auto & changes = metadata_.settings_changes->as<const ASTSetQuery &>().changes;
         settings->applyChanges(changes);
     }
-    checkColumnFilenamesForCollision(metadata.getColumns(), *settings, throw_on_error);
+    checkColumnFilenamesForCollision(metadata_.getColumns(), *settings, throw_on_error);
 }
 
 void MergeTreeData::checkColumnFilenamesForCollision(const ColumnsDescription & columns, const MergeTreeSettings & settings, bool throw_on_error) const

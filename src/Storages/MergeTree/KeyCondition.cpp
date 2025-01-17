@@ -1983,6 +1983,17 @@ BoolMask KeyCondition::checkInHyperrectangle(
             || element.function == RPNElement::FUNCTION_IS_NOT_NULL)
         {
             const Range * key_range = &hyperrectangle[element.key_column];
+            if (key_range->has_null.has_value() && key_range->only_null.has_value())
+            {
+                bool has_null = key_range->has_null.value();
+                bool only_null = key_range->only_null.value();
+                if ((element.function == RPNElement::FUNCTION_IS_NULL && !has_null)
+                    || (element.function == RPNElement::FUNCTION_IS_NOT_NULL && only_null))
+                    rpn_stack.emplace_back(false, true);
+                else
+                    rpn_stack.emplace_back(true, false);
+                continue;
+            }
 
             /// No need to apply monotonic functions as nulls are kept.
             bool intersects = element.range.intersectsRange(*key_range);

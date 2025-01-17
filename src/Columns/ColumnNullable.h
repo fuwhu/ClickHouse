@@ -108,6 +108,8 @@ public:
     // Special function for nullable minmax index
     void getExtremesNullLast(Field & min, Field & max) const;
 
+    ColumnPtr getNestedColumnWithDefaultOnNull() const;
+
     MutableColumns scatter(ColumnIndex num_columns, const Selector & selector) const override
     {
         return scatterImpl<ColumnNullable>(num_columns, selector);

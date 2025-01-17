@@ -54,6 +54,8 @@ void registerTableFunctionDictionary(TableFunctionFactory & factory);
 
 void registerTableFunctionFormat(TableFunctionFactory & factory);
 
+void registerTableFunctionIceberg(TableFunctionFactory & factory);
+
 void registerTableFunctions();
 
 }

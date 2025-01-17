@@ -62,6 +62,7 @@
 #include <Storages/System/attachInformationSchemaTables.h>
 #include <Storages/Cache/ExternalDataSourceCache.h>
 #include <Storages/Cache/registerRemoteFileMetadatas.h>
+#include <Disks/RemoteDisksCommon.h>
 #include <AggregateFunctions/registerAggregateFunctions.h>
 #include <Functions/registerFunctions.h>
 #include <TableFunctions/registerTableFunctions.h>
@@ -1475,6 +1476,21 @@ if (ThreadFuzzer::instance().isEffective())
         catch (...)
         {
             tryLogCurrentException(log, "Caught exception while loading user defined executable functions.");
+            throw;
+        }
+
+        // try to load iceberg cache before server start
+        try
+        {
+            const auto & config = global_context->getConfigRef();
+            if (config.getBool("iceberg.cache_init_before_server_start", false))
+            {
+                getCachePtrForDisk("iceberg", config, "iceberg", global_context);
+            }
+        }
+        catch (...)
+        {
+            tryLogCurrentException(log, "Caught exception while loading iceberg cache");
             throw;
         }
 

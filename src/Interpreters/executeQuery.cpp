@@ -636,6 +636,9 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
         }
         else
         {
+            context->initIcebergDataStreamsMetrics();
+            context->initIcebergScanFilesMetrics();
+            context->initIcebergCreateFilesMetrics();
             interpreter = InterpreterFactory::get(ast, context, SelectQueryOptions(stage).setInternal(internal));
 
             if (!interpreter->ignoreQuota())
@@ -727,6 +730,9 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
             elem.normalized_query_hash = normalizedQueryHash<false>(query_for_logging);
 
             elem.client_info = client_info;
+            elem.iceberg_data_streams_metrics = context->getIcebergDataStreamsMetrics();
+            elem.iceberg_scan_files_metrics = context->getIcebergScanFilesMetrics();
+            elem.iceberg_create_files_metrics = context->getIcebergCreateFilesMetrics();
 
             bool log_queries = settings.log_queries && !internal;
 

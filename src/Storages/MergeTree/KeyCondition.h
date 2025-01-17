@@ -59,6 +59,9 @@ public:
     bool left_included = false;           /// includes the left border
     bool right_included = false;          /// includes the right border
 
+    std::optional<bool> has_null; /// special case for ORC/Parquet filter push down
+    std::optional<bool> only_null;
+
     /// The whole universe (not null).
     Range() {} /// NOLINT
 

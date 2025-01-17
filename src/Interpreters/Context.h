@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <exception>
+#include <vector>
 
 
 namespace Poco::Net { class IPAddress; }
@@ -201,6 +202,68 @@ private:
   */
 class Context: public std::enable_shared_from_this<Context>
 {
+public:
+    struct IcebergDataStreamMetrics
+    {
+        Decimal64 iceberg_file_source_read_start_time_us{};
+        UInt32 assigned_file_count = 0;
+        UInt64 assigned_file_size = 0;
+        UInt32 assigned_split_count = 0;
+        UInt32 read_file_count = 0;
+        UInt64 prepare_files_time_cost_us = 0;
+
+        UInt64 stream_iceberg_file_source_read_time_cost_us = 0;
+        UInt64 stream_read_remote_bytes = 0;
+        UInt64 stream_read_remote_time_cost_us = 0;
+        UInt32 stream_seek_remote_count = 0;
+        UInt32 stream_read_remote_count = 0;
+        UInt64 stream_seek_remote_time_cost_us = 0;
+        UInt64 stream_remote_read_init_wait_cost_us = 0;
+        UInt64 stream_read_local_bytes = 0;
+        UInt32 stream_read_local_count = 0;
+        UInt64 stream_read_local_time_cost_us = 0;
+        UInt64 stream_write_local_bytes = 0;
+        UInt32 stream_write_local_count = 0;
+        UInt64 stream_write_local_time_cost_us = 0;
+        UInt64 stream_read_total_time_cost_us = 0;
+        UInt64 stream_orc_to_ch_columns_time_cost_us = 0;
+
+        UInt64 file_iceberg_file_source_read_time_cost_us = 0;
+        UInt64 file_read_remote_bytes = 0;
+        UInt64 file_read_remote_time_cost_us = 0;
+        UInt32 file_seek_remote_count = 0;
+        UInt32 file_read_remote_count = 0;
+        UInt64 file_seek_remote_time_cost_us = 0;
+        UInt64 file_remote_read_init_wait_cost_us = 0;
+        UInt64 file_read_local_bytes = 0;
+        UInt32 file_read_local_count = 0;
+        UInt64 file_read_local_time_cost_us = 0;
+        UInt64 file_write_local_bytes = 0;
+        UInt32 file_write_local_count = 0;
+        UInt64 file_write_local_time_cost_us = 0;
+        UInt64 file_read_total_time_cost_us = 0;
+        UInt64 file_orc_to_ch_columns_time_cost_us = 0;
+    };
+    using IcebergDataStreamsMetrics = std::vector<IcebergDataStreamMetrics>;
+    using IcebergDataStreamsMetricsPtr = std::shared_ptr<IcebergDataStreamsMetrics>;
+
+    struct IcebergScanFileMetrics
+    {
+        Decimal64 scan_file_start_time_us{};
+        UInt64 scan_iceberg_file_time_cost_us = 0;
+    };
+    using IcebergScanFilesMetrics = std::vector<IcebergScanFileMetrics>;
+    using IcebergScanFilesMetricsPtr = std::shared_ptr<IcebergScanFilesMetrics>;
+
+    struct IcebergCreateFileMetrics
+    {
+        Decimal64 create_file_start_time_us{};
+        UInt64 create_iceberg_file_time_cost_us = 0;
+        UInt64 apply_filters_time_cost_us = 0;
+    };
+    using IcebergCreateFilesMetrics = std::vector<IcebergCreateFileMetrics>;
+    using IcebergCreateFilesMetricsPtr = std::shared_ptr<IcebergCreateFilesMetrics>;
+
 private:
     ContextSharedPart * shared;
 
@@ -327,6 +390,12 @@ private:
 
     /// Total number of child local/remote queries generated for a distributed query (may involve multiple distributed tables), and subquery does not count here. this is only for query context.
     mutable std::shared_ptr<UInt32> total_child_query_count_ptr = nullptr;
+
+    mutable IcebergDataStreamsMetricsPtr iceberg_data_streams_metrics = nullptr;
+
+    mutable IcebergScanFilesMetricsPtr iceberg_scan_files_metrics = nullptr;
+
+    mutable IcebergCreateFilesMetricsPtr iceberg_create_files_metrics = nullptr;
 
 public:
     // Top-level OpenTelemetry trace context for the query. Makes sense only for a query context.
@@ -932,16 +1001,75 @@ public:
     ReadSettings getReadSettings() const;
 
     void initRemoteQueryTimeoutCount() const;
-
     UInt32 getRemoteQueryTimeoutCount() const;
-
     void incrementRemoteQueryTimeoutCount() const;
 
     void initTotalChildQueryCount() const;
-
     UInt32 getTotalChildQueryCount() const;
-
     void incrementTotalChildQueryCount(UInt32 cnt) const;
+
+    void initIcebergDataStreamsMetrics() const;
+    IcebergDataStreamsMetricsPtr getIcebergDataStreamsMetrics() const;
+    Int32 newIcebergDataStreamMetrics() const;
+    void setIcebergFileSourceReadStartTime(Int32 metrics_index, Decimal64 time) const;
+    
+    void updateIcebergFileMetrics(
+        Int32 metrics_index,
+        UInt64 iceberg_file_source_read_time_cost_us,
+        UInt64 read_remote_bytes,
+        UInt64 read_remote_time_cost_us,
+        UInt32 seek_remote_count,
+        UInt32 read_remote_count,
+        UInt64 seek_remote_time_cost_us,
+        UInt64 remote_read_init_wait_cost_us,
+        UInt64 read_local_bytes,
+        UInt32 read_local_count,
+        UInt64 read_local_time_cost_us,
+        UInt64 write_local_bytes,
+        UInt32 write_local_count,
+        UInt64 write_local_time_cost_us,
+        UInt64 read_total_time_cost_us,
+        UInt64 orc_table_to_ch_columns_time_cost_us
+    ) const;
+    
+    void addIcebergFileMetricsToStreamMetrics(
+        Int32 metrics_index,
+        UInt64 file_iceberg_file_source_read_time_cost_us, 
+        UInt64 file_read_remote_bytes,
+        UInt64 file_read_remote_time_cost_us,
+        UInt32 file_seek_remote_count,
+        UInt32 file_read_remote_count,
+        UInt64 file_seek_remote_time_cost_us,
+        UInt64 file_remote_read_init_wait_cost_us,
+        UInt64 file_read_local_bytes,
+        UInt32 file_read_local_count,
+        UInt64 file_read_local_time_cost_us,
+        UInt64 file_write_local_bytes,
+        UInt32 file_write_local_count,
+        UInt64 file_write_local_time_cost_us,
+        UInt64 file_read_total_time_cost_us,
+        UInt64 file_orc_table_to_ch_columns_time_cost_us
+    ) const;
+
+    void addStreamRemoteReadInitWaitTime(Int32 metrics_index, UInt64 remote_read_init_wait_cost_us) const;
+
+    void initIcebergScanFilesMetrics() const;
+    IcebergScanFilesMetricsPtr getIcebergScanFilesMetrics() const;
+    Int32 newIcebergScanFileMetrics() const;
+    void setScanFileStartTime(Int32 metrics_index, Decimal64 time) const;
+    void initIcebergCreateFilesMetrics() const;
+    IcebergCreateFilesMetricsPtr getIcebergCreateFilesMetrics() const;
+    Int32 newIcebergCreateFileMetrics() const;
+    void setCreateFileStartTime(Int32 metrics_index, Decimal64 time) const;
+    void setScanIcebergFileTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const;
+    void setCreateIcebergFileTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const;
+    void setApplyFiltersTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const;
+
+    void setStreamAssignedFileCount(Int32 metrics_index, UInt32 assigned_file_cnt) const;
+    void setStreamAssignedFileSize(Int32 metrics_index, UInt64 assigned_file_size) const;
+    void setStreamAssignedSplitCount(Int32 metrics_index, UInt32 assigned_split_cnt) const;
+    void incrementStreamReadFileCount(Int32 metrics_index) const;
+    void increaseStreamPrepareFilesTimeCostMicroseconds(Int32 metrics_index, UInt32 prepare_files_time_cost_us) const;
 
 private:
     std::unique_lock<std::recursive_mutex> getLock() const;

@@ -36,6 +36,9 @@ MergeSorter::MergeSorter(Chunks chunks_, SortDescription & description_, size_t 
         /// which can be inefficient.
         convertToFullIfSparse(chunk);
 
+        /// Convert to full column, because some cursors expect non-contant columns
+        convertToFullIfConst(chunk);
+
         cursors.emplace_back(chunk.getColumns(), description);
         has_collation |= cursors.back().has_collation;
 

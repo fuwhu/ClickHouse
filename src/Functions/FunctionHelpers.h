@@ -25,6 +25,13 @@ const Type * checkAndGetDataType(const IDataType * data_type)
     return typeid_cast<const Type *>(data_type);
 }
 
+/// Throws on mismatch.
+template <typename Type>
+const Type & checkAndGetDataType(const IDataType & data_type)
+{
+    return typeid_cast<const Type &>(data_type);
+}
+
 template <typename... Types>
 bool checkDataTypes(const IDataType * data_type)
 {

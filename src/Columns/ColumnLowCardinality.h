@@ -87,6 +87,8 @@ public:
 
     void popBack(size_t n) override { idx.popBack(n); }
 
+    ColumnPtr cloneWithDefaultOnNull() const;
+
     StringRef serializeValueIntoArena(size_t n, Arena & arena, char const *& begin) const override;
 
     const char * deserializeAndInsertFromArena(const char * pos) override;

@@ -10,6 +10,9 @@
 #include <boost/noncopyable.hpp>
 #include <map>
 
+#include <Common/callOnce.h>
+#include <Common/FileCacheSettings.h>
+#include <Common/ThreadPool.h>
 #include "FileCache_fwd.h"
 #include <base/logger_useful.h>
 #include <Common/FileSegment.h>
@@ -30,11 +33,7 @@ public:
     using Key = UInt128;
     using Downloader = std::unique_ptr<SeekableReadBuffer>;
 
-    IFileCache(
-        const String & cache_base_path_,
-        size_t max_size_,
-        size_t max_element_size_,
-        size_t max_file_segment_size_);
+    explicit IFileCache(const FileCacheSettings & settings);
 
     virtual ~IFileCache() = default;
 
@@ -67,6 +66,8 @@ public:
      */
     virtual FileSegmentsHolder getOrSet(const Key & key, size_t offset, size_t size) = 0;
 
+    size_t getMaxFileSegmentSize() const { return max_file_segment_size; }
+
     /// For debug.
     virtual String dumpStructure(const Key & key) = 0;
 
@@ -76,8 +77,8 @@ protected:
     size_t max_element_size;
     size_t max_file_segment_size;
 
-    bool is_initialized = false;
-
+    std::atomic<bool> is_initialized = false;
+    OnceFlag initialize_called;
     mutable std::mutex mutex;
 
     virtual bool tryReserve(
@@ -109,11 +110,9 @@ using FileCachePtr = std::shared_ptr<IFileCache>;
 class LRUFileCache final : public IFileCache
 {
 public:
-    LRUFileCache(
-        const String & cache_base_path_,
-        size_t max_size_,
-        size_t max_element_size_ = REMOTE_FS_OBJECTS_CACHE_DEFAULT_MAX_ELEMENTS,
-        size_t max_file_segment_size_ = REMOTE_FS_OBJECTS_CACHE_DEFAULT_MAX_FILE_SEGMENT_SIZE);
+    explicit LRUFileCache(const FileCacheSettings & settings);
+
+    ~LRUFileCache() override;
 
     FileSegmentsHolder getOrSet(const Key & key, size_t offset, size_t size) override;
 
@@ -195,6 +194,19 @@ private:
 
     FileSegments splitRangeIntoEmptyCells(
         const Key & key, size_t offset, size_t size, std::lock_guard<std::mutex> & cache_lock);
+
+    void cleanFunc();
+
+    //exist similar clean thread in higher version (src/Interpreters/Cache/Metadata.cpp)
+    ThreadFromGlobalPool cleaner_thread;
+    std::atomic<bool> stopped = false;
+    std::condition_variable clean_condition;
+    std::mutex sleep_mutex;
+    std::chrono::seconds clean_interval_seconds;
+    int clean_ttl;
+    int max_clean_segment_per_turn;
+    std::chrono::seconds  min_clean_interval_seconds;
+    size_t async_clean_start_threshold;
 
 public:
     struct Stat

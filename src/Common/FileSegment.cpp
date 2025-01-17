@@ -1,5 +1,6 @@
 #include "FileSegment.h"
 #include <base/getThreadId.h>
+#include <base/scope_guard.h>
 #include <Common/FileCache.h>
 #include <Common/hex.h>
 #include <IO/WriteBufferFromString.h>
@@ -21,7 +22,8 @@ FileSegment::FileSegment(
         const Key & key_,
         IFileCache * cache_,
         State download_state_)
-    : segment_range(offset_, offset_ + size_ - 1)
+    : access_time(std::time(nullptr))
+    , segment_range(offset_, offset_ + size_ - 1)
     , download_state(download_state_)
     , file_key(key_)
     , cache(cache_)
@@ -159,7 +161,7 @@ void FileSegment::setRemoteFileReader(RemoteFileReaderPtr remote_file_reader_)
     remote_file_reader = remote_file_reader_;
 }
 
-void FileSegment::write(const char * from, size_t size)
+void FileSegment::write(char * from, size_t size)
 {
     if (!size)
         throw Exception(ErrorCodes::REMOTE_FS_OBJECT_CACHE_ERROR, "Writing zero size is not allowed");
@@ -177,12 +179,14 @@ void FileSegment::write(const char * from, size_t size)
     if (!cache_writer)
     {
         auto download_path = cache->getPathInLocalCache(key(), offset());
-        cache_writer = std::make_unique<WriteBufferFromFile>(download_path);
+        cache_writer = std::make_unique<WriteBufferFromFile>(download_path, 0);
     }
 
     try
     {
-        cache_writer->write(from, size);
+        cache_writer->set(from, size, size);
+
+        SCOPE_EXIT({ cache_writer->set(nullptr, 0); });
 
         std::lock_guard download_lock(download_mutex);
 
