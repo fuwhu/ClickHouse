@@ -45,10 +45,12 @@ Chunk ORCBlockInputFormat::generate()
         return res;
     }
 
-    std::shared_ptr<arrow::Table> table;
-    arrow::Status table_status = batch_reader->ReadAll(&table);
-    if (!table_status.ok())
-        throw ParsingException(ErrorCodes::CANNOT_READ_ALL_DATA, "Error while reading batch of ORC data: {}", table_status.ToString());
+    arrow::Result<std::shared_ptr<arrow::Table>> read_result = batch_reader->ToTable();
+    if (!read_result.ok())
+        throw ParsingException(
+            ErrorCodes::CANNOT_READ_ALL_DATA, "Error while reading batch of ORC data: {}", read_result.status().ToString());
+
+    std::shared_ptr<arrow::Table> table = std::move(read_result).ValueOrDie();
 
     if (!table || !table->num_rows())
         return res;
@@ -56,13 +58,10 @@ Chunk ORCBlockInputFormat::generate()
     if (format_settings.use_lowercase_column_name)
         table = *table->RenameColumns(include_column_names);
 
-    arrow_column_to_ch_column->arrowTableToCHChunk(res, table);
     /// If defaults_for_omitted_fields is true, calculate the default values from default expression for omitted fields.
     /// Otherwise fill the missing columns with zero values of its type.
-    if (format_settings.defaults_for_omitted_fields)
-        for (size_t row_idx = 0; row_idx < res.getNumRows(); ++row_idx)
-            for (const auto & column_idx : missing_columns)
-                block_missing_values.setBit(column_idx, row_idx);
+    BlockMissingValues * block_missing_values_ptr = format_settings.defaults_for_omitted_fields ? &block_missing_values : nullptr;
+    res = arrow_column_to_ch_column->arrowTableToCHChunk(table, (table)->num_rows(), block_missing_values_ptr);
 
     return res;
 }
@@ -112,7 +111,7 @@ static void getFileReaderAndSchema(
     const FormatSettings & format_settings,
     std::atomic<int> & is_stopped)
 {
-    auto arrow_file = asArrowFile(in, format_settings, is_stopped);
+    auto arrow_file = asArrowFile(in, format_settings, is_stopped, "ORC", ORC_MAGIC_BYTES);
     if (is_stopped)
         return;
 
@@ -149,12 +148,15 @@ void ORCBlockInputFormat::prepareReader()
         return;
 
     arrow_column_to_ch_column = std::make_unique<ArrowColumnToCHColumn>(
-        getPort().getHeader(), "ORC", format_settings.orc.import_nested, format_settings.orc.allow_missing_columns);
-    missing_columns = arrow_column_to_ch_column->getMissingColumns(*schema);
+        getPort().getHeader(),
+        "ORC",
+        format_settings.orc.allow_missing_columns,
+        format_settings.null_as_default,
+        format_settings.date_time_overflow_behavior,
+        format_settings.orc.case_insensitive_column_matching);
 
     std::unordered_set<String> nested_table_names;
-    if (format_settings.orc.import_nested)
-        nested_table_names = Nested::getAllTableNames(getPort().getHeader());
+    nested_table_names = Nested::getAllTableNames(getPort().getHeader());
 
     /// In ReadStripe column indices should be started from 1,
     /// because 0 indicates to select all columns.
@@ -190,32 +192,6 @@ NamesAndTypesList ORCSchemaReader::readSchema()
     auto header = ArrowColumnToCHColumn::arrowSchemaToCHHeader(*schema, "ORC");
     return header.getNamesAndTypesList();
 }
-
-void registerInputFormatORC(FormatFactory & factory)
-{
-    factory.registerInputFormat(
-            "ORC",
-            [](ReadBuffer &buf,
-                const Block &sample,
-                const RowInputFormatParams &,
-                const FormatSettings & settings)
-            {
-                return std::make_shared<ORCBlockInputFormat>(buf, sample, settings);
-            });
-    factory.markFormatAsColumnOriented("ORC");
-}
-
-void registerORCSchemaReader(FormatFactory & factory)
-{
-    factory.registerSchemaReader(
-        "ORC",
-        [](ReadBuffer & buf, const FormatSettings & settings, ContextPtr)
-        {
-            return std::make_shared<ORCSchemaReader>(buf, settings);
-        }
-        );
-}
-
 }
 #else
 

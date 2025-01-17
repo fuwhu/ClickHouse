@@ -16,6 +16,7 @@ namespace ErrorCodes
 {
     extern const int ATTEMPT_TO_READ_AFTER_EOF;
     extern const int CANNOT_READ_ALL_DATA;
+    extern const int NOT_IMPLEMENTED;
 }
 
 /** A simple abstract class for buffered data reading (char sequences) from somewhere.
@@ -221,6 +222,11 @@ public:
     virtual size_t readBig(char * to, size_t n)
     {
         return read(to, n);
+    }
+
+    virtual size_t readDirect(char * /*to*/, size_t /*offset*/, size_t /*n*/)
+    {
+        throw Exception("readDirect not implemented.", ErrorCodes::NOT_IMPLEMENTED);
     }
 
     /** Do something to allow faster subsequent call to 'nextImpl' if possible.

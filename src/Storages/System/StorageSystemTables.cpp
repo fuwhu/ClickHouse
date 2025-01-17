@@ -4,6 +4,7 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <Storages/System/StorageSystemTables.h>
 #include <Storages/SelectQueryInfo.h>
+#include <Storages/Iceberg/StorageIceberg.h>
 #include <Storages/VirtualColumnUtils.h>
 #include <Storages/StorageBuffer.h>
 #include <Databases/IDatabase.h>
@@ -406,7 +407,7 @@ protected:
                     src_index += 3;
 
                 StorageMetadataPtr metadata_snapshot;
-                if (table)
+                if (table && !dynamic_cast<StorageIceberg *>(table.get()))
                     metadata_snapshot = table->getInMemoryMetadataPtr();
 
                 ASTPtr expression_ptr;

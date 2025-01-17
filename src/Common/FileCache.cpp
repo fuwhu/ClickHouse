@@ -1,17 +1,34 @@
 #include "FileCache.h"
 
+#include "Common/CurrentMetrics.h"
+#include "Common/Stopwatch.h"
 #include <Common/randomSeed.h>
 #include <Common/SipHash.h>
 #include <Common/hex.h>
+#include <Common/setThreadName.h>
+#include "base/logger_useful.h"
 #include <IO/ReadHelpers.h>
 #include <IO/WriteBufferFromFile.h>
 #include <IO/ReadSettings.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/Operators.h>
 #include <pcg-random/pcg_random.hpp>
+#include <chrono>
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+namespace CurrentMetrics
+{
+    extern const Metric FilesystemCacheSize;
+    extern const Metric FilesystemCacheSizeLimit;
+    extern const Metric FilesystemCacheElements;
+    extern const Metric FilesystemCacheElementLimit;
+    extern const Metric FilesystemCacheAsyncEvictElements;
+    extern const Metric FilesystemCacheSyncEvictElements;
+    extern const Metric FilesystemCacheAsyncEvictSize;
+    extern const Metric FilesystemCacheAsyncEvictTime;
+}
 
 namespace DB
 {
@@ -29,16 +46,16 @@ namespace
     }
 }
 
-IFileCache::IFileCache(
-    const String & cache_base_path_,
-    size_t max_size_,
-    size_t max_element_size_,
-    size_t max_file_segment_size_)
-    : cache_base_path(cache_base_path_)
-    , max_size(max_size_)
-    , max_element_size(max_element_size_)
-    , max_file_segment_size(max_file_segment_size_)
+IFileCache::IFileCache(const FileCacheSettings & settings)
+    : cache_base_path(settings.base_path)
+    , max_size(settings.max_size)
+    , max_element_size(settings.max_element_size)
+    , max_file_segment_size(settings.max_file_segment_size)
 {
+    CurrentMetrics::set(CurrentMetrics::FilesystemCacheSizeLimit, max_size);
+    CurrentMetrics::set(CurrentMetrics::FilesystemCacheElementLimit, max_element_size);
+    if (!fs::exists(cache_base_path))
+        fs::create_directories(cache_base_path);
 }
 
 IFileCache::Key IFileCache::hash(const String & path)
@@ -71,20 +88,42 @@ void IFileCache::assertInitialized() const
         throw Exception(ErrorCodes::REMOTE_FS_OBJECT_CACHE_ERROR, "Cache not initialized");
 }
 
-LRUFileCache::LRUFileCache(const String & cache_base_path_, size_t max_size_, size_t max_element_size_, size_t max_file_segment_size_)
-    : IFileCache(cache_base_path_, max_size_, max_element_size_, max_file_segment_size_)
+LRUFileCache::LRUFileCache(const FileCacheSettings & settings)
+    : IFileCache(settings)
     , log(&Poco::Logger::get("LRUFileCache"))
+    , clean_interval_seconds(std::chrono::seconds{settings.clean_interval_seconds})
+    , clean_ttl(settings.clean_ttl)
+    , max_clean_segment_per_turn(settings.max_clean_segment_per_turn)
+    , min_clean_interval_seconds(settings.min_clean_interval_seconds)
+    , async_clean_start_threshold(max_size * settings.async_clean_ratio)
 {
+    if (settings.clean_interval_seconds > 0)
+        cleaner_thread =  ThreadFromGlobalPool{&LRUFileCache::cleanFunc, this};
+}
+
+LRUFileCache::~LRUFileCache()
+{
+    {
+        std::lock_guard cache_lock(mutex);
+        stopped = true;
+    }
+    clean_condition.notify_all();
+
+    if (cleaner_thread.joinable())
+        cleaner_thread.join();
 }
 
 void LRUFileCache::initialize()
 {
-    if (fs::exists(cache_base_path))
-        loadCacheInfoIntoMemory();
-    else
-        fs::create_directories(cache_base_path);
+    // Prevent initialize() from running twice. This may be caused by two cache disks being created with the same path (see integration/test_filesystem_cache).
+    callOnce(initialize_called, [&] {
+        if (fs::exists(cache_base_path))
+            loadCacheInfoIntoMemory();
+        else
+            fs::create_directories(cache_base_path);
 
-    is_initialized = true;
+        is_initialized = true;
+    });
 }
 
 void LRUFileCache::useCell(
@@ -98,6 +137,7 @@ void LRUFileCache::useCell(
                         "Cannot have zero size downloaded file segments. Current file segment: {}",
                         file_segment->range().toString());
 
+    file_segment->access_time = std::time(nullptr);
     result.push_back(cell.file_segment);
 
     /**
@@ -418,19 +458,26 @@ bool LRUFileCache::tryReserve(
         return false;
 
     if (cell_for_reserve && !cell_for_reserve->queue_iterator)
+    {
         cell_for_reserve->queue_iterator = queue.insert(queue.end(), std::make_pair(key_, offset_));
+        CurrentMetrics::add(CurrentMetrics::FilesystemCacheElements);
+    }
 
+    size_t removed_segment_size = 0;
     for (auto & cell : to_evict)
     {
         auto file_segment = cell->file_segment;
         if (file_segment)
         {
+            removed_segment_size++;
             std::lock_guard<std::mutex> segment_lock(file_segment->mutex);
             remove(file_segment->key(), file_segment->offset(), cache_lock, segment_lock);
         }
     }
 
     current_size += size - removed_size;
+    CurrentMetrics::set(CurrentMetrics::FilesystemCacheSize, current_size);
+    CurrentMetrics::add(CurrentMetrics::FilesystemCacheSyncEvictElements, removed_segment_size);
     if (current_size > (1ull << 63))
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Cache became inconsistent. There must be a bug");
 
@@ -487,7 +534,10 @@ void LRUFileCache::remove(
         throw Exception(ErrorCodes::REMOTE_FS_OBJECT_CACHE_ERROR, "No cache cell for key: {}, offset: {}", keyToStr(key), offset);
 
     if (cell->queue_iterator)
+    {
         queue.erase(*cell->queue_iterator);
+        CurrentMetrics::sub(CurrentMetrics::FilesystemCacheElements);
+    }
 
     auto & offsets = files[key];
     offsets.erase(offset);
@@ -515,6 +565,75 @@ void LRUFileCache::remove(
                             "Removal of cached file failed. Key: {}, offset: {}, path: {}, error: {}",
                             keyToStr(key), offset, cache_file_path, getCurrentExceptionMessage(false));
         }
+    }
+}
+
+void LRUFileCache::cleanFunc()
+{
+    setThreadName("FileCacheCleanFunc");
+
+    std::unique_lock<std::mutex> lock{sleep_mutex};
+
+    while (!stopped)
+    {
+        int cnt = 0;
+        try
+        {
+            std::lock_guard cache_lock(mutex);
+            Stopwatch watch;
+            if (is_initialized)
+            {
+                auto key_it = queue.begin();
+                auto now = std::time(nullptr);
+                std::vector<FileSegmentPtr> to_evict;
+                size_t to_evict_size = 0;
+                while (key_it != queue.end()) {
+                    const auto [key, offset] = *key_it;
+                     ++key_it;
+                    auto * cell = getCell(key, offset, cache_lock);
+                    if (!cell)
+                        throw Exception(ErrorCodes::REMOTE_FS_OBJECT_CACHE_ERROR,
+                            "Cache became inconsistent. Key: {}, offset: {}", keyToStr(key), offset);
+                    if (cell->releasable())
+                    {
+                        auto & file_segment = cell->file_segment;
+                        if (current_size - to_evict_size > async_clean_start_threshold || file_segment->access_time < now - clean_ttl)
+                        {
+                            to_evict.push_back(file_segment);
+                            cnt++;
+                            to_evict_size += file_segment->reserved_size;
+                            if (cnt == max_clean_segment_per_turn)
+                                break;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+
+                }
+                for (auto & segment : to_evict)
+                {
+                    std::lock_guard segment_lock(segment->mutex);
+                    remove(segment->key(), segment->offset(), cache_lock, segment_lock);
+                }
+                current_size -= to_evict_size;
+                CurrentMetrics::add(CurrentMetrics::FilesystemCacheAsyncEvictElements, cnt);
+                CurrentMetrics::set(CurrentMetrics::FilesystemCacheSize, current_size);
+                CurrentMetrics::add(CurrentMetrics::FilesystemCacheAsyncEvictSize, to_evict_size);
+                if (current_size > (1ull << 63))
+                    throw Exception(ErrorCodes::LOGICAL_ERROR, "Cache became inconsistent. There must be a bug");
+            }
+            watch.stop();
+            CurrentMetrics::add(CurrentMetrics::FilesystemCacheAsyncEvictTime, watch.elapsedMicroseconds());
+            LOG_DEBUG(log, "file cache cleaner evict {} segment, cost {} us", cnt, watch.elapsedMicroseconds());
+        }
+        catch (...)
+        {
+            tryLogCurrentException(log, "Exception has been raised while cleaning file segment");
+        }
+        auto current_time = std::chrono::system_clock::now();
+        auto next_interval = cnt == max_clean_segment_per_turn ? min_clean_interval_seconds : clean_interval_seconds;
+        clean_condition.wait_until(lock, current_time + next_interval);
     }
 }
 
@@ -674,6 +793,7 @@ LRUFileCache::FileSegmentCell::FileSegmentCell(FileSegmentPtr file_segment_, LRU
         case FileSegment::State::DOWNLOADED:
         {
             queue_iterator = queue_.insert(queue_.end(), getKeyAndOffset());
+            CurrentMetrics::add(CurrentMetrics::FilesystemCacheElements);
             break;
         }
         case FileSegment::State::EMPTY:

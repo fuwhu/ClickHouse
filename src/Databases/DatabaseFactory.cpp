@@ -45,6 +45,8 @@
 #include <Databases/SQLite/DatabaseSQLite.h>
 #endif
 
+#include <Databases/DatabaseIceberg.h>
+
 namespace fs = std::filesystem;
 
 namespace DB
@@ -57,6 +59,7 @@ namespace ErrorCodes
     extern const int UNKNOWN_DATABASE_ENGINE;
     extern const int CANNOT_CREATE_DATABASE;
     extern const int NOT_IMPLEMENTED;
+    extern const int NO_ELEMENTS_IN_CONFIG;
 }
 
 DatabasePtr DatabaseFactory::get(const ASTCreateQuery & create, const String & metadata_path, ContextPtr context)
@@ -111,13 +114,13 @@ DatabasePtr DatabaseFactory::getImpl(const ASTCreateQuery & create, const String
 
     static const std::unordered_set<std::string_view> database_engines{"Ordinary", "Atomic", "Memory",
         "Dictionary", "Lazy", "Replicated", "MySQL", "MaterializeMySQL", "MaterializedMySQL",
-        "PostgreSQL", "MaterializedPostgreSQL", "SQLite"};
+        "PostgreSQL", "MaterializedPostgreSQL", "SQLite", "Iceberg"};
 
     if (!database_engines.contains(engine_name))
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Database engine name `{}` does not exist", engine_name);
 
     static const std::unordered_set<std::string_view> engines_with_arguments{"MySQL", "MaterializeMySQL", "MaterializedMySQL",
-        "Lazy", "Replicated", "PostgreSQL", "MaterializedPostgreSQL", "SQLite"};
+        "Lazy", "Replicated", "PostgreSQL", "MaterializedPostgreSQL", "SQLite", "Iceberg"};
 
     static const std::unordered_set<std::string_view> engines_with_table_overrides{"MaterializeMySQL", "MaterializedMySQL", "MaterializedPostgreSQL"};
     bool engine_may_have_arguments = engines_with_arguments.contains(engine_name);
@@ -414,6 +417,51 @@ DatabasePtr DatabaseFactory::getImpl(const ASTCreateQuery & create, const String
         return std::make_shared<DatabaseSQLite>(context, engine_define, create.attach, database_path);
     }
 #endif
+
+    else if (engine_name == "Iceberg")
+    {
+        const auto & global_conf = context->getConfigRef();
+        if (!global_conf.has("iceberg_api_server_uri"))
+            throw Exception(ErrorCodes::NO_ELEMENTS_IN_CONFIG, "Can not create Iceberg catalog because iceberg_api_server_uri not found in config file");
+
+        const auto & iceberg_api_server_uri = global_conf.getString("iceberg_api_server_uri");
+
+        const ASTFunction * engine = engine_define->engine;
+        if (!engine->arguments || engine->arguments->children.empty() || engine->arguments->children.size() > 3)
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                "Bad definition of Iceberg catalog, should be Iceberg(iceberg_database_name, [cluster], [distribution_mode])"
+                );
+
+        const auto & arguments = engine->arguments->children;
+        IcebergCatalogConfig config;
+        config.iceberg_api_server_uri = iceberg_api_server_uri;
+        config.iceberg_database = safeGetLiteralValue<String>(arguments[0], "Iceberg");
+
+        if (config.iceberg_api_server_uri.empty())
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Bad definition of Iceberg catalog, iceberg database name can not be empty" );
+
+        if (arguments.size() >= 2)
+        {
+            config.cluster = safeGetLiteralValue<String>(arguments[1], "Iceberg");
+            /// check if cluster exists
+            context->getCluster(config.cluster);
+        }
+
+        if (arguments.size() == 3)
+        {
+            auto mode_str = safeGetLiteralValue<String>(arguments[2], "Iceberg");
+            auto mode_opt = magic_enum::enum_cast<DistributionMode>(Poco::toUpper(mode_str));
+            if (!mode_opt.has_value())
+                throw Exception(
+                    ErrorCodes::BAD_ARGUMENTS,
+                    "Unknown distribution mode '{}' for Iceberg catalog, must be 'random' or 'consistent_hash'",
+                    mode_str);
+
+            config.distribution_mode = mode_opt.value();
+        }
+
+        return std::make_shared<DatabaseIceberg>(database_name, metadata_path, config, context);
+    }
 
     throw Exception("Unknown database engine: " + engine_name, ErrorCodes::UNKNOWN_DATABASE_ENGINE);
 }

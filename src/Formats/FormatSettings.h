@@ -66,6 +66,15 @@ struct FormatSettings
 
     DateTimeOutputFormat date_time_output_format = DateTimeOutputFormat::Simple;
 
+    enum class DateTimeOverflowBehavior
+    {
+        Ignore,
+        Throw,
+        Saturate
+    };
+
+    DateTimeOverflowBehavior date_time_overflow_behavior = DateTimeOverflowBehavior::Ignore;
+
     bool input_format_ipv4_default_on_conversion_error = false;
     bool input_format_ipv6_default_on_conversion_error = false;
 
@@ -78,6 +87,7 @@ struct FormatSettings
         bool low_cardinality_as_dictionary = false;
         bool import_nested = false;
         bool allow_missing_columns = false;
+        bool case_insensitive_column_matching = false;
     } arrow;
 
     struct
@@ -138,8 +148,11 @@ struct FormatSettings
     struct
     {
         UInt64 row_group_size = 1000000;
-        bool import_nested = false;
         bool allow_missing_columns = false;
+        bool case_insensitive_column_matching = false;
+        bool skip_columns_with_unsupported_types_in_schema_inference = false;
+        bool filter_push_down = true;
+        int64_t row_batch_size = 10'000;
     } parquet;
 
     struct Pretty
@@ -217,9 +230,11 @@ struct FormatSettings
 
     struct
     {
-        bool import_nested = false;
         bool allow_missing_columns = false;
-        int64_t row_batch_size = 100'000;
+        int64_t row_batch_size = 10'000;
+        bool case_insensitive_column_matching = false;
+        bool skip_columns_with_unsupported_types_in_schema_inference = false;
+        bool filter_push_down = true;
     } orc;
 
     /// For capnProto format we should determine how to

@@ -534,6 +534,11 @@ inline bool isBool(const DataTypePtr & data_type)
     return data_type->getName() == "Bool";
 }
 
+inline bool isNullableOrLowCardinalityNullable(const DataTypePtr & data_type)
+{
+    return data_type->isNullable() || data_type->isLowCardinalityNullable();
+}
+
 template <typename DataType> constexpr bool IsDataTypeDecimal = false;
 template <typename DataType> constexpr bool IsDataTypeNumber = false;
 template <typename DataType> constexpr bool IsDataTypeDateOrDateTime = false;

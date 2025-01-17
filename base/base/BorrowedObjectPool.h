@@ -98,6 +98,26 @@ public:
         condition_variable.notify_one();
     }
 
+    //create and insert into objects if allocated_objects_size < n
+    template <typename FactoryFunc>
+    bool tryInitObjectIfLessThan(FactoryFunc && func, size_t n = 1)
+    {
+        std::unique_lock<std::mutex> lock(objects_mutex);
+
+        size_t limit = std::min(n, max_size);
+
+        if (max_size == 0) [[unlikely]]
+            limit = n;
+
+        if (allocated_objects_size >= limit)
+            return false;
+
+        objects.emplace_back(std::move(std::forward<FactoryFunc>(func)()));
+        ++allocated_objects_size;
+
+        return true;
+    }
+
     /// Max pool size
     inline size_t maxSize() const
     {
@@ -155,4 +175,21 @@ private:
     size_t allocated_objects_size = 0;
     size_t borrowed_objects_size = 0;
     std::vector<T> objects;
+};
+
+//auto return delete fun
+template <typename T>
+struct BorrowedUniquePtrDeleteFun
+{
+    explicit BorrowedUniquePtrDeleteFun(std::shared_ptr<BorrowedObjectPool<std::unique_ptr<T>>> pool_)
+    {
+        pool = pool_;
+    }
+
+    void operator() (T * ptr) const _NOEXCEPT {
+        std::unique_ptr<T> uptr(ptr);
+        pool->returnObject(std::move(uptr));
+    }
+
+    std::shared_ptr<BorrowedObjectPool<std::unique_ptr<T>>> pool;
 };

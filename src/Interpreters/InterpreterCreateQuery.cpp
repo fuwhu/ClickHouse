@@ -246,7 +246,7 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
                         "Enable allow_experimental_database_materialized_postgresql to use it.", ErrorCodes::UNKNOWN_DATABASE_ENGINE);
     }
 
-    DatabasePtr database = DatabaseFactory::get(create, metadata_path / "", getContext());
+    DatabasePtr database = DatabaseFactory::get(create, metadata_path, getContext());
 
     if (create.uuid != UUIDHelpers::Nil)
         create.setDatabase(TABLE_WITH_UUID_NAME_PLACEHOLDER);

@@ -195,6 +195,13 @@ void ThreadPoolImpl<Thread>::wait()
 }
 
 template <typename Thread>
+bool ThreadPoolImpl<Thread>::hasIdleThread()
+{
+    std::unique_lock lock(mutex);
+    return scheduled_jobs < max_threads;
+}
+
+template <typename Thread>
 ThreadPoolImpl<Thread>::~ThreadPoolImpl()
 {
     /// Note: should not use logger from here,

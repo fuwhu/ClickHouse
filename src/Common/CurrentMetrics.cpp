@@ -93,6 +93,18 @@
     M(ZooKeeperRequests_CLEAR_OLD_PARTS, "clear old parts related zk requests")        \
     M(ZooKeeperRequests_CLEAR_OLD_LOGS, "clear old logs related zk requests")        \
     M(ZooKeeperRequests_CLEAR_OLD_BLOCKS, "clear old blocks related zk requests")        \
+    M(FilesystemCacheSize, "Filesystem cache size in bytes") \
+    M(FilesystemCacheSizeLimit, "Filesystem cache size limit in bytes") \
+    M(FilesystemCacheElements, "Filesystem cache elements (file segments)") \
+    M(FilesystemCacheElementLimit, "Filesystem cache element limit(file segment limit)") \
+    M(FilesystemCacheAsyncEvictElements, "Filesystem cache async evicted elements (file segments)") \
+    M(FilesystemCacheSyncEvictElements, "Filesystem cache sync evicted elements (file segments)") \
+    M(FilesystemCacheAsyncEvictSize, "Filesystem cache async evicted size (file segments)") \
+    M(FilesystemCacheAsyncEvictTime, "Filesystem cache async cost time while evict (file segments)") \
+    M(CacheWriteBytes, "total bytes write to cache") \
+    M(CacheReadBytes, "total bytes read from cache") \
+    M(RemoteReadBytes, "total bytes read from remote storage") \
+    M(IcebergFileSourceRecyclePoolSize, "Number of iceberg init thread pool waiting for recycle") \
 
 namespace CurrentMetrics
 {

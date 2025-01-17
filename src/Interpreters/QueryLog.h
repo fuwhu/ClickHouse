@@ -5,6 +5,7 @@
 #include <Core/Settings.h>
 #include <Interpreters/SystemLog.h>
 #include <Interpreters/ClientInfo.h>
+#include <Interpreters/Context.h>
 
 namespace ProfileEvents
 {
@@ -80,6 +81,9 @@ struct QueryLogElement
     String stack_trace;
 
     ClientInfo client_info;
+    Context::IcebergDataStreamsMetricsPtr iceberg_data_streams_metrics;
+    Context::IcebergScanFilesMetricsPtr iceberg_scan_files_metrics;
+    Context::IcebergCreateFilesMetricsPtr iceberg_create_files_metrics;
 
     String log_comment;
 
@@ -94,6 +98,9 @@ struct QueryLogElement
     void appendToBlock(MutableColumns & columns) const;
 
     static void appendClientInfo(const ClientInfo & client_info, MutableColumns & columns, size_t & i);
+    static void appendIcebergDataStreamsMetrics(const Context::IcebergDataStreamsMetricsPtr & iceberg_data_streams_metrics, MutableColumns & columns, size_t & i);
+    static void appendIcebergScanFilesMetrics(const Context::IcebergScanFilesMetricsPtr & iceberg_scan_files_metrics, MutableColumns & columns, size_t & i);
+    static void appendIcebergCreateFilesMetrics(const Context::IcebergCreateFilesMetricsPtr & iceberg_create_files_metrics, MutableColumns & columns, size_t & i);
 };
 
 

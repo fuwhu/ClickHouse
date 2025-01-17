@@ -289,7 +289,20 @@
     M(ScalarSubqueriesCacheMiss, "Number of times a read from a scalar subquery was not cached and had to be calculated completely") \
     \
     M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache") \
-    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely")
+    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely") \
+    \
+    M(HDFSReadElapsedMicroseconds, "Total time spent waiting for reading/seeking from HDFS (ClickHouse on Iceberg)") \
+    M(HDFSReadBytes, "Total number of bytes received from HDFS (ClickHouse on Iceberg)") \
+    M(HDFSReadSeeks, "Total number of HDFS read buffer seeks (ClickHouse on Iceberg)") \
+    M(IcebergApiCallElapsedMicroseconds, "Total time spent for Iceberg api call (ClickHouse on Iceberg)") \
+    M(IcebergApiCalls, "Total number of Iceberg api calls (ClickHouse on Iceberg)") \
+    M(IcebergAnalysisElapsedMicroseconds, "Total time spent for Iceberg table query analysis (ClickHouse on Iceberg)") \
+    \
+    M(IcebergScanIcebergTableTimeCostMicroseconds, "Total time spent for scan iceberg table, namely calling api server to get file list to process.)") \
+    M(IcebergScanIcebergTableCount, "times of scanning iceberg table, namely calling api server to get file list to process.)") \
+    M(IcebergScanFileTimeCostMicroseconds, "Total tieme spent for scanning file, including scanIcebergFile and createIcebergFile function calls.)") \
+    M(IcebergScanFileCount, "times of scanning file, including scanIcebergFile and createIcebergFile function calls.)") \
+    M(IcebergReadBufferInitCostMicroseconds, "times of initRemote call synchronously after create buffer(initializeInputFormat for example)") \
 
 namespace ProfileEvents
 {

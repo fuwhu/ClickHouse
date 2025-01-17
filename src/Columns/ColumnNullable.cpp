@@ -729,4 +729,30 @@ ColumnPtr makeNullable(const ColumnPtr & column)
     return ColumnNullable::create(column, ColumnUInt8::create(column->size(), 0));
 }
 
+ColumnPtr ColumnNullable::getNestedColumnWithDefaultOnNull() const
+{
+    auto res = nested_column->cloneEmpty();
+    const auto & null_map_data = getNullMapData();
+    size_t start = 0;
+    size_t end = null_map->size();
+    while (start < nested_column->size())
+    {
+        size_t next_null_index = start;
+        while (next_null_index < end && !null_map_data[next_null_index])
+            ++next_null_index;
+
+        if (next_null_index != start)
+            res->insertRangeFrom(*nested_column, start, next_null_index - start);
+
+        size_t next_none_null_index = next_null_index;
+        while (next_none_null_index < end && null_map_data[next_none_null_index])
+            ++next_none_null_index;
+
+        if (next_null_index != next_none_null_index)
+            res->insertManyDefaults(next_none_null_index - next_null_index);
+
+        start = next_none_null_index;
+    }
+    return res;
+}
 }

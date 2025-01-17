@@ -592,6 +592,8 @@ class IColumn;
     /* data parts receive service */ \
     M(Bool, enable_data_parts_receive_service, false, "Allow clients to send MergeTree data parts to server directly", 0) \
     M(UInt64, max_parts_receives_network_bandwidth_for_server, 0, "The maximum speed of data parts receives over the network in bytes per second. Zero means unlimited. Only has meaning at server startup.", 0) \
+    /* iceberg storage */ \
+    M(Bool, iceberg_data_cache_enabled, false, "Allow use cache when query data from iceberg", 0) \
 // End of COMMON_SETTINGS
 // Please add settings related to formats into the FORMAT_FACTORY_SETTINGS and move obsolete settings to OBSOLETE_SETTINGS.
 
@@ -638,11 +640,14 @@ class IColumn;
     M(Bool, input_format_use_lowercase_column_name, false, "Use lowercase column name while reading input formats", 0) \
     M(Bool, input_format_arrow_import_nested, false, "Allow to insert array of structs into Nested table in Arrow input format.", 0) \
     M(Bool, input_format_orc_import_nested, false, "Allow to insert array of structs into Nested table in ORC input format.", 0) \
-    M(Int64, input_format_orc_row_batch_size, 100'000, "Batch size when reading ORC stripes.", 0) \
+    M(Int64, input_format_orc_row_batch_size, 10'000, "Batch size when reading ORC stripes.", 0) \
+    M(Bool, input_format_orc_filter_push_down, true, "When reading ORC files, skip whole stripes or row groups based on the WHERE/PREWHERE expressions, min/max statistics or bloom filter in the ORC metadata.", 0) \
     M(Bool, input_format_parquet_import_nested, false, "Allow to insert array of structs into Nested table in Parquet input format.", 0) \
     M(Bool, input_format_allow_seeks, true, "Allow seeks while reading in ORC/Parquet/Arrow input formats", 0) \
     M(Bool, input_format_orc_allow_missing_columns, false, "Allow missing columns while reading ORC input formats", 0) \
     M(Bool, input_format_parquet_allow_missing_columns, false, "Allow missing columns while reading Parquet input formats", 0) \
+    M(Bool, input_format_parquet_filter_push_down, true, "When reading Parquet files, skip whole row groups based on the WHERE/PREWHERE expressions, min/max statistics or bloom filter in the Parquet metadata.", 0) \
+    M(Int64, input_format_parquet_row_batch_size, 10'000, "Batch size when reading Parquet row groups.", 0) \
     M(Bool, input_format_arrow_allow_missing_columns, false, "Allow missing columns while reading Arrow input formats", 0) \
     M(Char, input_format_hive_text_fields_delimiter, '\x01', "Delimiter between fields in Hive Text File", 0) \
     M(Char, input_format_hive_text_collection_items_delimiter, '\x02', "Delimiter between collection(array or map) items in Hive Text File", 0) \
@@ -667,6 +672,12 @@ class IColumn;
     \
     M(Bool, output_format_json_quote_64bit_integers, true, "Controls quoting of 64-bit integers in JSON output format.", 0) \
     M(Bool, output_format_json_quote_denormals, false, "Enables '+nan', '-nan', '+inf', '-inf' outputs in JSON output format.", 0) \
+    \
+    M(UInt64, iceberg_init_pool_max_size, 10000, "max size of pool queue in iceberg file source static recycle thread", 0) \
+    M(Bool, iceberg_file_input_format_pre_initialization, true, "Controls whether pre-initialize the input format of iceberg files at the begining of each IcebergFileSource execution.", 0) \
+    M(Bool, separate_sorted_and_non_sorted_iceberg_file_processing, true, "Controls whether separate the sorted and non-sorted iceberg file processing for distributed ck-on-iceberg query against non-single-shard cluster.", 0) \
+    M(MaxThreads, iceberg_file_input_format_pre_initialization_thread_pool_size, 0, "The pool size of the thread pool which is used for pre-initialization of iceberg files. this setting only works when the iceberg_file_input_format_pre_initialization is true. By default, it is determined automatically.", 0) \
+    M(Float, iceberg_file_pre_initialization_batch_size_pool_size_ratio, 1, "the ratio of iceberg file input format pre-initialization batch size and the iceberg_file_input_format_pre_initialization_thread_pool_size, it controls how many iceberg files to pre-initialize in a single batch.", 0) \
     \
     M(Bool, output_format_json_escape_forward_slashes, true, "Controls escaping forward slashes for string outputs in JSON output format. This is intended for compatibility with JavaScript. Don't confuse with backslashes that are always escaped.", 0) \
     M(Bool, output_format_json_named_tuples_as_objects, false, "Serialize named tuple columns as JSON objects.", 0) \

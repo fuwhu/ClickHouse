@@ -95,7 +95,7 @@ public:
 
     bool reserve(size_t size);
 
-    void write(const char * from, size_t size);
+    void write(char * from, size_t size);
 
     RemoteFileReaderPtr getRemoteFileReader();
 
@@ -120,6 +120,8 @@ public:
     void complete(State state);
 
     String getInfoForLog() const;
+
+    time_t access_time;
 
 private:
     size_t availableSize() const { return reserved_size - downloaded_size; }
