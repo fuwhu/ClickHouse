@@ -437,7 +437,7 @@ DatabasePtr DatabaseFactory::getImpl(const ASTCreateQuery & create, const String
         config.iceberg_api_server_uri = iceberg_api_server_uri;
         config.iceberg_database = safeGetLiteralValue<String>(arguments[0], "Iceberg");
 
-        if (config.iceberg_api_server_uri.empty())
+        if (config.iceberg_database.empty())
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Bad definition of Iceberg catalog, iceberg database name can not be empty" );
 
         if (arguments.size() >= 2)
