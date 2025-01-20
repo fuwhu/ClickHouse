@@ -5536,6 +5536,19 @@ void StorageReplicatedMergeTree::startupImpl(bool from_attach_thread, const ZooK
 
         part_moves_between_shards_orchestrator.start();
 
+        /// Both server setting and MergeTree setting can enable DataPartsReceive, for backward compatibility
+        if ((getContext()->getSettingsRef().enable_data_parts_receive_service || getSettings()->enable_data_parts_receive_service)
+            && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
+        {
+            InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive::Service>(*this);
+            prev_ptr = std::atomic_exchange(&data_parts_receive_endpoint, data_parts_receive_ptr);
+            if (!prev_ptr)
+            {
+                getContext()->getInterserverIOHandler().addEndpoint(
+                    data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()), data_parts_receive_ptr);
+            }
+        }
+
         /// After finishing startup() create_query_zk_retries_info won't be used anymore.
         clearCreateQueryZooKeeperRetriesInfo();
     }
@@ -5688,6 +5701,15 @@ void StorageReplicatedMergeTree::shutdown(bool)
         queue.pull_log_blocker.cancelForever();
     }
     background_moves_assignee.finish();
+
+    auto data_parts_receive_ptr = std::atomic_exchange(&data_parts_receive_endpoint, InterserverIOEndpointPtr{});
+    if (data_parts_receive_ptr)
+    {
+        getContext()->getInterserverIOHandler().removeEndpointIfExists(
+            data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()));
+        data_parts_receive_ptr->blocker.cancelForever();
+        std::unique_lock lock(data_parts_receive_ptr->rwlock);
+    }
 
     auto data_parts_exchange_ptr = std::atomic_exchange(&data_parts_exchange_endpoint, InterserverIOEndpointPtr{});
     if (data_parts_exchange_ptr)

@@ -34,6 +34,7 @@
 #include <Interpreters/PartLog.h>
 #include <Poco/Timestamp.h>
 #include <Common/threadPoolCallbackRunner.h>
+#include <Storages/MergeTree/DataPartsReceive.h>
 
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/ordered_index.hpp>
@@ -1225,6 +1226,11 @@ protected:
     friend class MergeTask;
     friend class IPartMetadataManager;
     friend class IMergedBlockOutputStream; // for access to log
+    friend class DataPartsReceive::Service;
+
+    /// used in DataPartsReceive
+    InterserverIOEndpointPtr data_parts_receive_endpoint;
+    std::atomic_uint current_table_receives{0};
 
     bool require_part_metadata;
 

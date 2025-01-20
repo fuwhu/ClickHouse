@@ -69,6 +69,7 @@ ColumnsDescription PartLogElement::getColumnsDescription()
             {"MovePart",      static_cast<Int8>(MOVE_PART)},
             {"MergePartsStart", static_cast<Int8>(MERGE_PARTS_START)},
             {"MutatePartStart", static_cast<Int8>(MUTATE_PART_START)},
+            {"ReceivePart",      static_cast<Int8>(RECEIVE_PART)},
         }
     );
 

@@ -202,6 +202,17 @@ void StorageMergeTree::startup()
         background_operations_assignee.start();
         startBackgroundMovesIfNeeded();
         startOutdatedAndUnexpectedDataPartsLoadingTask();
+
+        /// Both server setting and MergeTree setting can enable DataPartsReceive, for backward compatibility
+        if ((getContext()->getSettingsRef().enable_data_parts_receive_service || getSettings()->enable_data_parts_receive_service)
+            && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
+        {
+            InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive::Service>(*this);
+            [[maybe_unused]] auto prev_ptr = std::atomic_exchange(&data_parts_receive_endpoint, data_parts_receive_ptr);
+            assert(prev_ptr == nullptr);
+            getContext()->getInterserverIOHandler().addEndpoint(
+                data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()), data_parts_receive_ptr);
+        }
     }
     catch (...)
     {
@@ -246,6 +257,15 @@ void StorageMergeTree::shutdown(bool)
 
     if (deduplication_log)
         deduplication_log->shutdown();
+
+    auto data_parts_receive_ptr = std::atomic_exchange(&data_parts_receive_endpoint, InterserverIOEndpointPtr{});
+    if (data_parts_receive_ptr)
+    {
+        getContext()->getInterserverIOHandler().removeEndpointIfExists(
+            data_parts_receive_ptr->getId(getStorageID().getFullNameNotQuoted()));
+        data_parts_receive_ptr->blocker.cancelForever();
+        std::unique_lock lock(data_parts_receive_ptr->rwlock);
+    }
 }
 
 

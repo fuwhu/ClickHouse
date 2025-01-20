@@ -1823,6 +1823,16 @@ namespace ErrorCodes
         3. Default compression codec defined in `compression` settings
     Default value: an empty string (not defined).
     )", 0) \
+    DECLARE(Bool, enable_data_parts_receive_service, false, R"(
+    Allow clients to send MergeTree data parts to server directly.
+    )", 0) \
+    DECLARE(UInt64, max_parallel_receives, 100, R"(
+    Limit parallel sends.
+    )", 0) \
+    DECLARE(UInt64, max_parallel_receives_for_table, 16, R"(
+    Limit parallel sends per table.
+    )", 0) \
+
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \
     M(TYPE, NAME, DEFAULT, "Obsolete setting, does nothing.", SettingsTierType::OBSOLETE)
