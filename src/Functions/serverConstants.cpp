@@ -117,6 +117,14 @@ namespace
         explicit FunctionRevision(ContextPtr context) : FunctionServerConstantBase(ClickHouseRevision::getVersionRevision(), context->isDistributed()) {}
     };
 
+    class FunctionBiliVersion : public FunctionConstantBase<FunctionBiliVersion, String, DataTypeString>
+    {
+    public:
+        static constexpr auto name = "biliVersion";
+        static FunctionPtr create(ContextPtr context) { return std::make_shared<FunctionBiliVersion>(context); }
+        explicit FunctionBiliVersion(ContextPtr context) : FunctionConstantBase(BILI_VERSION_STRING, context->isDistributed()) { }
+    };
+
     class FunctionZooKeeperSessionUptime : public FunctionServerConstantBase<FunctionZooKeeperSessionUptime, UInt32, DataTypeUInt32>
     {
     public:
@@ -213,6 +221,11 @@ REGISTER_FUNCTION(Version)
 REGISTER_FUNCTION(Revision)
 {
     factory.registerFunction<FunctionRevision>({}, FunctionFactory::Case::Insensitive);
+}
+
+REGISTER_FUNCTION(BiliVersion)
+{
+    factory.registerFunction<FunctionBiliVersion>({}, FunctionFactory::Case::Insensitive);
 }
 
 REGISTER_FUNCTION(ZooKeeperSessionUptime)

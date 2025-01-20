@@ -158,7 +158,7 @@ int Keeper::run()
     }
     if (config().hasOption("version"))
     {
-        std::cout << VERSION_NAME << " keeper version " << VERSION_STRING << VERSION_OFFICIAL << "." << std::endl;
+        std::cout << VERSION_NAME << " keeper version " << VERSION_STRING << " (" << BILI_VERSION_STRING << ")." << std::endl;
         return 0;
     }
 
@@ -679,8 +679,8 @@ catch (...)
 void Keeper::logRevision() const
 {
     LOG_INFO(getLogger("Application"),
-        "Starting ClickHouse Keeper {} (revision: {}, git hash: {}, build id: {}), PID {}",
-        VERSION_STRING,
+        "Starting ClickHouse Keeper {} ({}) (revision: {}, git hash: {}, build id: {}), PID {}",
+        VERSION_STRING, BILI_VERSION_STRING,
         ClickHouseRevision::getVersionRevision(),
         GIT_HASH,
         build_id.empty() ? "<unknown>" : build_id,

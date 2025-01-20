@@ -3506,7 +3506,7 @@ void ClientBase::clearTerminal()
 
 void ClientBase::showClientVersion()
 {
-    output_stream << VERSION_NAME << " " + getName() + " version " << VERSION_STRING << VERSION_OFFICIAL << "." << std::endl;
+    output_stream << VERSION_NAME << " " + getName() + " version " << VERSION_STRING << " (" << BILI_VERSION_STRING << ")." << std::endl;
 }
 
 }

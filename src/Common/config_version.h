@@ -11,6 +11,7 @@ extern const unsigned VERSION_MAJOR;
 extern const unsigned VERSION_MINOR;
 extern const unsigned VERSION_PATCH;
 extern const char * VERSION_STRING;
+extern const char * BILI_VERSION_STRING;
 extern const char * VERSION_STRING_SHORT;
 extern const char * VERSION_OFFICIAL;
 extern const char * VERSION_FULL;

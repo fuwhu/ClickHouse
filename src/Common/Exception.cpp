@@ -465,7 +465,7 @@ PreformattedMessage getCurrentExceptionMessageAndPattern(bool with_stacktrace, b
     {
         stream << getExceptionMessage(e, with_stacktrace, check_embedded_stacktrace)
                << (with_extra_info ? getExtraExceptionInfo(e) : "")
-               << " (version " << VERSION_STRING << VERSION_OFFICIAL << ")";
+               << " (version " << VERSION_STRING << " (" << BILI_VERSION_STRING << "))";
         message_format_string = e.tryGetMessageFormatString();
         message_format_string_args = e.getMessageFormatStringArgs();
     }
@@ -477,7 +477,7 @@ PreformattedMessage getCurrentExceptionMessageAndPattern(bool with_stacktrace, b
                 << ", " << e.displayText()
                 << (with_stacktrace ? ", Stack trace (when copying this message, always include the lines below):\n\n" + getExceptionStackTraceString(e) : "")
                 << (with_extra_info ? getExtraExceptionInfo(e) : "")
-                << " (version " << VERSION_STRING << VERSION_OFFICIAL << ")";
+                << " (version " << VERSION_STRING << " (" << BILI_VERSION_STRING << "))";
         }
         catch (...) {} // NOLINT(bugprone-empty-catch)
     }
@@ -494,7 +494,7 @@ PreformattedMessage getCurrentExceptionMessageAndPattern(bool with_stacktrace, b
             stream << "std::exception. Code: " << ErrorCodes::STD_EXCEPTION << ", type: " << name << ", e.what() = " << e.what()
                 << (with_stacktrace ? ", Stack trace (when copying this message, always include the lines below):\n\n" + getExceptionStackTraceString(e) : "")
                 << (with_extra_info ? getExtraExceptionInfo(e) : "")
-                << " (version " << VERSION_STRING << VERSION_OFFICIAL << ")";
+                << " (version " << VERSION_STRING << " (" << BILI_VERSION_STRING << "))";
         }
         catch (...) {} // NOLINT(bugprone-empty-catch)
 
@@ -523,7 +523,7 @@ PreformattedMessage getCurrentExceptionMessageAndPattern(bool with_stacktrace, b
             if (status)
                 name += " (demangling status: " + toString(status) + ")";
 
-            stream << "Unknown exception. Code: " << ErrorCodes::UNKNOWN_EXCEPTION << ", type: " << name << " (version " << VERSION_STRING << VERSION_OFFICIAL << ")";
+            stream << "Unknown exception. Code: " << ErrorCodes::UNKNOWN_EXCEPTION << ", type: " << name << " (version " << VERSION_STRING << " (" << BILI_VERSION_STRING << "))";
         }
         catch (...) {} // NOLINT(bugprone-empty-catch)
     }

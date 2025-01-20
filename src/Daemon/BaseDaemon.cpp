@@ -466,7 +466,7 @@ void BaseDaemon::initializeTerminationAndSignalProcessing()
 
 void BaseDaemon::logRevision() const
 {
-    logger().information("Starting " + std::string{VERSION_FULL}
+    logger().information("Starting ClickHouse" + std::string{VERSION_STRING} + " (" + std::string{BILI_VERSION_STRING} +")"
         + " (revision: " + std::to_string(ClickHouseRevision::getVersionRevision())
         + ", git hash: " + std::string(GIT_HASH)
         + ", build id: " + (build_id.empty() ? "<unknown>" : build_id) + ")"
