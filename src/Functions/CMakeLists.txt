@@ -128,6 +128,9 @@ list (APPEND OBJECT_LIBS $<TARGET_OBJECTS:clickhouse_functions_url>)
 add_subdirectory(array)
 list (APPEND OBJECT_LIBS $<TARGET_OBJECTS:clickhouse_functions_array>)
 
+add_subdirectory(BiliUDFs)
+list (APPEND OBJECT_LIBS $<TARGET_OBJECTS:clickhouse_functions_bili_udf>)
+
 add_subdirectory(Kusto)
 list (APPEND OBJECT_LIBS $<TARGET_OBJECTS:clickhouse_functions_kusto>)
 
