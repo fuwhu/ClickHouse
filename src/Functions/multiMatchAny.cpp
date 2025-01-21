@@ -1,22 +1,9 @@
-#include <Functions/FunctionsMultiStringSearch.h>
+#include <Functions/multiMatchAny.h>
 #include <Functions/FunctionFactory.h>
-#include <Functions/MultiMatchAnyImpl.h>
 #include <Functions/IFunctionAdaptors.h>
-
 
 namespace DB
 {
-namespace
-{
-
-struct NameMultiMatchAny
-{
-    static constexpr auto name = "multiMatchAny";
-};
-
-using FunctionMultiMatchAny = FunctionsMultiStringSearch<MultiMatchAnyImpl<NameMultiMatchAny, /*ResultType*/ UInt8, MultiMatchTraits::Find::Any, /*WithEditDistance*/ false>>;
-
-}
 
 REGISTER_FUNCTION(MultiMatchAny)
 {

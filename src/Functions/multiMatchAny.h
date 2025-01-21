@@ -1,8 +1,17 @@
 #pragma once
 #include <memory>
+#include <Functions/MultiMatchAnyImpl.h>
+#include <Functions/FunctionsMultiStringSearch.h>
 
 namespace DB
 {
+
+struct NameMultiMatchAny
+{
+    static constexpr auto name = "multiMatchAny";
+};
+
+using FunctionMultiMatchAny = FunctionsMultiStringSearch<MultiMatchAnyImpl<NameMultiMatchAny, /*ResultType*/ UInt8, MultiMatchTraits::Find::Any, /*WithEditDistance*/ false>>;
 
 class IFunctionOverloadResolver;
 using FunctionOverloadResolverPtr = std::shared_ptr<IFunctionOverloadResolver>;

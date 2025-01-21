@@ -21,6 +21,7 @@
 #include <Functions/array/arrayAll.h>
 #include <Functions/identity.h>
 #include <Functions/FunctionFactory.h>
+#include <Functions/multiMatchAny.h>
 
 #include <base/map.h>
 
@@ -289,6 +290,31 @@ private:
     FunctionLike impl;
 };
 
+class FunctionMapKeyMultiLike : public IFunction
+{
+public:
+    FunctionMapKeyMultiLike() : impl(true, 0, 0, true) {}
+    String getName() const override { return "mapKeyMultiLike"; }
+    size_t getNumberOfArguments() const override { return 3; }
+    bool isSuitableForShortCircuitArgumentsExecution(const DataTypesWithConstInfo & /*arguments*/) const override { return false; }
+    bool useDefaultImplementationForNulls() const override { return false; }
+
+    DataTypePtr getReturnTypeImpl(const DataTypes & arguments) const override
+    {
+        DataTypes new_arguments{arguments[1], arguments[0]};
+        return impl.getReturnTypeImpl(new_arguments);
+    }
+
+    ColumnPtr executeImpl(const ColumnsWithTypeAndName & arguments, const DataTypePtr & result_type, size_t input_rows_count) const override
+    {
+        ColumnsWithTypeAndName new_arguments{arguments[1], arguments[0]};
+        return impl.executeImpl(new_arguments, result_type, input_rows_count);
+    }
+
+private:
+    FunctionMultiMatchAny impl;
+};
+
 /// Adapter for map*KeyLike functions.
 /// It extracts nested Array(Tuple(key, value)) from Map columns
 /// and prepares ColumnFunction as first argument which works
@@ -375,6 +401,91 @@ struct MapKeyLikeAdapter
     }
 };
 
+template <typename Name, bool returns_map>
+struct MapKeyMultiLikeAdapter
+{
+    static void checkTypes(const DataTypes & types)
+    {
+        if (types.size() != 2)
+            throw Exception(
+                ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH,
+                "Number of arguments for function {} doesn't match: passed {}, should be 2",
+                Name::name,
+                types.size());
+
+        const auto * map_type = checkAndGetDataType<DataTypeMap>(types[0].get());
+        if (!map_type || !isStringOrFixedString(map_type->getKeyType()))
+            throw Exception(
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
+                "First argument for function {} must be a Map with String or FixedString key",
+                Name::name);
+
+        const auto * array_type = checkAndGetDataType<DataTypeArray>(types[1].get());
+        if (!array_type || !isStringOrFixedString(array_type->getNestedType()))
+            throw Exception(
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT, "Second argument for function {} must be Array of String or FixedString", Name::name);
+    }
+
+    static void extractNestedTypes(DataTypes & types)
+    {
+        checkTypes(types);
+        const auto & map_type = assert_cast<const DataTypeMap &>(*types[0]);
+
+        DataTypes lambda_argument_types{types[1], map_type.getKeyType(), map_type.getValueType()};
+        auto result_type = FunctionMapKeyMultiLike().getReturnTypeImpl(lambda_argument_types);
+
+        DataTypes argument_types{map_type.getKeyType(), map_type.getValueType()};
+        auto function_type = std::make_shared<DataTypeFunction>(argument_types, result_type);
+
+        types = {function_type, types[0]};
+        MapToNestedAdapter<Name, returns_map>::extractNestedTypes(types);
+    }
+
+    static void extractNestedTypesAndColumns(ColumnsWithTypeAndName & arguments)
+    {
+        checkTypes(collections::map<DataTypes>(arguments, [](const auto & elem) { return elem.type; }));
+
+        const auto & map_type = assert_cast<const DataTypeMap &>(*arguments[0].type);
+        const auto & pattern_arg = arguments[1];
+
+        ColumnPtr function_column;
+        auto function = std::make_shared<FunctionMapKeyMultiLike>();
+
+        DataTypes lambda_argument_types{pattern_arg.type, map_type.getKeyType(), map_type.getValueType()};
+        auto result_type = function->getReturnTypeImpl(lambda_argument_types);
+
+        DataTypes argument_types{map_type.getKeyType(), map_type.getValueType()};
+        auto function_type = std::make_shared<DataTypeFunction>(argument_types, result_type);
+
+        if (pattern_arg.column)
+        {
+            /// Here we create ColumnFunction with already captured pattern column.
+            /// Nested function will append keys and values column and it will work as desired lambda.
+            auto function_base = std::make_shared<FunctionToFunctionBaseAdaptor>(function, lambda_argument_types, result_type);
+            function_column = ColumnFunction::create(pattern_arg.column->size(), std::move(function_base), ColumnsWithTypeAndName{pattern_arg});
+        }
+
+        ColumnWithTypeAndName function_arg{function_column, function_type, "__function_map_key_multi_like"};
+        arguments = {function_arg, arguments[0]};
+        MapToNestedAdapter<Name, returns_map>::extractNestedTypesAndColumns(arguments);
+    }
+
+    static DataTypePtr extractResultType(const DataTypePtr & result_type)
+    {
+        return MapToNestedAdapter<Name, returns_map>::extractResultType(result_type);
+    }
+
+    static DataTypePtr wrapType(DataTypePtr type)
+    {
+        return MapToNestedAdapter<Name, returns_map>::wrapType(std::move(type));
+    }
+
+    static ColumnPtr wrapColumn(ColumnPtr column)
+    {
+        return MapToNestedAdapter<Name, returns_map>::wrapColumn(std::move(column));
+    }
+};
+
 struct NameMapConcat { static constexpr auto name = "mapConcat"; };
 using FunctionMapConcat = FunctionMapToArrayAdapter<FunctionArrayConcat, MapToNestedAdapter<NameMapConcat>, NameMapConcat>;
 
@@ -404,6 +515,9 @@ using FunctionMapContainsKeyLike = FunctionMapToArrayAdapter<FunctionArrayExists
 
 struct NameMapExtractKeyLike { static constexpr auto name = "mapExtractKeyLike"; };
 using FunctionMapExtractKeyLike = FunctionMapToArrayAdapter<FunctionArrayFilter, MapKeyLikeAdapter<NameMapExtractKeyLike, true>, NameMapExtractKeyLike>;
+
+struct NameMapExtractKeyMultiLike { static constexpr auto name = "mapExtractKeyMultiLike"; };
+using FunctionMapExtractKeyMultiLike = FunctionMapToArrayAdapter<FunctionArrayFilter, MapKeyMultiLikeAdapter<NameMapExtractKeyMultiLike, true>, NameMapExtractKeyMultiLike>;
 
 struct NameMapSort { static constexpr auto name = "mapSort"; };
 struct NameMapReverseSort { static constexpr auto name = "mapReverseSort"; };
@@ -515,6 +629,13 @@ REGISTER_FUNCTION(MapMiscellaneous)
         .description="Returns a map with elements which key matches the specified pattern.",
         .examples{{"mapExtractKeyLike", "SELECT mapExtractKeyLike(map('k1-1', 1, 'k2-1', 2), 'k1%')", ""}},
         .category = category_map,
+    });
+
+    factory.registerFunction<FunctionMapExtractKeyMultiLike>(
+    FunctionDocumentation{
+        .description="Returns a map with elements which key matches the specified regex pattern array.",
+        .examples{{"mapExtractKeyMultiLike", "SELECT mapExtractKeyMultiLike(map('k1-1', 1, 'k2-1', 2), ['k1.*', 'k2.*'])", ""}},
+        .categories{"Map"},
     });
 }
 
