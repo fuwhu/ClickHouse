@@ -530,25 +530,32 @@ Cluster::Cluster(const Poco::Util::AbstractConfiguration & config,
 
                 if (startsWith(replica_key, "replica"))
                 {
-                    replica_addresses.emplace_back(config,
-                        prefix + replica_key,
-                        cluster_name,
-                        secret,
-                        current_shard_num,
-                        current_replica_num);
-                    ++current_replica_num;
-
-                    if (internal_replication)
+                    bool is_enable = config.getBool(partial_prefix + replica_key + ".is_enable", true);
+                    if(is_enable)
                     {
-                        auto dir_name = replica_addresses.back().toFullString(/* use_compact_format= */ false);
-                        if (!replica_addresses.back().is_local)
-                            concatInsertPath(insert_paths.prefer_localhost_replica, dir_name);
-                        concatInsertPath(insert_paths.no_prefer_localhost_replica, dir_name);
+                        replica_addresses.emplace_back(config,
+                            prefix + replica_key,
+                            cluster_name,
+                            secret,
+                            current_shard_num,
+                            current_replica_num);
+                        ++current_replica_num;
+
+                        if (internal_replication)
+                        {
+                            auto dir_name = replica_addresses.back().toFullString(/* use_compact_format= */ false);
+                            if (!replica_addresses.back().is_local)
+                                concatInsertPath(insert_paths.prefer_localhost_replica, dir_name);
+                            concatInsertPath(insert_paths.no_prefer_localhost_replica, dir_name);
+                        }
                     }
                 }
                 else
                     throw Exception(ErrorCodes::UNKNOWN_ELEMENT_IN_CONFIG, "Unknown element in config: {}", replica_key);
             }
+
+            if (replica_addresses.empty())
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "There is no any enabled replica for shard {} of cluster `{}`", current_shard_num, cluster_name);
 
             addShard(
                 settings,
