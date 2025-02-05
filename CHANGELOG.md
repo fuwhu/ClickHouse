@@ -1,7 +1,23 @@
+### ClickHouse release v22.3.15.1-bili-1.1.3, 2025-02-05
+
+#### New Feature
+* Support query iceberg data from clickhouse. ([zhangchi](https://git.bilibili.co/zhangchi04))([hufuwang](https://git.bilibili.co/hufuwang))([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#91](https://git.bilibili.co/datacenter/clickhouse/-/issues/91)[#518](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/518)
+
+#### Improvement
+* Refactor the bitmap dictionary : change BitmapDictionary to BidirectionalDictionary, and remove LRU cache for local RocksDB storage. ([zhangchi](https://git.bilibili.co/zhangchi04))[#493](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/493)
+* Revise the function `bsi_range` to be left and right closed interval. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#132](https://git.bilibili.co/datacenter/clickhouse/-/issues/132)[#501](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/501)
+* Avoid single thread processing for aggregation over aggregation. ([chenjian04](https://git.bilibili.co/chenjian04))[#503](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/503)
+* Add a limit on the number of meta cache items for the unique engine. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#135](https://git.bilibili.co/datacenter/clickhouse/-/issues/135)[#509](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/509)
+* Support partition lock for unique engine. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#136](https://git.bilibili.co/datacenter/clickhouse/-/issues/136)[#515](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/515)
+
+#### Bug Fix
+* Fix the data accuracy problem caused by mutation on the table with MapV2 column. ([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#87](https://git.bilibili.co/datacenter/clickhouse/-/issues/87)[#362](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/362)
+* Fix the argument checking for iceberg database. ([wangzhibo](https://git.bilibili.co/wangzhibo))[#530](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/530)
+
 ### ClickHouse release v22.3.15.1-bili-1.1.2, 2024-11-22
 
 #### New Feature
-* Collect the where and group by columns from the query, and store it in query log table.[ISSUE#100](https://git.bilibili.co/datacenter/clickhouse/-/issues/100)[#413](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/413)[#487](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/487)
+* Collect the where and group by columns from the query, and store it in query log table.([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#100](https://git.bilibili.co/datacenter/clickhouse/-/issues/100)[#413](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/413)[#487](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/487)
 
 #### Improvement
 * check whether the part has been deleted before performing attach, to avoid endless task retianed in zookeeper task queue. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#106](https://git.bilibili.co/datacenter/clickhouse/-/issues/106)[#422](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/422)
