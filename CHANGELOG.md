@@ -1,3 +1,67 @@
+### ClickHouse release v22.3.15.1-bili-1.1.2, 2024-11-22
+
+#### New Feature
+* Collect the where and group by columns from the query, and store it in query log table.[ISSUE#100](https://git.bilibili.co/datacenter/clickhouse/-/issues/100)[#413](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/413)[#487](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/487)
+
+#### Improvement
+* check whether the part has been deleted before performing attach, to avoid endless task retianed in zookeeper task queue. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#106](https://git.bilibili.co/datacenter/clickhouse/-/issues/106)[#422](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/422)
+* Use buffering while reading data with read-in-order optimization. ([zhangchi](https://git.bilibili.co/zhangchi04))[ISSUE#115](https://git.bilibili.co/datacenter/clickhouse/-/issues/115)[ISSUE#120](https://git.bilibili.co/datacenter/clickhouse/-/issues/120)[#447](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/447)
+* Replace the too-long name of the file of column in MergeTree data part with the hash value of original name, to avoid exceeding the file name length limit of linux. ([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#116](https://git.bilibili.co/datacenter/clickhouse/-/issues/116)[#426](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/426)
+* Move the connection drain from RemoteSource::prepare to RemoteSource::work, so that multiple connections can be drained in parallel. ([zhangchi](https://git.bilibili.co/zhangchi04))[ISSUE#120](https://git.bilibili.co/datacenter/clickhouse/-/issues/120)[#461](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/461)
+
+
+#### Bug Fix
+* Fix connection drain problem caused by remote query timeout.([zhangchi](https://git.bilibili.co/zhangchi04))[ISSUE#126](https://git.bilibili.co/datacenter/clickhouse/-/issues/126)[#481](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/481)
+* Pick relevant PRs from clickhouse community to fix some bugs of interserver-secret. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#105](https://git.bilibili.co/datacenter/clickhouse/-/issues/105)[#421](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/421)
+* Fix the 'cannot allocate block number' exception due to invalid local cache of block number that is already cleaned up by block number cleaner. ([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#124](https://git.bilibili.co/datacenter/clickhouse/-/issues/124)[#484](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/484)
+
+
+### ClickHouse release v22.3.15.1-bili-1.1.1, 2024-09-20
+
+#### New Feature
+* Added new aggregation function bsi_merge_agg. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#117](https://git.bilibili.co/datacenter/clickhouse/-/issues/117)[#457](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/457)
+
+#### Improvement
+* Optimize the block number znodes cleaner to prevent missing deleting some block numbers because of loop break.([chenjian04](https://git.bilibili.co/chenjian04))[#406](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/406)
+* Optimize the insertFrom of ColumnAggregateFunction to share Aggregate State in some cases. ([chenjian04](https://git.bilibili.co/chenjian04))[#417](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/417)
+* Optimize the implicit columns limitation : Check the number of implicit columns after construction instead of before write.([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#97](https://git.bilibili.co/datacenter/clickhouse/-/issues/97)[#412](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/412)
+* Support optimizing where clause with sorting key expression moved to prewhere. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [ISSUE#114](https://git.bilibili.co/datacenter/clickhouse/-/issues/114)[#449](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/449)[#450](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/450)
+
+#### Bug Fix
+* Fix the bug of read buffer from hdfs using file offset as working buffer offset. ([zhangchi](https://git.bilibili.co/zhangchi04))[#402](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/402)
+* Fix the bug that the retries of failed merge task for unique engine table can never succeed due to memory leak of rocksdb object. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#408](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/408)[#410](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/410)
+* Avoid the invalid data part level while attaching data part. ([zhangchi](https://git.bilibili.co/zhangchi04))[#419](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/419) [ISSUE#58558](https://github.com/ClickHouse/ClickHouse/issues/58558) [PR#61536](https://github.com/ClickHouse/ClickHouse/pull/61536)
+* Fix the Null Pointer Exception while bsi_add_agg being executed. ([chenjian04](https://git.bilibili.co/chenjian04))[ISSUE#102](https://git.bilibili.co/datacenter/clickhouse/-/issues/102)[#418](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/418)
+* Fix two merge-related bugs : a. Fix compatibility problem caused by TTL_DROP merge task log entry; b. Postpone the increment of ttl-merge counter for non-replicated merge tree tables, to avoid incorrect ttl-merge counter metric. ([zhangchi](https://git.bilibili.co/zhangchi04)) [ISSUE#104](https://git.bilibili.co/datacenter/clickhouse/-/issues/104)[ISSUE#107](https://git.bilibili.co/datacenter/clickhouse/-/issues/107)[ISSUE#108](https://git.bilibili.co/datacenter/clickhouse/-/issues/108) [#425](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/425)
+* Fix the wrong query result in case the nullable column/expression is used in the filtering expression against the unique engine table. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [ISSUE#109](https://git.bilibili.co/datacenter/clickhouse/-/issues/109)[#432](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/432)[#436](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/436)
+* Fix data duplication and update exception due to LevelDB FileReader LRU of Unique Engine. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [ISSUE#112](https://git.bilibili.co/datacenter/clickhouse/-/issues/112)[#439](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/439)
+* Fix the Null Pointer Exception caused by aggregation function bsi_add_agg. ([wangzhibo](https://git.bilibili.co/wangzhibo))[ISSUE#121](https://git.bilibili.co/datacenter/clickhouse/-/issues/121)[#468](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/468)
+
+
+### ClickHouse release v22.3.15.1-bili-1.1.0, 2024-04-26
+
+#### New Feature
+
+* Dictionary for Bitmap: Added dictionary source which access [Dictionary Service](https://git.bilibili.co/datacenter/dictionaryservice). ([zhangchi](https://git.bilibili.co/zhangchi04)) [#325](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/325)
+* BSI: added BSI data type and some BSI functions. ([wangzhibo](https://git.bilibili.co/wangzhibo)) ([chenjian04](https://git.bilibili.co/chenjian04)) [#393](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/393) [#398](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/398) [#390](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/390) [#399](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/399)
+* Added BlockNumberCleaner which cleans up the znodes in 'block_numbers' in case the partition is empty and specified conditions met. ([chenjian04](https://git.bilibili.co/chenjian04)) [#348](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/348)
+
+#### Improvement
+* Add config parameter to control whether enable BlockNumberCleaner. ([chenjian04](https://git.bilibili.co/chenjian04))[#385](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/385)
+* Optimize bitmap : call runOptimize of roaring bitamp to use as many RunContainer as possible before serialization. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#388](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/388)
+* Optimize merge policy : give ttl merge higher priority and avoid starvation of big merge. ([zhangchi](https://git.bilibili.co/zhangchi04))[#387](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/387)
+* Add some metrics for tracking where does the running zookeeper request comes from. this can be helpful for troubleshooting zookeeper issues. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#359](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/359)
+
+#### Bug Fix
+* Do not read all the columns from right GLOBAL JOIN table to avoid 'too many columns' exception. ([wangzhibo](https://git.bilibili.co/wangzhibo)) [#345](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/345)
+* Fix the mutation failure due to ordering by zcurve value. ([zhangchi](https://git.bilibili.co/zhangchi04))[#355](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/355)
+* Fix the problem of missing columns while using CTE with distributed global join. ([zhangchi](https://git.bilibili.co/zhangchi04)) [ISSUE#89](https://git.bilibili.co/datacenter/clickhouse/-/issues/89) [#386](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/386)
+* Fix the problems of dopping and accessing dictionary after dropping the dictionary one time. ([zhangchi](https://git.bilibili.co/zhangchi04))[#389](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/389)
+* Fix too aggressive evaluation of args in default column expr. ([zhangchi](https://git.bilibili.co/zhangchi04))[#389](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/389)
+* Fix the failure of select query after adding an column to the table which already has a column of Nullable/Array type. ([chenjian04](https://git.bilibili.co/chenjian04)) [#395](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/395)
+* Fix exception while using has function against bloom_filter index. ([zhangchi](https://git.bilibili.co/zhangchi04)) [#396](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/396)
+
+
 ### ClickHouse release v22.3.15.1-bili-1.0.3, 2023-12-14
 #### New Feature
 
