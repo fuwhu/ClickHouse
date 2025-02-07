@@ -1832,6 +1832,9 @@ namespace ErrorCodes
     DECLARE(UInt64, max_parallel_receives_for_table, 16, R"(
     Limit parallel sends per table.
     )", 0) \
+    DECLARE(Bool, select_data_parts_for_move_by_ttl, false, R"(
+    When disk space is low, move TTL older data to a cold drive.
+    )", 0) \
 
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \

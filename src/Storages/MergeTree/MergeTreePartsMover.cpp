@@ -7,6 +7,8 @@
 #include <Disks/IVolume.h>
 
 #include <set>
+#include <any>
+#include <boost/algorithm/string/join.hpp>
 
 namespace DB
 {
@@ -30,9 +32,9 @@ namespace FailPoints
 namespace
 {
 
-/// Contains minimal number of heaviest parts, which sum size on disk is greater than required.
+/// Contains minimal number of heaviest or oldest parts, which sum size on disk is greater than required.
 /// If there are not enough summary size, than contains all parts.
-class LargestPartsWithRequiredSize
+class LargestOrOldestPartsWithRequiredSize
 {
     struct PartsSizeOnDiskComparator
     {
@@ -45,27 +47,68 @@ class LargestPartsWithRequiredSize
         }
     };
 
-    std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator> elems;
+    struct TTLComparator
+    {
+        const PartsSizeOnDiskComparator fallback = PartsSizeOnDiskComparator();
+
+        bool operator()(const MergeTreeData::DataPartPtr & f, const MergeTreeData::DataPartPtr & s) const
+        {
+            UInt64 first_delete_ttl_time = f->ttl_infos.part_max_ttl;
+            UInt64 second_delete_ttl_time = s->ttl_infos.part_max_ttl;
+            /// If parts have equal delete ttl_time, than order them by sizes and names (names are unique)
+            if (first_delete_ttl_time == second_delete_ttl_time)
+                return !fallback(f, s);
+            return std::tie(first_delete_ttl_time, f->name) > std::tie(second_delete_ttl_time, s->name);
+        }
+    };
+
     UInt64 required_size_sum;
+    bool select_data_parts_for_move_by_ttl;
+    std::any elems;
     UInt64 current_size_sum = 0;
 
 public:
-    explicit LargestPartsWithRequiredSize(UInt64 required_sum_size_) : required_size_sum(required_sum_size_) {}
+    LargestOrOldestPartsWithRequiredSize(UInt64 required_sum_size_, bool select_data_parts_for_move_by_ttl_)
+        : required_size_sum(required_sum_size_), select_data_parts_for_move_by_ttl(select_data_parts_for_move_by_ttl_)
+    {
+        if (select_data_parts_for_move_by_ttl)
+            elems = std::set<MergeTreeData::DataPartPtr, TTLComparator>();
+        else
+            elems = std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator>();
+    }
 
     void add(MergeTreeData::DataPartPtr part)
     {
         if (current_size_sum < required_size_sum)
         {
-            elems.emplace(part);
+            if (select_data_parts_for_move_by_ttl)
+                std::any_cast<std::set<MergeTreeData::DataPartPtr, TTLComparator> &>(elems).emplace(part);
+            else
+                std::any_cast<std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator> &>(elems).emplace(part);
+
             current_size_sum += part->getBytesOnDisk();
             return;
         }
 
-        /// Adding smaller element
-        if (!elems.empty() && (*elems.begin())->getBytesOnDisk() >= part->getBytesOnDisk())
-            return;
+        if (select_data_parts_for_move_by_ttl)
+        {
+            auto elems_alias = std::any_cast<std::set<MergeTreeData::DataPartPtr, TTLComparator> &>(elems);
+            /// Adding newer element
+            if (!elems_alias.empty() && (*elems_alias.begin())->ttl_infos.part_max_ttl <= part->ttl_infos.part_max_ttl)
+                return;
 
-        elems.emplace(part);
+            elems_alias.emplace(part);
+        }
+        else
+        {
+            auto elems_alias = std::any_cast<std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator> &>(elems);
+            /// Adding smaller element
+            if (!elems_alias.empty() && (*elems_alias.begin())->getBytesOnDisk() >= part->getBytesOnDisk())
+                return;
+
+            elems_alias.emplace(part);
+        }
+
         current_size_sum += part->getBytesOnDisk();
 
         removeRedundantElements();
@@ -82,18 +125,42 @@ public:
     MergeTreeData::DataPartsVector getAccumulatedParts()
     {
         MergeTreeData::DataPartsVector res;
-        for (const auto & elem : elems)
-            res.push_back(elem);
+        if (select_data_parts_for_move_by_ttl)
+        {
+            auto elems_alias = std::any_cast<const std::set<MergeTreeData::DataPartPtr, TTLComparator> &>(elems);
+            for (const auto & elem : elems_alias)
+                res.push_back(elem);
+        }
+        else
+        {
+            auto elems_alias = std::any_cast<const std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator> &>(elems);
+            for (const auto & elem : elems_alias)
+                res.push_back(elem);
+        }
+
         return res;
     }
 
 private:
     void removeRedundantElements()
     {
-        while (!elems.empty() && (current_size_sum - (*elems.begin())->getBytesOnDisk() >= required_size_sum))
+        if (select_data_parts_for_move_by_ttl)
         {
-            current_size_sum -= (*elems.begin())->getBytesOnDisk();
-            elems.erase(elems.begin());
+            auto elems_alias = std::any_cast<std::set<MergeTreeData::DataPartPtr, TTLComparator> &>(elems);
+            while (!elems_alias.empty() && (current_size_sum - (*elems_alias.begin())->getBytesOnDisk() >= required_size_sum))
+            {
+                current_size_sum -= (*elems_alias.begin())->getBytesOnDisk();
+                elems_alias.erase(elems_alias.begin());
+            }
+        }
+        else
+        {
+            auto elems_alias = std::any_cast<std::set<MergeTreeData::DataPartPtr, PartsSizeOnDiskComparator> &>(elems);
+            while (!elems_alias.empty() && (current_size_sum - (*elems_alias.begin())->getBytesOnDisk() >= required_size_sum))
+            {
+                current_size_sum -= (*elems_alias.begin())->getBytesOnDisk();
+                elems_alias.erase(elems_alias.begin());
+            }
         }
     }
 };
@@ -114,12 +181,13 @@ bool MergeTreePartsMover::selectPartsForMove(
     if (data_parts.empty())
         return false;
 
-    std::unordered_map<DiskPtr, LargestPartsWithRequiredSize> need_to_move;
+    std::unordered_map<DiskPtr, LargestOrOldestPartsWithRequiredSize> need_to_move;
     const auto policy = data->getStoragePolicy();
     const auto & volumes = policy->getVolumes();
 
     if (!volumes.empty())
     {
+        bool move_by_ttl = data->getSettings()->select_data_parts_for_move_by_ttl && data->getInMemoryMetadataPtr()->hasAnyTableTTL();
         /// Do not check last volume
         for (size_t i = 0; i != volumes.size() - 1; ++i)
         {
@@ -132,7 +200,8 @@ bool MergeTreePartsMover::selectPartsForMove(
                     UInt64 required_maximum_available_space = static_cast<UInt64>(*total_space * policy->getMoveFactor());
 
                     if (*unreserved_space < required_maximum_available_space && !disk->isBroken())
-                        need_to_move.emplace(disk, required_maximum_available_space - *unreserved_space);
+                        need_to_move.emplace(
+                            disk, LargestOrOldestPartsWithRequiredSize(required_maximum_available_space - *unreserved_space, move_by_ttl));
                 }
             }
         }
