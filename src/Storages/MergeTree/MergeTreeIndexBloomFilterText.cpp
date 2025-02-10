@@ -410,7 +410,8 @@ bool MergeTreeConditionBloomFilterText::extractAtomFromTree(const RPNBuilderTree
                  function_name == "endsWith" ||
                  function_name == "multiSearchAny" ||
                  function_name == "hasAny" ||
-                 function_name == "hasAll")
+                 function_name == "hasAll" ||
+                 function_name == "tokenLike")
         {
             Field const_value;
             DataTypePtr const_type;
@@ -563,7 +564,7 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
         out.function = RPNElement::FUNCTION_EQUALS;
         out.bloom_filter = std::make_unique<BloomFilter>(params);
         const auto & value = const_value.safeGet<String>();
-        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter);
+        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter, false);
         return true;
     }
     if (function_name == "notLike")
@@ -572,7 +573,16 @@ bool MergeTreeConditionBloomFilterText::traverseTreeEquals(
         out.function = RPNElement::FUNCTION_NOT_EQUALS;
         out.bloom_filter = std::make_unique<BloomFilter>(params);
         const auto & value = const_value.safeGet<String>();
-        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter);
+        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter, false);
+        return true;
+    }
+    else if (function_name == "tokenLike")
+    {
+        out.key_column = *key_index;
+        out.function = RPNElement::FUNCTION_EQUALS;
+        out.bloom_filter = std::make_unique<BloomFilter>(params);
+        const auto & value = const_value.safeGet<String>();
+        token_extractor->stringLikeToBloomFilter(value.data(), value.size(), *out.bloom_filter, true);
         return true;
     }
     if (function_name == "startsWith")
