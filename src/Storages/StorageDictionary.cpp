@@ -207,8 +207,16 @@ std::shared_ptr<const IDictionary> StorageDictionary::getDictionary() const
     return getContext()->getExternalDictionariesLoader().getDictionary(registered_dictionary_name, getContext());
 }
 
-void StorageDictionary::shutdown(bool)
+void StorageDictionary::shutdown(bool is_drop)
 {
+    if (is_drop)
+    {
+        auto registered_dictionary_name
+            = location == Location::SameDatabaseAndNameAsDictionary ? getStorageID().getInternalDictionaryName() : dictionary_name;
+        auto dictionary = getContext()->getExternalDictionariesLoader().tryGetDictionary(registered_dictionary_name, getContext());
+        drop_holder = std::move(dictionary);
+    }
+
     removeDictionaryConfigurationFromRepository();
 }
 
@@ -235,6 +243,12 @@ LoadablesConfigurationPtr StorageDictionary::getConfiguration() const
 {
     std::lock_guard lock(dictionary_config_mutex);
     return configuration;
+}
+
+void StorageDictionary::drop()
+{
+    if (drop_holder)
+        drop_holder->cleanSource();
 }
 
 void StorageDictionary::renameInMemory(const StorageID & new_table_id)

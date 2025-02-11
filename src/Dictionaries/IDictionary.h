@@ -464,6 +464,8 @@ public:
         dictionary_comment = new_dictionary_comment;
     }
 
+    virtual void cleanSource() const { }
+
 private:
     mutable std::mutex mutex;
     StorageID dictionary_id TSA_GUARDED_BY(mutex);

@@ -418,6 +418,12 @@ void DirectDictionary<dictionary_key_type>::applySettings(const Settings & setti
     }
 }
 
+template <DictionaryKeyType dictionary_key_type>
+void DirectDictionary<dictionary_key_type>::cleanSource() const
+{
+    source_ptr->clean();
+}
+
 namespace
 {
     template <DictionaryKeyType dictionary_key_type>

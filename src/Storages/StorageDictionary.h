@@ -96,6 +96,8 @@ public:
 
     String getDictionaryName() const { return dictionary_name; }
 
+    void drop() override;
+
 private:
     String dictionary_name;
     const Location location;
@@ -104,6 +106,9 @@ private:
     LoadablesConfigurationPtr configuration TSA_GUARDED_BY(dictionary_config_mutex);
 
     scope_guard remove_repository_callback;
+
+    /// used for dropping dictionary and cleaning source
+    std::shared_ptr<const IDictionary> drop_holder;
 
     void removeDictionaryConfigurationFromRepository();
 };

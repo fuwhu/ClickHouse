@@ -98,6 +98,8 @@ public:
 
     void applySettings(const Settings & settings);
 
+    void cleanSource() const override;
+
 private:
     Pipe getSourcePipe(const Columns & key_columns, const PaddedPODArray<KeyType> & requested_keys) const;
 

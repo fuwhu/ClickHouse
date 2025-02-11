@@ -636,6 +636,7 @@
     M(1001, STD_EXCEPTION) \
     M(1002, UNKNOWN_EXCEPTION) \
     M(1003, SSH_EXCEPTION) \
+    M(1006, GRPC_ERROR) \
 /* See END */
 
 #ifdef APPLY_FOR_EXTERNAL_ERROR_CODES
@@ -652,7 +653,7 @@ namespace ErrorCodes
     APPLY_FOR_ERROR_CODES(M)
 #undef M
 
-    constexpr ErrorCode END = 1003;
+    constexpr ErrorCode END = 1006;
     ErrorPairHolder values[END + 1]{};
 
     struct ErrorCodesNames

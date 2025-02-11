@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package dictionary.api;
+
+/* Only return one of the keys
+ * or values(can reduce pressure in both server and client side).
+ * if verbose = true, will return both keys and values
+ */
+message KeyValueResp {
+  repeated bytes keys = 1;
+  repeated uint64 values = 2;
+}
+
+message GetValueReq {
+  string dict = 1;
+  repeated bytes keys = 2;
+
+  // for debugging
+  bool verbose = 3;
+  bool nocache = 4;
+  bool noalloc = 5;
+}
+
+message GetKeyReq {
+  string dict = 1;
+  repeated uint64 values = 2;
+
+  // for debugging
+  bool verbose = 3;
+  bool nocache = 4;
+}
+
+enum DictDataType {
+  UNKNOWN = 0;
+  INT = 1;
+  LONG = 2;
+  STRING = 3;
+}
+
+message DictMetaReq { string dict = 1; }
+
+message DictMetaResp {
+  string dict = 1;
+  bool exists = 2;
+  DictDataType datatype = 3;
+}
+
+service Dictionary {
+  rpc GetValue(GetValueReq) returns (KeyValueResp);
+
+  rpc GetKey(GetKeyReq) returns (KeyValueResp);
+
+  rpc GetDictMeta(DictMetaReq) returns (DictMetaResp);
+}

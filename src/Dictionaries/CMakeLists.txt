@@ -55,3 +55,8 @@ endif()
 
 add_subdirectory(Embedded)
 target_link_libraries(clickhouse_dictionaries PRIVATE ch_contrib::sparsehash)
+
+if (TARGET ch_contrib::grpc)
+    add_subdirectory(Proxy)
+    target_link_libraries(clickhouse_dictionaries PRIVATE dictionary_api_protos)
+endif()
