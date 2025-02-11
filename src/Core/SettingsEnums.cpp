@@ -19,6 +19,7 @@ namespace ErrorCodes
     extern const int BAD_ARGUMENTS;
     extern const int UNKNOWN_MYSQL_DATATYPES_SUPPORT_LEVEL;
     extern const int UNKNOWN_UNION;
+    extern const int UNKNOWN_REMOTE_QUERY_TIMEOUT_MODE;
 }
 
 template <typename Type>
@@ -318,4 +319,10 @@ IMPLEMENT_SETTING_ENUM(
     {{"lat_lon", GeoToH3ArgumentOrder::LAT_LON},
      {"lon_lat", GeoToH3ArgumentOrder::LON_LAT}})
 
+IMPLEMENT_SETTING_ENUM(
+    RemoteQueryTimeOutMode,
+    ErrorCodes::UNKNOWN_REMOTE_QUERY_TIMEOUT_MODE,
+    {{"immediate_throw", RemoteQueryTimeOutMode::IMMEDIATE_THROW},
+     {"afterwards_throw", RemoteQueryTimeOutMode::AFTERWARDS_THROW},
+     {"ignore", RemoteQueryTimeOutMode::IGNORE}})
 }

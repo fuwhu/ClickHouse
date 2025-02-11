@@ -107,7 +107,6 @@ class WriteBuffer;
     M(CLASS_NAME, VectorSearchFilterStrategy) \
     M(CLASS_NAME, GeoToH3ArgumentOrder)
 
-
 COMMON_SETTINGS_SUPPORTED_TYPES(Settings, DECLARE_SETTING_TRAIT)
 struct Settings
 {

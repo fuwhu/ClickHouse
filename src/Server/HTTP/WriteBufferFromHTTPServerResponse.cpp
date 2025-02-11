@@ -18,6 +18,13 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <Common/CurrentThread.h>
+
+namespace ProfileEvents
+{
+    extern const Event RemoteQueryTimeoutCount;
+    extern const Event RemoteTotalLeafQueryCount;
+}
 
 namespace DB
 {
@@ -30,6 +37,28 @@ namespace ErrorCodes
     extern const int ABORTED;
 }
 
+
+/// Send remote query timeout information
+void WriteBufferFromHTTPServerResponse::setRemoteQueryTimeoutInfo()
+{
+    auto * profile_events = &CurrentThread::getProfileEvents();
+
+    while (profile_events && profile_events->level != VariableContext::Process)
+        profile_events = profile_events->getParent();
+
+    if (profile_events && profile_events->level == VariableContext::Process)
+    {
+        auto profile_events_snapshot = profile_events->getPartiallyAtomicSnapshot();
+        auto remote_query_timeout_count = profile_events_snapshot[ProfileEvents::RemoteQueryTimeoutCount];
+        auto total_leaf_query_count = profile_events_snapshot[ProfileEvents::RemoteTotalLeafQueryCount];
+
+        if (remote_query_timeout_count > 0)
+        {
+            response.add("X-ClickHouse-Remote-Query-Timeout-Count", std::to_string(remote_query_timeout_count));
+            response.add("X-ClickHouse-Total-Child-Query-Count", std::to_string(total_leaf_query_count));
+        }
+    }
+}
 
 void WriteBufferFromHTTPServerResponse::startSendHeaders()
 {
@@ -50,6 +79,8 @@ void WriteBufferFromHTTPServerResponse::startSendHeaders()
         response.set("Access-Control-Allow-Origin", "*");
 
     setResponseDefaultHeaders(response);
+
+    setRemoteQueryTimeoutInfo();
 
     std::stringstream header; //STYLE_CHECK_ALLOW_STD_STRING_STREAM
     response.beginWrite(header);

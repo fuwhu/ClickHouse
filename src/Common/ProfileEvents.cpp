@@ -1026,6 +1026,9 @@ The server successfully detected this situation and will download merged part fr
     M(FilterTransformPassedRows, "Number of rows that passed the filter in the query", ValueType::Number) \
     M(FilterTransformPassedBytes, "Number of bytes that passed the filter in the query", ValueType::Bytes) \
     M(QueryPreempted, "How many times tasks are paused and waiting due to 'priority' setting", ValueType::Number) \
+    \
+    M(RemoteQueryTimeoutCount, "Number of timeout childern queries in distributed query") \
+    M(RemoteTotalLeafQueryCount, "Number of total childern queries in distributed query") \
 
 
 #ifdef APPLY_FOR_EXTERNAL_EVENTS

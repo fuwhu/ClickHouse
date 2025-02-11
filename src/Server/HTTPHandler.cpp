@@ -47,6 +47,11 @@
 #include <unordered_map>
 #include <utility>
 
+namespace ProfileEvents
+{
+    extern const Event RemoteQueryTimeoutCount;
+    extern const Event RemoteTotalLeafQueryCount;
+}
 
 namespace DB
 {
@@ -78,6 +83,7 @@ namespace ErrorCodes
     extern const int INVALID_CONFIG_PARAMETER;
     extern const int HTTP_LENGTH_REQUIRED;
     extern const int SESSION_ID_EMPTY;
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
 }
 
 namespace
@@ -617,6 +623,20 @@ void HTTPHandler::processQuery(
         {},
         handle_exception_in_output_format,
         query_finish_callback);
+
+    if (context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+    {
+        auto profile_events_snapshot = CurrentThread::getProfileEvents().getPartiallyAtomicSnapshot();
+        auto remote_query_timeout_count = profile_events_snapshot[ProfileEvents::RemoteQueryTimeoutCount];
+        auto total_leaf_query_count = profile_events_snapshot[ProfileEvents::RemoteTotalLeafQueryCount];
+        if (remote_query_timeout_count > 0)
+            throw Exception(
+                ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED,
+                "remote query timeout happened for some shard of the distributed query, {}/{} shards timed out, the result "
+                "data may be incomplete.",
+                remote_query_timeout_count,
+                total_leaf_query_count);
+    }
 }
 
 bool HTTPHandler::trySendExceptionToClient(

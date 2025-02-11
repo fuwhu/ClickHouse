@@ -85,6 +85,23 @@ HedgedConnections::HedgedConnections(
 
     active_connection_count = connections.size();
     pipeline_for_new_replicas.add([throttler_](ReplicaState & replica_) { replica_.connection->setThrottler(throttler_); });
+
+    remote_query_timeout.setRelative(settings.remote_query_timeout);
+    epoll.add(remote_query_timeout.getDescriptor());
+}
+
+HedgedConnections::~HedgedConnections()
+{
+    try
+    {
+        /// remote query timeout fd may not being added in epoll if this shard is not available.
+        if (!epoll.empty())
+            epoll.remove(remote_query_timeout.getDescriptor());
+    }
+    catch (...)
+    {
+        tryLogCurrentException(getLogger("HedgedConnections"), __PRETTY_FUNCTION__);
+    }
 }
 
 void HedgedConnections::Pipeline::add(std::function<void(ReplicaState & replica)> send_function)
@@ -327,9 +344,14 @@ Packet HedgedConnections::drain()
     Packet res;
     res.type = Protocol::Server::EndOfStream;
 
-    while (!epoll.empty())
+    /// Wait until all connections finish, skip remote query timeout fd, which will be removed from epoll in dtor.
+    while (epoll.size() > 1)
     {
         ReplicaLocation location = getReadyReplicaLocation();
+
+        if (location.remote_query_timeout_exceeded)
+            continue;
+
         Packet packet = receivePacketFromReplica(location);
         switch (packet.type)
         {
@@ -375,6 +397,13 @@ Packet HedgedConnections::receivePacketUnlocked(AsyncCallback async_callback)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "No pending events in epoll.");
 
     ReplicaLocation location = getReadyReplicaLocation(std::move(async_callback));
+    if (location.remote_query_timeout_exceeded)
+    {
+        Packet packet;
+        packet.type = Protocol::Server::RemoteQueryTimeout;
+        return packet;
+    }
+
     return receivePacketFromReplica(location);
 }
 
@@ -397,6 +426,10 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
 
         if (event_fd == hedged_connections_factory.getFileDescriptor())
             checkNewReplica();
+        else if (event_fd == remote_query_timeout.getDescriptor())
+        {
+            return ReplicaLocation{0, 0, true};
+        }
         else if (fd_to_replica_location.contains(event_fd))
         {
             ReplicaLocation location = fd_to_replica_location[event_fd];

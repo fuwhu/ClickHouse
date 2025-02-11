@@ -144,6 +144,8 @@ namespace ProfileEvents
     extern const Event ReadTaskRequestsSentElapsedMicroseconds;
     extern const Event MergeTreeReadTaskRequestsSentElapsedMicroseconds;
     extern const Event MergeTreeAllRangesAnnouncementsSentElapsedMicroseconds;
+    extern const Event RemoteQueryTimeoutCount;
+    extern const Event RemoteTotalLeafQueryCount;
 }
 
 namespace DB::ErrorCodes
@@ -175,6 +177,8 @@ namespace DB::ErrorCodes
     // When query is killed by `Protocol::Client::Cancel` packet we just stop execution,
     // there is no need to send the exception which has been caused by the cancel packet.
     extern const int QUERY_WAS_CANCELLED_BY_CLIENT;
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
+
 }
 
 namespace
@@ -1306,7 +1310,6 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
           *  and there could be ongoing calculations in other threads at the same time.
           */
 
-
         std::lock_guard lock(callback_mutex);
 
         receivePacketsExpectCancel(state);
@@ -1317,6 +1320,20 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
         sendProgress(state);
         sendLogs(state);
         sendSelectProfileEvents(state);
+
+        if (query_context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+        {
+            auto profile_events_snapshot = CurrentThread::getProfileEvents().getPartiallyAtomicSnapshot();
+            auto remote_query_timeout_count = profile_events_snapshot[ProfileEvents::RemoteQueryTimeoutCount];
+            auto total_leaf_query_count = profile_events_snapshot[ProfileEvents::RemoteTotalLeafQueryCount];
+            if (remote_query_timeout_count > 0)
+                throw Exception(
+                    ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED,
+                    "remote query timeout happened for some shard of the distributed query, {}/{} shards timed out, the result "
+                    "data may be incomplete.",
+                    remote_query_timeout_count,
+                    total_leaf_query_count);
+        }
 
         sendData(state, {});
 

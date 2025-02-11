@@ -66,6 +66,11 @@ void RemoteQueryExecutorReadContext::Task::run(AsyncCallback async_callback, Sus
         }
         read_context.packet = read_context.executor.getConnections().receivePacketUnlocked(async_callback);
         read_context.has_read_packet_part = PacketPart::Body;
+
+        /// Stop fiber when receiving RemoteQueryTimeout packet
+        if (read_context.packet.type == Protocol::Server::RemoteQueryTimeout)
+            return;
+
         suspend_callback();
     }
 }

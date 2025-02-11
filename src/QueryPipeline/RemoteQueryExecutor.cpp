@@ -36,6 +36,7 @@ namespace ProfileEvents
     extern const Event ReadTaskRequestsReceived;
     extern const Event MergeTreeReadTaskRequestsReceived;
     extern const Event ParallelReplicasAvailableCount;
+    extern const Event RemoteQueryTimeoutCount;
 }
 
 namespace DB
@@ -57,6 +58,7 @@ namespace ErrorCodes
     extern const int UNKNOWN_PACKET_FROM_SERVER;
     extern const int DUPLICATED_PART_UUIDS;
     extern const int SYSTEM_ERROR;
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
 }
 
 RemoteQueryExecutor::RemoteQueryExecutor(
@@ -718,6 +720,11 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::processPacket(Packet packet
         case Protocol::Server::TimezoneUpdate:
             break;
 
+        case Protocol::Server::RemoteQueryTimeout:
+            ProfileEvents::increment(ProfileEvents::RemoteQueryTimeoutCount);
+            if (context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
+                throw Exception(ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED, "Remote query timeout exceeded.");
+            return ReadResult(Block{});
         default:
             got_unknown_packet_from_replica = true;
             throw Exception(
@@ -841,6 +848,11 @@ void RemoteQueryExecutor::finish()
             case Protocol::Server::Progress:
                 if (progress_callback)
                     progress_callback(packet.progress);
+                break;
+            
+            case Protocol::Server::RemoteQueryTimeout:
+                connections->disconnect();
+                finished = true;
                 break;
 
             default:

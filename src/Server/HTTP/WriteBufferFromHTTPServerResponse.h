@@ -88,6 +88,9 @@ private:
     /// Use to write the header X-ClickHouse-Exception-Code even when progress has been sent
     void writeExceptionCode();
 
+    /// Send remote query timeout information
+    void setRemoteQueryTimeoutInfo();
+
     /// This method finish headers with \r\n, allowing to start to send body.
     void finishSendHeaders();
 

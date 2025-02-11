@@ -6562,6 +6562,12 @@ Possible values:
 - 0 - When the second argument is `DateTime64/Date32` the return type will be `DateTime64/Date32` regardless of the time unit in the first argument.
 - 1 - For `Date32` the result is always `Date`. For `DateTime64` the result is `DateTime` for time units `second` and higher.
 )", 0) \
+    DECLARE(Seconds, remote_query_timeout, 0, R"(
+"Overall timeout for one remote query execution. Zero means not set."
+)", 0) \
+    DECLARE(RemoteQueryTimeOutMode, remote_query_timeout_mode, RemoteQueryTimeOutMode::IMMEDIATE_THROW, R"(
+What to do if the remote query timeout exceeded.
+)", 0) \
     \
     /* ####################################################### */ \
     /* ########### START OF EXPERIMENTAL FEATURES ############ */ \

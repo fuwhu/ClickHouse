@@ -68,6 +68,7 @@ public:
     {
         size_t offset;
         size_t index;
+        bool remote_query_timeout_exceeded = false;
     };
 
     HedgedConnections(
@@ -79,6 +80,8 @@ public:
         std::shared_ptr<QualifiedTableName> table_to_check_ = nullptr,
         AsyncCallback async_callback = {},
         GetPriorityForLoadBalancing::Func priority_func = {});
+
+    ~HedgedConnections() override;
 
     void sendScalarsData(Scalars & data) override;
 
@@ -163,6 +166,9 @@ private:
     void finishProcessReplica(ReplicaState & replica, bool disconnect);
 
     int getReadyFileDescriptor(AsyncCallback async_callback = {});
+
+    /// The remote query timeout timer.
+    TimerDescriptor remote_query_timeout;
 
     HedgedConnectionsFactory hedged_connections_factory;
 

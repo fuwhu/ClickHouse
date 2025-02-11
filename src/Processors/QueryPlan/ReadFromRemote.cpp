@@ -47,6 +47,11 @@
 
 #include <fmt/format.h>
 
+namespace ProfileEvents
+{
+    extern const Event RemoteTotalLeafQueryCount;
+}
+
 namespace DB
 {
 namespace Setting
@@ -204,6 +209,7 @@ ReadFromRemote::ReadFromRemote(
     , shard_count(shard_count_)
     , cluster_name(cluster_name_)
 {
+    ProfileEvents::increment(ProfileEvents::RemoteTotalLeafQueryCount, static_cast<size_t>(shard_count));
 }
 
 void ReadFromRemote::enableMemoryBoundMerging()

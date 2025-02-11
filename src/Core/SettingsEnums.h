@@ -413,4 +413,16 @@ enum class GeoToH3ArgumentOrder : uint8_t
 
 DECLARE_SETTING_ENUM(GeoToH3ArgumentOrder)
 
+/// What to do if remote query timed out.
+enum class RemoteQueryTimeOutMode : uint8_t
+{
+    /// When the remote query timeout happened, Throw exception immediately when the remote query timeout happened.
+    IMMEDIATE_THROW = 0,
+    /// When the remote query timeout happened, Throw exception after finishing the distributed query execution and sending result data to client.
+    AFTERWARDS_THROW = 1,
+    /// Ignore the remote query timeout, the result data may be incomplete.
+    IGNORE = 2,
+};
+
+DECLARE_SETTING_ENUM(RemoteQueryTimeOutMode)
 }
