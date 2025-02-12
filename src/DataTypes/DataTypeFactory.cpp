@@ -282,6 +282,7 @@ DataTypeFactory::DataTypeFactory()
     registerDataTypeVariant(*this);
     registerDataTypeDynamic(*this);
     registerDataTypeJSON(*this);
+    registerDataTypeCustomBSI(*this);
 }
 
 DataTypeFactory & DataTypeFactory::instance()

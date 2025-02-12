@@ -105,5 +105,5 @@ void registerDataTypeObjectDeprecated(DataTypeFactory & factory);
 void registerDataTypeVariant(DataTypeFactory & factory);
 void registerDataTypeDynamic(DataTypeFactory & factory);
 void registerDataTypeJSON(DataTypeFactory & factory);
-
+void registerDataTypeCustomBSI(DataTypeFactory & factory);
 }

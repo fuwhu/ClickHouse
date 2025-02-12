@@ -93,6 +93,10 @@ void registerAggregateFunctionLargestTriangleThreeBuckets(AggregateFunctionFacto
 void registerAggregateFunctionDistinctDynamicTypes(AggregateFunctionFactory & factory);
 void registerAggregateFunctionDistinctJSONPathsAndTypes(AggregateFunctionFactory & factory);
 
+void registerAggregateFunctionBsiBuild(AggregateFunctionFactory &);
+void registerAggregateFunctionBsiAddAgg(AggregateFunctionFactory &);
+void registerAggregateFunctionBsiMergeAgg(AggregateFunctionFactory &);
+
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
 void registerAggregateFunctionCombinatorArray(AggregateFunctionCombinatorFactory &);
@@ -197,6 +201,10 @@ void registerAggregateFunctions()
         registerAggregateFunctionLargestTriangleThreeBuckets(factory);
         registerAggregateFunctionDistinctDynamicTypes(factory);
         registerAggregateFunctionDistinctJSONPathsAndTypes(factory);
+
+        registerAggregateFunctionBsiBuild(factory);
+        registerAggregateFunctionBsiAddAgg(factory);
+        registerAggregateFunctionBsiMergeAgg(factory);
 
         registerWindowFunctions(factory);
     }
