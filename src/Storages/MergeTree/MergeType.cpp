@@ -15,6 +15,10 @@ MergeType checkAndGetMergeType(UInt32 merge_type)
     if (auto maybe_merge_type = magic_enum::enum_cast<MergeType>(merge_type))
         return *maybe_merge_type;
 
+    /// TTLDrop, for backward compatibility
+    if (merge_type == static_cast<UInt64>(4))
+        return MergeType::TTLDelete;
+
     throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Unknown MergeType {}", static_cast<UInt64>(merge_type));
 }
 
