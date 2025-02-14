@@ -1835,6 +1835,9 @@ namespace ErrorCodes
     DECLARE(Bool, select_data_parts_for_move_by_ttl, false, R"(
     When disk space is low, move TTL older data to a cold drive.
     )", 0) \
+    DECLARE(Bool, ignore_check_column_hash, false, R"(
+    Ignore checking part column hash, for compatibility.
+    )", 0) \
 
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \

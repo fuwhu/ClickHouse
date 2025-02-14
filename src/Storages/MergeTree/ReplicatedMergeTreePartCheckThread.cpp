@@ -350,6 +350,7 @@ ReplicatedCheckResult ReplicatedMergeTreePartCheckThread::checkPartImpl(const St
         String part_path = storage.replica_path + "/parts/" + part_name;
         String part_znode = zookeeper->get(part_path);
         bool is_broken_projection = false;
+        bool ignore_check_column_hash = storage.getSettings()->ignore_check_column_hash;
 
         try
         {
@@ -365,7 +366,10 @@ ReplicatedCheckResult ReplicatedMergeTreePartCheckThread::checkPartImpl(const St
             }
 
             if (local_part_header.getColumnsHash() != zk_part_header.getColumnsHash())
-                throw Exception(ErrorCodes::TABLE_DIFFERS_TOO_MUCH, "Columns of local part {} are different from ZooKeeper", part_name);
+            {
+                if (!ignore_check_column_hash)
+                    throw Exception(ErrorCodes::TABLE_DIFFERS_TOO_MUCH, "Columns of local part {} are different from ZooKeeper", part_name);
+            }
 
             zk_part_header.getChecksums().checkEqual(local_part_header.getChecksums(), true, part_name);
 
