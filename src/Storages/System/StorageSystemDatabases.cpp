@@ -4,6 +4,7 @@
 #include <Interpreters/Context.h>
 #include <Access/ContextAccess.h>
 #include <Storages/System/StorageSystemDatabases.h>
+#include <Parsers/formatAST.h>
 
 
 namespace DB
@@ -17,7 +18,8 @@ NamesAndTypesList StorageSystemDatabases::getNamesAndTypes()
         {"data_path", std::make_shared<DataTypeString>()},
         {"metadata_path", std::make_shared<DataTypeString>()},
         {"uuid", std::make_shared<DataTypeUUID>()},
-        {"comment", std::make_shared<DataTypeString>()}
+        {"comment", std::make_shared<DataTypeString>()},
+        {"create_query", std::make_shared<DataTypeString>()}
     };
 }
 
@@ -48,6 +50,19 @@ void StorageSystemDatabases::fillData(MutableColumns & res_columns, ContextPtr c
         res_columns[3]->insert(database->getMetadataPath());
         res_columns[4]->insert(database->getUUID());
         res_columns[5]->insert(database->getDatabaseComment());
+
+        if (database->getEngineName() == "Iceberg")
+        {
+            ASTPtr create_query = database->getCreateDatabaseQuery();
+            WriteBufferFromOwnString buf;
+            formatAST(*create_query, buf, false, false);
+            String res = buf.str();
+            res_columns[6]->insert(res);
+        }
+        else 
+        {
+            res_columns[6]->insert("");
+        }
    }
 }
 
