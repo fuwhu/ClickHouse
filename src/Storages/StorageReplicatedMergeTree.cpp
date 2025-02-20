@@ -7113,6 +7113,11 @@ void StorageReplicatedMergeTree::rename(const String & new_path_to_table_data, c
     /// TODO: You can update names of loggers.
 }
 
+void StorageReplicatedMergeTree::erasePathCache(const std::string & path) const
+{
+    std::lock_guard lock(existing_nodes_cache_mutex);
+    existing_nodes_cache.erase(path);
+}
 
 bool StorageReplicatedMergeTree::existsNodeCached(const ZooKeeperWithFaultInjectionPtr & zookeeper, const std::string & path) const
 {
@@ -7176,8 +7181,18 @@ std::optional<EphemeralLockInZooKeeper> StorageReplicatedMergeTree::allocateBloc
             zkutil::KeeperMultiException::check(code, ops, responses);
     }
 
-    return createEphemeralLockInZooKeeper(
-        fs::path(partition_path) / "block-", fs::path(zookeeper_table_path) / "temp", zookeeper, zookeeper_block_id_path, std::nullopt);
+    try
+    {
+        return createEphemeralLockInZooKeeper(
+            fs::path(partition_path) / "block-", fs::path(zookeeper_table_path) / "temp", zookeeper, zookeeper_block_id_path, std::nullopt);
+    }
+    catch (const zkutil::KeeperException & e)
+    {
+        if (e.code == Coordination::Error::ZNONODE)
+            erasePathCache(partition_path);
+
+        throw;
+    }
 }
 
 Strings StorageReplicatedMergeTree::tryWaitForAllReplicasToProcessLogEntry(

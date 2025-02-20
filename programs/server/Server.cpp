@@ -119,6 +119,7 @@
 
 #include <filesystem>
 #include <unordered_set>
+#include <Storages/MergeTree/BlockNumberCleaner.h>
 
 #include <Common/Jemalloc.h>
 
@@ -2514,6 +2515,13 @@ try
 
     LOG_DEBUG(log, "Loaded metadata.");
 
+    if (config().getBool("enable_block_number_cleaner", false))
+    {
+        LOG_INFO(log, "Start block number cleaner");
+        BlockNumberCleaner::init(global_context);
+        BlockNumberCleaner::instance().startup();
+    }
+
     if (has_trace_collector)
         global_context->initializeTraceCollector();
 
@@ -2684,6 +2692,8 @@ try
             LOG_DEBUG(log, "Received termination signal.");
 
             CurrentMetrics::set(CurrentMetrics::IsServerShuttingDown, 1);
+
+            BlockNumberCleaner::shutdown();
 
             /// Stop reloading of the main config. This must be done before everything else because it
             /// can try to access/modify already deleted objects.

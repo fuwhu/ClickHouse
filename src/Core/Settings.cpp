@@ -6568,6 +6568,20 @@ Possible values:
     DECLARE(RemoteQueryTimeOutMode, remote_query_timeout_mode, RemoteQueryTimeOutMode::IMMEDIATE_THROW, R"(
 What to do if the remote query timeout exceeded.
 )", 0) \
+    DECLARE(Seconds, block_number_cleanup_batch_interval, 5, R"(
+Time interval between two batches of block number znodes cleanup. 
+please note that each round of cleanup can have multiple batches of cleanup,
+so this setting must be less than 'block_number_cleanup_execution_interval'.
+)", 0) \
+    DECLARE(UInt64, block_number_cleanup_batch_size, 50, R"(
+Number of tables in each batch of block number znodes cleanup.
+)", 0) \
+    DECLARE(Seconds, block_number_cleanup_execution_interval, 60 * 60 * 12, R"(
+Time interval between two rounds of block number znodes cleanup.
+)", 0) \
+    DECLARE(UInt64, block_number_cleanup_timediff_hours, 30 * 24, R"(
+Only the block number znode that exists longer than this time interval could be cleared up.
+)", 0) \
     \
     /* ####################################################### */ \
     /* ########### START OF EXPERIMENTAL FEATURES ############ */ \
