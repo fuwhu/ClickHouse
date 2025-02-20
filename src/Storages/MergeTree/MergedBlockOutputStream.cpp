@@ -373,6 +373,20 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
     }
 
     write_plain_file(IMergeTreeDataPart::METADATA_VERSION_FILE_NAME, [&](auto & buffer)
+
+    if (auto hash_collision_map = writer->getHashCollisionMap())
+    {
+        new_part->setHashCollisionMap(*hash_collision_map);
+        auto out = new_part->getDataPartStorage().writeFile(IMergeTreeDataPart::HASH_COLLISION_MAP, 4096, write_settings);
+        HashingWriteBuffer out_hashing(*out);
+        new_part->getHashCollisionMap().serializeBinary(out_hashing);
+        out_hashing.finalize();
+        checksums.files[IMergeTreeDataPart::HASH_COLLISION_MAP].file_size = out_hashing.count();
+        checksums.files[IMergeTreeDataPart::HASH_COLLISION_MAP].file_hash = out_hashing.getHash();
+        out->preFinalize();
+        written_files.emplace_back(std::move(out));
+    }
+
     {
         writeIntText(new_part->getMetadataVersion(), buffer);
     });

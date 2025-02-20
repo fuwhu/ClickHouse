@@ -144,16 +144,25 @@ void MergeTreeDataPartWriterWide::addStreams(
         else
             stream_name = full_stream_name;
 
+        bool has_collision = false;
+        auto it = stream_name_to_full_name.find(stream_name);
+        if (it != stream_name_to_full_name.end() && it->second != full_stream_name)
+            has_collision = true;
+
+        if (has_collision)
+        {
+            do
+            {
+                stream_name = sipHash128String(stream_name);
+                it = stream_name_to_full_name.find(stream_name);
+            } while (it != stream_name_to_full_name.end() && it->second != full_stream_name);
+
+            hash_collision_map.insert({full_stream_name, stream_name});
+        }
+
         /// Shared offsets for Nested type.
         if (column_streams.contains(stream_name))
             return;
-
-        auto it = stream_name_to_full_name.find(stream_name);
-        if (it != stream_name_to_full_name.end() && it->second != full_stream_name)
-            throw Exception(ErrorCodes::INCORRECT_FILE_NAME,
-                "Stream with name {} already created (full stream name: {}). Current full stream name: {}."
-                " It is a collision between a filename for one column and a hash of filename for another column or a bug",
-                stream_name, it->second, full_stream_name);
 
         const auto & subtype = substream_path.back().data.type;
         CompressionCodecPtr compression_codec;

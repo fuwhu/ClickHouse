@@ -684,7 +684,8 @@ static std::set<ProjectionDescriptionRawPtr> getProjectionsToRecalculate(
 static std::unordered_map<String, size_t> getStreamCounts(
     const MergeTreeDataPartPtr & data_part,
     const MergeTreeDataPartChecksums & source_part_checksums,
-    const Names & column_names)
+    const Names & column_names, 
+    const IMergeTreeDataPart::HashCollisionMap & hash_collision_map)
 {
     std::unordered_map<String, size_t> stream_counts;
 
@@ -694,7 +695,8 @@ static std::unordered_map<String, size_t> getStreamCounts(
         {
             auto callback = [&](const ISerialization::SubstreamPath & substream_path)
             {
-                auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(column_name, substream_path, source_part_checksums);
+                auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(
+                    column_name, substream_path, source_part_checksums, hash_collision_map);
                 if (stream_name)
                     ++stream_counts[*stream_name];
             };
@@ -747,10 +749,9 @@ static NameSet collectFilesToSkip(
 
     if (isWidePart(source_part))
     {
-        auto new_stream_counts = getStreamCounts(new_part, source_part->checksums, new_part->getColumns().getNames());
-        auto source_updated_stream_counts = getStreamCounts(source_part, source_part->checksums, updated_header.getNames());
-        auto new_updated_stream_counts = getStreamCounts(new_part, source_part->checksums, updated_header.getNames());
-
+        auto new_stream_counts = getStreamCounts(new_part, source_part->checksums, new_part->getColumns().getNames(), source_part->getHashCollisionMap());
+        auto source_updated_stream_counts = getStreamCounts(source_part, source_part->checksums, updated_header.getNames(), source_part->getHashCollisionMap());
+        auto new_updated_stream_counts = getStreamCounts(new_part, source_part->checksums, updated_header.getNames(), source_part->getHashCollisionMap());
 
         /// Skip all modified files in new part.
         for (const auto & [stream_name, _] : new_updated_stream_counts)
@@ -791,7 +792,7 @@ static NameToNameVector collectFilesForRenames(
     const String & mrk_extension)
 {
     /// Collect counts for shared streams of different columns. As an example, Nested columns have shared stream with array sizes.
-    auto stream_counts = getStreamCounts(source_part, source_part->checksums, source_part->getColumns().getNames());
+    auto stream_counts = getStreamCounts(source_part, source_part->checksums, source_part->getColumns().getNames(), source_part->getHashCollisionMap());
     NameToNameVector rename_vector;
     NameSet collected_names;
 
@@ -844,7 +845,8 @@ static NameToNameVector collectFilesForRenames(
             {
                 ISerialization::StreamCallback callback = [&](const ISerialization::SubstreamPath & substream_path)
                 {
-                    auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(command.column_name, substream_path, source_part->checksums);
+                    auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(
+                        command.column_name, substream_path, source_part->checksums, source_part->getHashCollisionMap());
 
                     /// Delete files if they are no longer shared with another column.
                     if (stream_name && --stream_counts[*stream_name] == 0)
@@ -902,8 +904,9 @@ static NameToNameVector collectFilesForRenames(
                 /// Remove files for streams that exist in source_part,
                 /// but were removed in new_part by MODIFY COLUMN or MATERIALIZE COLUMN from
                 /// type with higher number of streams (e.g. LowCardinality -> String).
-                auto old_streams = getStreamCounts(source_part, source_part->checksums, source_part->getColumns().getNames());
-                auto new_streams = getStreamCounts(new_part, source_part->checksums, source_part->getColumns().getNames());
+
+                auto old_streams = getStreamCounts(source_part, source_part->checksums, source_part->getColumns().getNames(), source_part->getHashCollisionMap());
+                auto new_streams = getStreamCounts(new_part, source_part->checksums, source_part->getColumns().getNames(), source_part->getHashCollisionMap());
 
                 for (const auto & [old_stream, _] : old_streams)
                 {

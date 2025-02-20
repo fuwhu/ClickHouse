@@ -360,6 +360,7 @@ IMergeTreeDataPart::IMergeTreeDataPart(
     incrementTypeMetric(part_type);
 
     minmax_idx = std::make_shared<MinMaxIndex>();
+    hash_collision_map = std::make_shared<HashCollisionMap>();
 
     initializeIndexGranularityInfo();
 }
@@ -840,6 +841,7 @@ void IMergeTreeDataPart::loadColumnsChecksumsIndexes(bool require_columns_checks
             loadUUID();
         loadColumns(require_columns_checksums);
         loadColumnsSubstreams();
+        loadHashCollisionMap();
         loadChecksums(require_columns_checksums);
 
         loadIndexGranularity();
@@ -1260,7 +1262,8 @@ CompressionCodecPtr IMergeTreeDataPart::detectDefaultCompressionCodec() const
             {
                 if (path_to_data_file.empty())
                 {
-                    auto stream_name = getStreamNameForColumn(part_column, substream_path, ".bin", getDataPartStorage());
+                    auto stream_name
+                        = getStreamNameForColumn(part_column, substream_path, ".bin", getDataPartStorage(), getHashCollisionMap());
                     if (!stream_name)
                         return;
 
@@ -1687,7 +1690,16 @@ void IMergeTreeDataPart::loadColumnsSubstreams()
         throw Exception(ErrorCodes::NO_FILE_IN_DATA_PART, "No columns_substreams.txt in part {}, expected path {} on drive {}", name, path, getDataPartStorage().getDiskName());
 
     columns_substreams.readText(*in);
+}
 
+void IMergeTreeDataPart::loadHashCollisionMap()
+{
+    if (getDataPartStorage().exists(HASH_COLLISION_MAP))
+    {
+        size_t file_size = getDataPartStorage().getFileSize(HASH_COLLISION_MAP);
+        auto buf = getDataPartStorage().readFile(HASH_COLLISION_MAP, ReadSettings().adjustBufferSize(file_size), file_size, std::nullopt);
+        hash_collision_map->deserializeBinary(*buf);
+    }
 }
 
 bool IMergeTreeDataPart::supportLightweightDeleteMutate() const
@@ -2481,18 +2493,26 @@ std::optional<String> IMergeTreeDataPart::getStreamNameOrHash(
 std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
     const String & column_name,
     const ISerialization::SubstreamPath & substream_path,
-    const Checksums & checksums_)
+    const Checksums & checksums_,
+    const HashCollisionMap & hash_collision_map_)
 {
     auto stream_name = ISerialization::getFileNameForStream(column_name, substream_path);
+    if (auto it = hash_collision_map_.find(stream_name); it != hash_collision_map_.end())
+        return it->second;
+
     return getStreamNameOrHash(stream_name, checksums_);
 }
 
 std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
     const NameAndTypePair & column,
     const ISerialization::SubstreamPath & substream_path,
-    const Checksums & checksums_)
+    const Checksums & checksums_,
+    const HashCollisionMap & hash_collision_map_)
 {
     auto stream_name = ISerialization::getFileNameForStream(column, substream_path);
+    if (auto it = hash_collision_map_.find(stream_name); it != hash_collision_map_.end())
+        return it->second;
+
     return getStreamNameOrHash(stream_name, checksums_);
 }
 
@@ -2500,9 +2520,13 @@ std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
     const String & column_name,
     const ISerialization::SubstreamPath & substream_path,
     const String & extension,
-    const IDataPartStorage & storage_)
+    const IDataPartStorage & storage_,
+    const HashCollisionMap & hash_collision_map_)
 {
     auto stream_name = ISerialization::getFileNameForStream(column_name, substream_path);
+    if (auto it = hash_collision_map_.find(stream_name); it != hash_collision_map_.end())
+        return it->second;
+
     return getStreamNameOrHash(stream_name, extension, storage_);
 }
 
@@ -2510,9 +2534,13 @@ std::optional<String> IMergeTreeDataPart::getStreamNameForColumn(
     const NameAndTypePair & column,
     const ISerialization::SubstreamPath & substream_path,
     const String & extension,
-    const IDataPartStorage & storage_)
+    const IDataPartStorage & storage_,
+    const HashCollisionMap & hash_collision_map_)
 {
     auto stream_name = ISerialization::getFileNameForStream(column, substream_path);
+    if (auto it = hash_collision_map_.find(stream_name); it != hash_collision_map_.end())
+        return it->second;
+
     return getStreamNameOrHash(stream_name, extension, storage_);
 }
 
@@ -2642,4 +2670,35 @@ std::unique_ptr<ReadBuffer> IMergeTreeDataPart::readFileIfExists(const String & 
     return {};
 }
 
+void IMergeTreeDataPart::HashCollisionMap::serializeBinary(WriteBuffer & ostr) const
+{
+    if (empty())
+        return;
+
+    size_t map_size = size();
+    writeBinary(map_size, ostr);
+
+    for (const auto & it : *this)
+    {
+        writeStringBinary(it.first, ostr);
+        writeStringBinary(it.second, ostr);
+    }
+}
+
+void IMergeTreeDataPart::HashCollisionMap::deserializeBinary(ReadBuffer & istr)
+{
+    size_t map_size;
+    readBinary(map_size, istr);
+
+    for (size_t i = 0; i < map_size; ++i)
+    {
+        String key;
+        String value;
+
+        readStringBinary(key, istr);
+        readStringBinary(value, istr);
+
+        insert({key, value});
+    }
+}
 }

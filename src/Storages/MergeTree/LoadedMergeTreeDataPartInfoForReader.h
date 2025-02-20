@@ -63,6 +63,8 @@ public:
 
     MergeTreeData::DataPartPtr getDataPart() const { return data_part; }
 
+    const IMergeTreeDataPart::HashCollisionMap & getHashCollisionMap() const override { return data_part->getHashCollisionMap(); }
+
 private:
     MergeTreeData::DataPartPtr data_part;
     AlterConversionsPtr alter_conversions;

@@ -11,6 +11,7 @@
 #include <Storages/Statistics/Statistics.h>
 #include <Storages/VirtualColumnsDescription.h>
 #include <Formats/MarkInCompressedFile.h>
+#include <Storages/MergeTree/IMergeTreeDataPart.h>
 
 
 namespace DB
@@ -61,6 +62,8 @@ public:
     virtual const Block & getColumnsSample() const = 0;
 
     virtual const ColumnsSubstreams & getColumnsSubstreams() const = 0;
+
+    virtual std::optional<IMergeTreeDataPart::HashCollisionMap> getHashCollisionMap() const { return std::nullopt; }
 
 protected:
     SerializationPtr getSerialization(const String & column_name) const;

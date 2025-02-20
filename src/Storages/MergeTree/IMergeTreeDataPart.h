@@ -73,6 +73,8 @@ class IMergeTreeDataPart : public std::enable_shared_from_this<IMergeTreeDataPar
 public:
     static constexpr auto DATA_FILE_EXTENSION = ".bin";
 
+    static constexpr auto HASH_COLLISION_MAP = "hash_collision_map";
+
     using Checksums = MergeTreeDataPartChecksums;
     using Checksum = MergeTreeDataPartChecksums::Checksum;
 
@@ -574,6 +576,20 @@ public:
     std::unique_ptr<ReadBuffer> readFile(const String & file_name) const;
     std::unique_ptr<ReadBuffer> readFileIfExists(const String & file_name) const;
 
+    struct HashCollisionMap : std::unordered_map<String, String>
+    {
+        void serializeBinary(WriteBuffer & ostr) const;
+        void deserializeBinary(ReadBuffer & istr);
+    };
+
+    const HashCollisionMap & getHashCollisionMap() const { return *hash_collision_map; }
+
+    void setHashCollisionMap(HashCollisionMap & hash_collision_map_)
+    {
+        hash_collision_map->clear();
+        hash_collision_map->merge(hash_collision_map_);
+    }
+
     static std::optional<String> getStreamNameOrHash(
         const String & name,
         const IMergeTreeDataPart::Checksums & checksums);
@@ -586,24 +602,28 @@ public:
     static std::optional<String> getStreamNameForColumn(
         const String & column_name,
         const ISerialization::SubstreamPath & substream_path,
-        const Checksums & checksums_);
+        const Checksums & checksums_,
+        const HashCollisionMap & hash_collision_map_);
 
     static std::optional<String> getStreamNameForColumn(
         const NameAndTypePair & column,
         const ISerialization::SubstreamPath & substream_path,
-        const Checksums & checksums_);
+        const Checksums & checksums_,
+        const HashCollisionMap & hash_collision_map_);
 
     static std::optional<String> getStreamNameForColumn(
         const String & column_name,
         const ISerialization::SubstreamPath & substream_path,
         const String & extension,
-        const IDataPartStorage & storage_);
+        const IDataPartStorage & storage_,
+        const HashCollisionMap & hash_collision_map_);
 
     static std::optional<String> getStreamNameForColumn(
         const NameAndTypePair & column,
         const ISerialization::SubstreamPath & substream_path,
         const String & extension,
-        const IDataPartStorage & storage_);
+        const IDataPartStorage & storage_,
+        const HashCollisionMap & hash_collision_map_);
 
     mutable std::atomic<DataPartRemovalState> removal_state = DataPartRemovalState::NOT_ATTEMPTED;
 
@@ -642,6 +662,9 @@ protected:
     /// List of substreams in order of serialization/deserialization for each column.
     /// Used only in Compact parts.
     ColumnsSubstreams columns_substreams;
+
+    /// Map for Hash collision of file name conversion
+    std::shared_ptr<HashCollisionMap> hash_collision_map;
 
     const Type part_type;
 
@@ -705,6 +728,8 @@ private:
 
     /// Reads columns substreams from columns_substreams.txt (only in Compact parts).
     void loadColumnsSubstreams();
+
+    void loadHashCollisionMap();
 
     /// Loads marks index granularity into memory
     virtual void loadIndexGranularity();

@@ -4,6 +4,7 @@
 #include <Storages/MergeTree/ColumnsSubstreams.h>
 #include <Storages/ColumnsDescription.h>
 #include <Core/NamesAndTypes.h>
+#include <Storages/MergeTree/IMergeTreeDataPart.h>
 
 namespace DB
 {
@@ -71,6 +72,8 @@ public:
     virtual String getTableName() const = 0;
 
     virtual void reportBroken() = 0;
+
+    virtual const IMergeTreeDataPart::HashCollisionMap & getHashCollisionMap() const = 0;
 };
 
 using MergeTreeDataPartInfoForReaderPtr = std::shared_ptr<IMergeTreeDataPartInfoForReader>;

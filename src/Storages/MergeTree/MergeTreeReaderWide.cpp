@@ -239,7 +239,8 @@ void MergeTreeReaderWide::addStreams(
         if (ISerialization::isEphemeralSubcolumn(substream_path, substream_path.size()))
             return;
 
-        auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(name_and_type, substream_path, data_part_info_for_read->getChecksums());
+        auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(
+            name_and_type, substream_path, data_part_info_for_read->getChecksums(), data_part_info_for_read->getHashCollisionMap());
 
         /** If data file is missing then we will not try to open it.
           * It is necessary since it allows to add new column to structure of the table without creating new files for old parts.
@@ -317,7 +318,8 @@ ReadBuffer * MergeTreeReaderWide::getStream(
     if (cache.contains(ISerialization::getSubcolumnNameForStream(substream_path)))
         return nullptr;
 
-    auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(name_and_type, substream_path, checksums);
+    auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(
+        name_and_type, substream_path, checksums, data_part_info_for_read->getHashCollisionMap());
     if (!stream_name)
         return nullptr;
 
@@ -471,7 +473,8 @@ void MergeTreeReaderWide::prefetchForColumn(
         if (ISerialization::isEphemeralSubcolumn(substream_path, substream_path.size()))
             return;
 
-        auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(name_and_type, substream_path, data_part_info_for_read->getChecksums());
+        auto stream_name = IMergeTreeDataPart::getStreamNameForColumn(
+            name_and_type, substream_path, data_part_info_for_read->getChecksums(), data_part_info_for_read->getHashCollisionMap());
 
         if (stream_name && !prefetched_streams.contains(*stream_name))
         {

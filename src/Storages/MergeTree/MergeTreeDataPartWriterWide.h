@@ -43,6 +43,13 @@ public:
 
     void fillChecksums(MergeTreeDataPartChecksums & checksums, NameSet & checksums_to_remove) final;
 
+    std::optional<IMergeTreeDataPart::HashCollisionMap> getHashCollisionMap() const override
+    {
+        if (hash_collision_map.empty())
+            return std::nullopt;
+        return hash_collision_map;
+    }
+
     void finish(bool sync) final;
     void cancel() noexcept override;
 
@@ -133,6 +140,8 @@ private:
     /// stream name (probably hash of the stream) and vice versa.
     std::unordered_map<String, String> full_name_to_stream_name;
     std::unordered_map<String, String> stream_name_to_full_name;
+
+    IMergeTreeDataPart::HashCollisionMap hash_collision_map;
 
     /// Non written marks to disk (for each column). Waiting until all rows for
     /// this marks will be written to disk.
