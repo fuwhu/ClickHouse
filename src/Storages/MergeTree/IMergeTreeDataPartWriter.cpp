@@ -172,7 +172,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartCompactWriter(
         const String & marks_file_extension_,
         const CompressionCodecPtr & default_codec_,
         const MergeTreeWriterSettings & writer_settings,
-        MergeTreeIndexGranularityPtr computed_index_granularity);
+        MergeTreeIndexGranularityPtr computed_index_granularity,
+        const MergeTreeData::MergingParams & merging_params);
 
 MergeTreeDataPartWriterPtr createMergeTreeDataPartWideWriter(
         const String & data_part_name_,
@@ -189,7 +190,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartWideWriter(
         const String & marks_file_extension_,
         const CompressionCodecPtr & default_codec_,
         const MergeTreeWriterSettings & writer_settings,
-        MergeTreeIndexGranularityPtr computed_index_granularity);
+        MergeTreeIndexGranularityPtr computed_index_granularity,
+        const MergeTreeData::MergingParams & merging_params);
 
 MergeTreeDataPartWriterPtr createMergeTreeDataPartWriter(
         MergeTreeDataPartType part_type,
@@ -208,7 +210,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartWriter(
         const String & marks_file_extension_,
         const CompressionCodecPtr & default_codec_,
         const MergeTreeWriterSettings & writer_settings,
-        MergeTreeIndexGranularityPtr computed_index_granularity)
+        MergeTreeIndexGranularityPtr computed_index_granularity,
+        const MergeTreeData::MergingParams & merging_params)
 {
     if (part_type == MergeTreeDataPartType::Compact)
         return createMergeTreeDataPartCompactWriter(
@@ -227,7 +230,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartWriter(
             marks_file_extension_,
             default_codec_,
             writer_settings,
-            std::move(computed_index_granularity));
+            std::move(computed_index_granularity),
+            merging_params);
     if (part_type == MergeTreeDataPartType::Wide)
         return createMergeTreeDataPartWideWriter(
             data_part_name_,
@@ -244,7 +248,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartWriter(
             marks_file_extension_,
             default_codec_,
             writer_settings,
-            std::move(computed_index_granularity));
+            std::move(computed_index_granularity),
+            merging_params);
     throw Exception(ErrorCodes::LOGICAL_ERROR, "Unknown part type: {}", part_type.toString());
 }
 

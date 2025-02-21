@@ -37,7 +37,8 @@ public:
         const String & marks_file_extension,
         const CompressionCodecPtr & default_codec,
         const MergeTreeWriterSettings & settings,
-        MergeTreeIndexGranularityPtr index_granularity_);
+        MergeTreeIndexGranularityPtr index_granularity_,
+        const MergeTreeData::MergingParams & merging_params_);
 
     void write(const Block & block, const IColumnPermutation * permutation) override;
 

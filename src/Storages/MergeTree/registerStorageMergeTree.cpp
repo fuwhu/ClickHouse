@@ -411,6 +411,8 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         merging_params.mode = MergeTreeData::MergingParams::Graphite;
     else if (name_part == "VersionedCollapsing")
         merging_params.mode = MergeTreeData::MergingParams::VersionedCollapsing;
+    else if (name_part == "Unique")
+        merging_params.mode = MergeTreeData::MergingParams::Unique;
     else if (!name_part.empty())
         throw Exception(ErrorCodes::UNKNOWN_STORAGE, "Unknown storage {}",
             args.engine_name + verbose_help_message);
@@ -477,6 +479,9 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             break;
         case MergeTreeData::MergingParams::VersionedCollapsing: {
             add_mandatory_param("sign column");
+            add_mandatory_param("version");
+            break;
+        case MergeTreeData::MergingParams::Unique:
             add_mandatory_param("version");
             break;
         }
@@ -613,6 +618,12 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         /// sorting key.
         merging_param_key_arg = merging_params.version_column;
     }
+    else if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        if (!tryGetIdentifierNameInto(engine_args[arg_cnt - 1], merging_params.version_column))
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Version column name must be an unquoted string{}", verbose_help_message);
+        --arg_cnt;
+    }
 
     String date_column_name;
 
@@ -661,6 +672,16 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             }
         }
 
+
+        if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+        {
+            if (!args.storage_def->unique_key)
+                throw Exception(ErrorCodes::BAD_ARGUMENTS, "You must provide an UNIQUE KEY expression in the UniqEngine table definition ");
+
+            ASTPtr unique_key = args.storage_def->unique_key->ptr();
+            metadata.unique_key = KeyDescription::getKeyFromAST(unique_key, metadata.columns, context);
+        }
+
         /// Get sorting key from engine arguments.
         ///
         /// NOTE: store merging_param_key_arg as additional key column. We do it
@@ -688,8 +709,12 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         auto partition_key = metadata.partition_key.expression_list_ast->clone();
         FunctionNameNormalizer::visit(partition_key.get());
         auto primary_key_asts = metadata.primary_key.expression_list_ast->children;
-        metadata.minmax_count_projection.emplace(ProjectionDescription::getMinMaxCountProjection(
-            columns, partition_key, minmax_columns, primary_key_asts, context));
+
+        if (merging_params.mode != MergeTreeData::MergingParams::Unique)
+        {
+            metadata.minmax_count_projection.emplace(
+                ProjectionDescription::getMinMaxCountProjection(columns, partition_key, minmax_columns, primary_key_asts, context));
+        }
 
         if (args.storage_def->sample_by)
             metadata.sampling_key = KeyDescription::getKeyFromAST(args.storage_def->sample_by->ptr(), metadata.columns, context);
@@ -928,6 +953,7 @@ void registerStorageMergeTree(StorageFactory & factory)
     factory.registerStorage("SummingMergeTree", create, features);
     factory.registerStorage("GraphiteMergeTree", create, features);
     factory.registerStorage("VersionedCollapsingMergeTree", create, features);
+    factory.registerStorage("UniqueMergeTree", create, features);
 
     features.supports_replication = true;
     features.supports_deduplication = true;
@@ -940,6 +966,7 @@ void registerStorageMergeTree(StorageFactory & factory)
     factory.registerStorage("ReplicatedSummingMergeTree", create, features);
     factory.registerStorage("ReplicatedGraphiteMergeTree", create, features);
     factory.registerStorage("ReplicatedVersionedCollapsingMergeTree", create, features);
+    factory.registerStorage("ReplicatedUniqueMergeTree", create, features);
 }
 
 }

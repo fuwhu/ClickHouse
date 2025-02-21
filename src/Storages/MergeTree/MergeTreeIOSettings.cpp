@@ -35,6 +35,7 @@ MergeTreeWriterSettings::MergeTreeWriterSettings(
     const MergeTreeSettingsPtr & storage_settings,
     bool can_use_adaptive_granularity_,
     bool rewrite_primary_key_,
+    bool rewrite_unique_key_,
     bool save_marks_in_cache_,
     bool save_primary_index_in_memory_,
     bool blocks_are_granules_size_)
@@ -47,6 +48,7 @@ MergeTreeWriterSettings::MergeTreeWriterSettings(
     , primary_key_compress_block_size((*storage_settings)[MergeTreeSetting::primary_key_compress_block_size])
     , can_use_adaptive_granularity(can_use_adaptive_granularity_)
     , rewrite_primary_key(rewrite_primary_key_)
+    , rewrite_unique_key(rewrite_unique_key_)
     , save_marks_in_cache(save_marks_in_cache_)
     , save_primary_index_in_memory(save_primary_index_in_memory_)
     , blocks_are_granules_size(blocks_are_granules_size_)

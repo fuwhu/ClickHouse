@@ -61,6 +61,12 @@ public:
     void precommitTransaction() override {}
     bool hasActiveTransaction() const override { return transaction != nullptr; }
 
+    friend class UniqueEngineDataWriter;
+    friend class IMergeTreeDataPart;
+    friend class MergeTreeDataPartWriterOnDisk;
+
+    std::string getFullPathWithoutLastSlash() const;
+
 private:
     DataPartStorageOnDiskFull(VolumePtr volume_, std::string root_path_, std::string part_dir_, DiskTransactionPtr transaction_);
     MutableDataPartStoragePtr create(VolumePtr volume_, std::string root_path_, std::string part_dir_, bool initialize_) const override;

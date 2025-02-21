@@ -74,6 +74,10 @@ public:
     virtual void reportBroken() = 0;
 
     virtual const IMergeTreeDataPart::HashCollisionMap & getHashCollisionMap() const = 0;
+
+    virtual bool isUniqueEngineTable() const = 0;
+
+    virtual UniqueDeleteBitmapPtr getUniqueDeleteBitmap() const = 0;
 };
 
 using MergeTreeDataPartInfoForReaderPtr = std::shared_ptr<IMergeTreeDataPartInfoForReader>;

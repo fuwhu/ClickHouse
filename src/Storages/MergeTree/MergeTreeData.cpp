@@ -589,6 +589,23 @@ MergeTreeData::MergeTreeData(
         else
             background_moves_assignee.trigger();
     };
+
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        checkUniqueEngineSettings(*settings);
+
+        /// init unique engine locks
+        if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::PARTITION)
+        {
+            if (settings->eanble_unique_key_partition_lock)
+                unique_engine_partition_mutexes
+                    = std::make_shared<UniqueEnginePartitionMutexes>(settings->unique_key_partition_lock_lru_size);
+            else
+                unique_engine_table_mutex = std::make_shared<std::mutex>();
+        }
+        else if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::TABLE)
+            unique_engine_table_mutex = std::make_shared<std::mutex>();
+    }
 }
 
 VirtualColumnsDescription MergeTreeData::createVirtuals(const StorageInMemoryMetadata & metadata)
@@ -1022,6 +1039,12 @@ MergeTreeData::getSortingKeyAndSkipIndicesExpression(const StorageMetadataPtr & 
     return getCombinedIndicesExpression(metadata_snapshot->getSortingKey(), indices, metadata_snapshot->getColumns(), getContext());
 }
 
+ExpressionActionsPtr MergeTreeData::getUniqueKeyExpression(const StorageMetadataPtr & metadata_snapshot) const
+{
+    ASTPtr expr_list = metadata_snapshot->getUniqueKey().expression_list_ast->clone();
+    auto syntax_result = TreeRewriter(getContext()).analyze(expr_list, metadata_snapshot->getColumns().getAllPhysical());
+    return ExpressionAnalyzer(expr_list, syntax_result, getContext()).getActions(false);
+}
 
 void MergeTreeData::checkPartitionKeyAndInitMinMax(const KeyDescription & new_partition_key)
 {
@@ -1078,6 +1101,59 @@ void MergeTreeData::checkPartitionKeyAndInitMinMax(const KeyDescription & new_pa
     }
 }
 
+void MergeTreeData::checkUniqueEngineSettings(const MergeTreeSettings & settings) const
+{
+    const auto & unique_key_index_type = settings.unique_key_index_type;
+    if (unique_key_index_type != IUniqueKeyIndex::Type::STANDARD_MAP
+        && unique_key_index_type != IUniqueKeyIndex::Type::STANDARD_UNORDERED_MAP
+        && unique_key_index_type != IUniqueKeyIndex::Type::STRING_HASH_MAP && unique_key_index_type != IUniqueKeyIndex::Type::LEVEL_DB)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Invalid type {} for unique_key_index_type. "
+            "Valid values are: "
+            "0 - StandardMapUniqueKeyIndex; "
+            "1 - StandardUnOrderedMapUniqueKeyIndex; "
+            "2 - StringHashMapUniqueKeyIndex; "
+            "3 - LevelDB.",
+            unique_key_index_type);
+
+
+    const auto & unique_delete_bitmap_type = settings.unique_delete_bitmap_type;
+    if (unique_delete_bitmap_type != IUniqueDeleteBitmap::Type::ROARING_64_BITMAP
+        && unique_delete_bitmap_type != IUniqueDeleteBitmap::Type::ROARING_32_BITMAP)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Invalid type {} for unique_delete_bitmap_type. "
+            "Valid values are: "
+            "64 - Roaring64Bitmap; "
+            "32 - Roaring32Bitmap.",
+            unique_delete_bitmap_type);
+
+
+    const auto & unique_key_deduplicate_level = settings.unique_key_deduplicate_level;
+    if (unique_key_deduplicate_level != UniqueEngineDataWriter::DedupType::PARTITION
+        && unique_key_deduplicate_level != UniqueEngineDataWriter::DedupType::TABLE)
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "Invalid level {} for setting unique_key_deduplicate_level. "
+            "Valid values are: "
+            "0 - table level; "
+            "1 - partition level.",
+            unique_key_deduplicate_level);
+
+
+    if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+    {
+        const auto & unique_key_update_parallel_type = settings.unique_key_update_parallel_type;
+        if (unique_key_update_parallel_type != UniqueEngineDataWriter::ParallelType::DATA_PART)
+            throw Exception(
+                ErrorCodes::BAD_ARGUMENTS,
+                "Invalid value {} for setting unique_key_update_parallel_type. "
+                "Valid values are: "
+                "0 - parallelize by data part.",
+                unique_key_update_parallel_type);
+    }
+}
 
 void MergeTreeData::checkTTLExpressions(const StorageInMemoryMetadata & new_metadata, const StorageInMemoryMetadata & old_metadata) const
 {
@@ -1195,10 +1271,10 @@ void MergeTreeData::MergingParams::check(const MergeTreeSettings & settings, con
                         "Sign column for MergeTree cannot be specified "
                         "in modes except Collapsing or VersionedCollapsing.");
 
-    if (!version_column.empty() && mode != MergingParams::Replacing && mode != MergingParams::VersionedCollapsing)
+    if (!version_column.empty() && mode != MergingParams::Replacing && mode != MergingParams::VersionedCollapsing  && mode != MergingParams::Unique)
         throw Exception(ErrorCodes::LOGICAL_ERROR,
                         "Version column for MergeTree cannot be specified "
-                        "in modes except Replacing or VersionedCollapsing.");
+                        "in modes except Replacing or VersionedCollapsing or Unique.");
 
     if (!columns_to_sum.empty() && mode != MergingParams::Summing)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "List of columns to sum for MergeTree cannot be specified in all modes except Summing.");
@@ -1369,6 +1445,9 @@ void MergeTreeData::MergingParams::check(const MergeTreeSettings & settings, con
         check_version_column(false, "VersionedCollapsingMergeTree");
     }
 
+    if (mode == MergingParams::Unique)
+        check_version_column(true, "UniqueMergeTree");
+
     /// TODO Checks for Graphite mode.
 }
 
@@ -1470,6 +1549,7 @@ String MergeTreeData::MergingParams::getModeName() const
         case Replacing:     return "Replacing";
         case Graphite:      return "Graphite";
         case VersionedCollapsing: return "VersionedCollapsing";
+        case Unique:        return "Unique"; 
     }
 }
 
@@ -3404,8 +3484,16 @@ size_t MergeTreeData::clearEmptyParts()
         auto parts = getDataPartsVectorForInternalUsage();
         for (const auto & part : parts)
         {
-            if (part->rows_count != 0)
-                continue;
+            if (merging_params.mode == MergingParams::Unique)
+            {
+                if (part->effective_rows_count != 0)
+                    continue;
+            }
+            else
+            {
+                if (part->rows_count != 0)
+                    continue;
+            }
 
             /// Do not try to drop uncommitted parts. If the newest tx doesn't see it then it probably hasn't been committed yet
             if (!part->version.getCreationTID().isPrehistoric() && !part->version.isVisible(TransactionLog::instance().getLatestSnapshot()))
@@ -4232,6 +4320,38 @@ MergeTreeDataPartBuilder MergeTreeData::getDataPartBuilder(
     return MergeTreeDataPartBuilder(*this, name, volume, relative_data_path, part_dir, read_settings_);
 }
 
+bool MergeTreeData::changePartMergeUpdateStatus(
+    DataPartPtr cas_part, IMergeTreeDataPart::MergeUpdateStatus from, IMergeTreeDataPart::MergeUpdateStatus to) const
+{
+    LOG_DEBUG(log, "Changing merge_update_status of part {} change from {} to {}.", cas_part->name, from, to);
+
+    if (cas_part->merge_update_status.compare_exchange_strong(from, to))
+    {
+        LOG_DEBUG(log, "Finished changing merge_update_status of part {} from {} to {}.", cas_part->name, from, to);
+        return true;
+    }
+
+    LOG_DEBUG(
+        log,
+        "Failed changing merge_update_status of part {} merge_update_status {} from {} to {}.",
+        cas_part->name,
+        cas_part->getMergeUpdateStatusName(),
+        from,
+        to);
+    return false;
+}
+
+MergeTreeData::UniqueEngineWriteLock MergeTreeData::lockUniqueEngineForWrite(const String & partition_id) const
+{
+    if (unique_engine_partition_mutexes)
+    {
+        auto mutex_ptr = unique_engine_partition_mutexes->getOrSet(partition_id, load_partition_mutex_func).first;
+        return UniqueEngineWriteLock(*mutex_ptr);
+    }
+    else
+        return UniqueEngineWriteLock(*unique_engine_table_mutex);
+}
+
 void MergeTreeData::changeSettings(
         const ASTPtr & new_settings,
         AlterLockHolder & /* table_lock_holder */)
@@ -4528,9 +4648,9 @@ void MergeTreeData::preparePartForCommit(MutableDataPartPtr & part, Transaction 
     LOG_TEST(log, "preparePartForCommit: inserting {} into data_parts_indexes", part->getNameWithState());
     data_parts_indexes.insert(part);
     if (rename_in_transaction)
-        out_transaction.addPart(part, need_rename);
+        out_transaction.enrollDataPart(part, need_rename);
     else
-        out_transaction.addPart(part, /* need_rename= */ false);
+        out_transaction.enrollDataPart(part, /* need_rename= */ false);
 }
 
 bool MergeTreeData::addTempPart(
@@ -5327,6 +5447,18 @@ MergeTreeData::DataPartPtr MergeTreeData::getActiveContainingPart(
 
 void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPartsLock &)
 {
+    UniqueEngineDataWriterPtr uniq_engine_data_writer;
+    UniqueEngineWriteLock uniq_engine_write_lock;
+    if (merging_params.mode == MergingParams::Unique)
+    {
+        MutableDataPartPtr mu_part_copy = const_pointer_cast<DataPart>(part_copy);
+        mu_part_copy->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MOVE;
+        uniq_engine_write_lock = lockUniqueEngineForWrite(mu_part_copy->info.partition_id);
+
+        uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(mu_part_copy);
+        uniq_engine_data_writer->prepare();
+    }
+
     for (auto original_active_part : getDataPartsStateRange(DataPartState::Active)) // NOLINT (copy is intended)
     {
         if (part_copy->name == original_active_part->name)
@@ -5345,6 +5477,12 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPar
             {
                 /// May be when several volumes use the same S3/HDFS storage
                 original_active_part->force_keep_shared_data = true;
+            }
+
+            if (uniq_engine_data_writer)
+            {
+                uniq_engine_data_writer->commit();
+                uniq_engine_data_writer->clearTempDirs();
             }
 
             modifyPartState(original_active_part, DataPartState::DeleteOnDestroy);
@@ -7356,11 +7494,25 @@ TransactionID MergeTreeData::Transaction::getTID() const
     return Tx::PrehistoricTID;
 }
 
-void MergeTreeData::Transaction::addPart(MutableDataPartPtr & part, bool need_rename)
+
+// void MergeTreeData::Transaction::addPart(MutableDataPartPtr & part, bool need_rename)
+// {
+//     precommitted_parts.insert(part);
+//     if (need_rename)
+//         precommitted_parts_need_rename.insert(part);
+// }
+
+void MergeTreeData::Transaction::enrollDataPart(MutableDataPartPtr & part, bool need_rename)
 {
     precommitted_parts.insert(part);
     if (need_rename)
         precommitted_parts_need_rename.insert(part);
+
+    if (data.merging_params.mode == MergingParams::Unique)
+    {
+        UniqueEngineDataWriterPtr unique_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(part);
+        unique_engine_data_writers.emplace(part->name, unique_engine_data_writer);
+    }
 }
 
 void MergeTreeData::Transaction::rollback(DataPartsLock * lock)
@@ -7461,6 +7613,16 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
         if (!precommitted_parts_need_rename.empty())
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Parts had not been renamed");
 
+        std::vector<UniqueEngineWriteLock> uniq_engine_write_locks;
+        if (data.merging_params.mode == MergingParams::Unique)
+        {
+            /// TODO :: make sure the `MergeTreeData::unique_engine_write_mutex` can block drop_part/drop_partition operators as well.
+            for (const auto & part : precommitted_parts)
+                uniq_engine_write_locks.emplace_back(data.lockUniqueEngineForWrite(part->info.partition_id));
+
+            prepareForUniqueEngineWrite(acquired_parts_lock);
+        }
+
         auto settings = data.getSettings();
         auto parts_lock = acquired_parts_lock ? DataPartsLock() : data.lockParts();
         auto * owing_parts_lock = acquired_parts_lock ? acquired_parts_lock : &parts_lock;
@@ -7527,6 +7689,16 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
                     if (!txn)
                         MergeTreeTransaction::addNewPartAndRemoveCovered(data.shared_from_this(), part, covered_parts, NO_TRANSACTION_RAW);
 
+                    if (data.merging_params.mode == MergingParams::Unique)
+                    {
+                        for (const auto & pair : unique_engine_data_writers)
+                        {
+                            const auto & uniq_engine_data_writer = pair.second;
+                            uniq_engine_data_writer->commit();
+                            uniq_engine_data_writer->clearTempDirs();
+                        }
+                    }
+
                     total_covered_parts.insert(total_covered_parts.end(), covered_parts.begin(), covered_parts.end());
                     for (const auto & covered_part : covered_parts)
                     {
@@ -7570,6 +7742,23 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
     clear();
 
     return total_covered_parts;
+}
+
+void MergeTreeData::Transaction::prepareForUniqueEngineWrite(DataPartsLock * lock)
+{
+    for (const auto & pair : unique_engine_data_writers)
+    {
+        const auto & uniq_engine_data_writer = pair.second;
+        const auto & uniq_engine_write_part = uniq_engine_data_writer->getDataPart();
+
+        DataPartPtr covering_part;
+        DataPartsVector covered_parts
+            = data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, *lock);
+        if (covering_part)
+            continue;
+        else
+            uniq_engine_data_writer->prepare();
+    }
 }
 
 bool MergeTreeData::isPrimaryOrMinMaxKeyColumnPossiblyWrappedInFunctions(
@@ -8568,6 +8757,21 @@ MergeTreeData::CurrentlyMovingPartsTagger::~CurrentlyMovingPartsTagger()
         /// Something went completely wrong
         if (!data.currently_moving_parts.contains(moving_part.part))
             std::terminate();
+
+        if (data.merging_params.mode == MergingParams::Unique)
+        {
+            if (moving_part.part->getState() == DataPartState::Active)
+            {
+                if (data.changePartMergeUpdateStatus(
+                        moving_part.part, IMergeTreeDataPart::MergeUpdateStatus::MOVING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL))
+                    LOG_WARNING(
+                        data.log,
+                        "part {} can't move for some reason, such as the move pool is full, or some other unknown problem, so rollback "
+                        "MERGE_UPDATE_STATUS of part "
+                        "from moving to normal.",
+                        moving_part.part->name);
+            }
+        }
         data.currently_moving_parts.erase(moving_part.part);
     }
 }
@@ -8794,6 +8998,10 @@ MovePartsOutcome MergeTreeData::moveParts(const CurrentlyMovingPartsTaggerPtr & 
         catch (...)
         {
             write_part_log(ExecutionStatus::fromCurrentException("", true));
+
+            if (changePartMergeUpdateStatus(moving_part.part, IMergeTreeDataPart::MergeUpdateStatus::MOVING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL))
+                LOG_ERROR(log, "part {} move error, rollback part MERGE_UPDATE_STATUS from moving to normal error.", moving_part.part->name);
+
             throw;
         }
     }

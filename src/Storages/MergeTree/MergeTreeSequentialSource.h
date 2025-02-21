@@ -26,6 +26,7 @@ Pipe createMergeTreeSequentialSource(
     RangesInDataPart data_part,
     AlterConversionsPtr alter_conversions,
     MergedPartOffsetsPtr merged_part_offsets,
+    UniqueDeleteBitmapPtr unique_delete_bitmap,
     Names columns_to_read,
     std::optional<MarkRanges> mark_ranges,
     std::shared_ptr<std::atomic<size_t>> filtered_rows_count,

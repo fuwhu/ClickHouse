@@ -40,6 +40,7 @@
 #include <Storages/MergeTree/PrimaryIndexCache.h>
 #include <Storages/ObjectStorage/DataLakes/Iceberg/IcebergMetadataFilesCache.h>
 #include <Storages/MergeTree/VectorSimilarityIndexCache.h>
+#include <Storages/MergeTree/UniqueKeyIndexCache.h>
 #include <Storages/Distributed/DistributedSettings.h>
 #include <Storages/CompressionCodecSelector.h>
 #include <IO/S3Settings.h>
@@ -586,6 +587,9 @@ struct ContextSharedPart : boost::noncopyable
     Context::StartStopServersCallback stop_servers_callback;
 
     bool is_server_completely_started TSA_GUARDED_BY(mutex) = false;
+    
+    mutable UniqueKeyIndexCachePtr unique_key_index_cache;              /// Shared object cache of unique key indexes
+    mutable UniqueKeyIndexBlockCachePtr unique_key_index_block_cache;   /// Shared block cache of unique key indexes
 
 #if USE_NURAFT
     mutable std::mutex keeper_dispatcher_mutex;
@@ -3745,6 +3749,36 @@ void Context::clearQueryResultCache(const std::optional<String> & tag) const
     /// Clear the cache without holding context mutex to avoid blocking context for a long time
     if (cache)
         cache->clear(tag);
+}
+
+void Context::setUniqueKeyIndexCache(size_t cache_size_in_bytes, size_t cache_elements_size)
+{
+    std::lock_guard lock(shared->mutex);
+    if (shared->unique_key_index_cache)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Unique key index cache has been already created");
+
+    shared->unique_key_index_cache = std::make_shared<UniqueKeyIndexCache>(cache_size_in_bytes, cache_elements_size);
+}
+
+UniqueKeyIndexCachePtr Context::getUniqueKeyIndexCache() const
+{
+    std::lock_guard lock(shared->mutex);
+    return shared->unique_key_index_cache;
+}
+
+void Context::setUniqueKeyIndexBlockCache(size_t cache_size_in_bytes)
+{
+    std::lock_guard lock(shared->mutex);
+    if (shared->unique_key_index_block_cache)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Unique key index block cache has been already created");
+
+    shared->unique_key_index_block_cache = IndexFile::NewLRUCache(cache_size_in_bytes);
+}
+
+UniqueKeyIndexBlockCachePtr Context::getUniqueKeyIndexBlockCache() const
+{
+    std::lock_guard lock(shared->mutex);
+    return shared->unique_key_index_block_cache;
 }
 
 void Context::clearCaches() const

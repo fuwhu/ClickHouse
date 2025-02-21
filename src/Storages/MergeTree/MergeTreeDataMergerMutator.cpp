@@ -456,7 +456,73 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
 
     auto parts = std::move(collect_result.value());
 
-    if (parts.empty())
+    PartsRange selected_parts;
+    selected_parts.reserve(parts.size());
+
+    /// add restrict range, cas change part merge update status only for unique engine, avoid affecting other engines.
+    if (data.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        for (const auto & part_properties : parts)
+        {
+            auto part = data.getPartIfExists(part_properties.info, {MergeTreeDataPartState::Active});
+            if (!part)
+            {
+                return std::unexpected(SelectMergeFailure{
+                    .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
+                    .explanation = PreformattedMessage::create("Some part does not exist"),
+                });
+            }
+
+            if (part->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
+            {
+                LOG_WARNING(
+                    log,
+                    "the merge_update_status of part {} is already MERGING, this may be caused by the failure of last merge.",
+                    part->name);
+                selected_parts.push_back(part_properties);
+            }
+            else
+            {
+                if (data.changePartMergeUpdateStatus(part, IMergeTreeDataPart::MergeUpdateStatus::NORMAL, IMergeTreeDataPart::MergeUpdateStatus::MERGING))
+                    selected_parts.push_back(part_properties);
+                else
+                {
+                    LOG_DEBUG(
+                        log,
+                        "Since the part {} is being updated, the parts to merge is reduced from {} to {}",
+                        part->name,
+                        parts.size(),
+                        selected_parts.size());
+                    break;
+                }
+            }
+        }
+
+        if (selected_parts.empty())
+        {
+            return std::unexpected(SelectMergeFailure{
+                .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
+                .explanation = PreformattedMessage::create("There are no parts inside partition to merge, some selected data part are being updated or merged."),
+            });
+        }
+
+        if (!final && selected_parts.size() == 1)
+        {
+            /// rollback merge_update_status of part
+            data.changePartMergeUpdateStatus(selected_parts[0], IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
+
+            return std::unexpected(SelectMergeFailure{
+                .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
+                .explanation = PreformattedMessage::create("There is only one part inside partition to merge, some data part are being updated or merged."),
+            });
+        }
+    } else
+    {
+        selected_parts = parts;
+    }
+
+
+    if (selected_parts.empty())
     {
         return std::unexpected(SelectMergeFailure{
             .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
@@ -464,7 +530,7 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
         });
     }
 
-    if (!final && parts.size() == 1)
+    if (!final && selected_parts.size() == 1)
     {
         return std::unexpected(SelectMergeFailure{
             .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
@@ -474,9 +540,9 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
 
     /// If final, optimize_skip_merged_partitions is true and we have only one part in partition with level > 0
     /// than we don't select it to merge. But if there are some expired TTL then merge is needed
-    if (final && optimize_skip_merged_partitions && parts.size() == 1)
+    if (final && optimize_skip_merged_partitions && selected_parts.size() == 1)
     {
-        const PartProperties & part = parts.front();
+        const PartProperties & part = selected_parts.front();
 
         /// FIXME? Probably we should check expired ttls here, not only calculated.
         if (part.info.level > 0 && (!metadata_snapshot->hasAnyTTL() || part.all_ttl_calculated_if_any))
@@ -488,7 +554,7 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
         }
     }
 
-    if (auto result = canMergeAllParts(parts, merge_predicate); !result.has_value())
+    if (auto result = canMergeAllParts(selected_parts, merge_predicate); !result.has_value())
     {
         return std::unexpected(SelectMergeFailure{
             .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
@@ -497,7 +563,7 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
     }
 
     /// Enough disk space to cover the new merge with a margin.
-    const auto required_disk_space = CompactionStatistics::estimateAtLeastAvailableSpace(parts);
+    const auto required_disk_space = CompactionStatistics::estimateAtLeastAvailableSpace(selected_parts);
     const auto available_disk_space = data.getStoragePolicy()->getMaxUnreservedFreeSpace();
     if (available_disk_space <= required_disk_space)
     {
@@ -505,12 +571,12 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
             .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
             .explanation = PreformattedMessage::create(
                 "Not enough free space to merge parts from {} to {}. Has {} free and unreserved, {} required now",
-                parts.front().name, parts.back().name, ReadableSize(available_disk_space), ReadableSize(required_disk_space)),
+                selected_parts.front().name, selected_parts.back().name, ReadableSize(available_disk_space), ReadableSize(required_disk_space)),
         });
     }
 
-    LOG_INFO(log, "Selected {} parts from {} to {}", parts.size(), parts.front().name, parts.back().name);
-    return MergeSelectorChoice{std::move(parts), MergeType::Regular, final};
+    LOG_INFO(log, "Selected {} parts from {} to {}", selected_parts.size(), selected_parts.front().name, selected_parts.back().name);
+    return MergeSelectorChoice{std::move(selected_parts), MergeType::Regular, final};
 }
 
 /// parts should be sorted.

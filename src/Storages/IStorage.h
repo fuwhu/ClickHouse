@@ -670,6 +670,10 @@ public:
     /// Same as above but also take partition predicate into account.
     virtual std::optional<UInt64> totalRowsByPartitionPredicate(const ActionsDAG &, ContextPtr) const { return {}; }
 
+    /// If engine = UniqueMergeTree or ReplicatedUniqueMergeTree totalEffectiveRows = totalRows - deleteRows,
+    /// otherwise totalEffectiveRows = totalRows.
+    virtual std::optional<UInt64> totalEffectiveRows(const Settings & settings) const { return totalRows(settings); }
+
     /// If it is possible to quickly determine exact number of bytes for the table on storage:
     /// - memory (approximated, resident)
     /// - disk (compressed)

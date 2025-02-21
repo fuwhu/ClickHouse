@@ -12,6 +12,7 @@
 #include <Storages/VirtualColumnsDescription.h>
 #include <Formats/MarkInCompressedFile.h>
 #include <Storages/MergeTree/IMergeTreeDataPart.h>
+#include <Storages/MergeTree/MergeTreeData.h>
 
 
 namespace DB
@@ -24,6 +25,14 @@ using MergeTreeSettingsPtr = std::shared_ptr<const MergeTreeSettings>;
 Block getIndexBlockAndPermute(const Block & block, const Names & names, const IColumnPermutation * permutation);
 
 Block permuteBlockIfNeeded(const Block & block, const IColumnPermutation * permutation);
+
+struct UniqueEngineData
+{
+    UniqueKeyIndexPtr unique_key_index;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
+    UniqueKeyBucketIndexPtr unique_key_bucket_index;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
+};
 
 /// Writes data part to disk in different formats.
 /// Calculates and serializes primary and skip indices if needed.
@@ -64,6 +73,8 @@ public:
     virtual const ColumnsSubstreams & getColumnsSubstreams() const = 0;
 
     virtual std::optional<IMergeTreeDataPart::HashCollisionMap> getHashCollisionMap() const { return std::nullopt; }
+
+    virtual std::optional<UniqueEngineData> getUniqueEngineData() const { return std::nullopt; }
 
 protected:
     SerializationPtr getSerialization(const String & column_name) const;
@@ -112,6 +123,7 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartWriter(
         const String & marks_file_extension,
         const CompressionCodecPtr & default_codec_,
         const MergeTreeWriterSettings & writer_settings,
-        MergeTreeIndexGranularityPtr computed_index_granularity);
+        MergeTreeIndexGranularityPtr computed_index_granularity,
+        const MergeTreeData::MergingParams & merging_params);
 
 }

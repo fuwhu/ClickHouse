@@ -48,6 +48,7 @@ MergedBlockOutputStream::MergedBlockOutputStream(
         storage_settings,
         data_part->index_granularity_info.mark_type.adaptive,
         /* rewrite_primary_key = */ true,
+        /* rewrite_unique_key = */ true,
         save_marks_in_cache,
         save_primary_index_in_memory,
         blocks_are_granules_size);
@@ -75,7 +76,8 @@ MergedBlockOutputStream::MergedBlockOutputStream(
         data_part->getMarksFileExtension(),
         default_codec,
         writer_settings,
-        std::move(index_granularity_ptr));
+        std::move(index_granularity_ptr),
+        data_part->storage.merging_params);
 }
 
 /// If data is pre-sorted.
@@ -239,6 +241,20 @@ MergedBlockOutputStream::Finalizer MergedBlockOutputStream::finalizePartAsync(
     written_files = finalizePartOnDisk(new_part, checksums);
 
     new_part->rows_count = rows_count;
+
+    if (new_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        auto unique_engine_data = writer->getUniqueEngineData();
+        new_part->effective_rows_count = rows_count - unique_engine_data->unique_delete_bitmap->deleteRowsSize();
+
+        new_part->setUniqueDeleteBitmap(unique_engine_data->unique_delete_bitmap);
+        new_part->setUniqueKeyIndex(unique_engine_data->unique_key_index);
+        new_part->setUniqueKeyMinMaxIndex(unique_engine_data->unique_key_minmax_index);
+        new_part->setUniqueKeyBucketIndex(unique_engine_data->unique_key_bucket_index);
+    }
+    else
+        new_part->effective_rows_count = rows_count;
+
     new_part->modification_time = time(nullptr);
 
     new_part->checksums = checksums;

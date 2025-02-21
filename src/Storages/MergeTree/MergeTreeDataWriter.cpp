@@ -426,6 +426,7 @@ Block MergeTreeDataWriter::mergeBlock(
         {
             /// There is nothing to merge in single block in ordinary MergeTree
             case MergeTreeData::MergingParams::Ordinary:
+            case MergeTreeData::MergingParams::Unique:
                 return nullptr;
             case MergeTreeData::MergingParams::Replacing:
                 return std::make_shared<ReplacingSortedAlgorithm>(
@@ -623,6 +624,10 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices)->execute(block);
     }
+
+    /// If we need to calculate some columns to deduplicate for unique engine.
+    if (metadata_snapshot->hasUniqueKey())
+        data.getUniqueKeyExpression(metadata_snapshot)->execute(block);
 
     Names sort_columns = metadata_snapshot->getSortingKeyColumns();
     std::vector<bool> reverse_flags = metadata_snapshot->getSortingKeyReverseFlags();

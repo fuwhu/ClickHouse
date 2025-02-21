@@ -57,6 +57,8 @@ ASTPtr ASTStorage::clone() const
         res->set(res->primary_key, primary_key->clone());
     if (order_by)
         res->set(res->order_by, order_by->clone());
+    if (unique_key)
+        res->set(res->unique_key, unique_key->clone());
     if (sample_by)
         res->set(res->sample_by, sample_by->clone());
     if (ttl_table)
@@ -92,6 +94,11 @@ void ASTStorage::formatImpl(WriteBuffer & ostr, const FormatSettings & s, Format
         ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << "ORDER BY " << (s.hilite ? hilite_none : "");
         order_by->format(ostr, s, state, modified_frame);
     }
+    if (unique_key)
+    {
+        s.ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << "UNIQUE KEY " << (s.hilite ? hilite_none : "");
+        unique_key->formatImpl(s, state, frame);
+    }
     if (sample_by)
     {
         ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << "SAMPLE BY " << (s.hilite ? hilite_none : "");
@@ -111,7 +118,7 @@ void ASTStorage::formatImpl(WriteBuffer & ostr, const FormatSettings & s, Format
 
 bool ASTStorage::isExtendedStorageDefinition() const
 {
-    return partition_by || primary_key || order_by || sample_by || settings;
+    return partition_by || primary_key || order_by || unique_key || sample_by || settings;
 }
 
 

@@ -7,6 +7,12 @@ namespace DB
 
 class SerializationString final : public ISerialization
 {
+private:
+    /// For encode string to guarantee value is ascending order in comparison.
+    static constexpr UInt8 enc_group_size = 8;
+    static constexpr char enc_marker = 0xFF;
+    static constexpr char enc_pad = 0x00;
+
 public:
     void serializeBinary(const Field & field, WriteBuffer & ostr, const FormatSettings & settings) const override;
     void deserializeBinary(Field & field, ReadBuffer & istr, const FormatSettings & settings) const override;
@@ -39,6 +45,10 @@ public:
     bool tryDeserializeTextCSV(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
 
     void serializeTextMarkdown(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
+    
+    bool supportMemComparableEncoding() const override { return true; }
+    void serializeMemComparable(const IColumn & column, size_t row_num, WriteBuffer & ostr) const override;
+    void deserializeMemComparable(IColumn & column, ReadBuffer & istr) const override;
 };
 
 }

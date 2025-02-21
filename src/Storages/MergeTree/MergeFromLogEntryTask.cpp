@@ -58,6 +58,14 @@ ReplicatedMergeMutateTaskBase::PrepareResult MergeFromLogEntryTask::prepare()
     LOG_TRACE(log, "Executing log entry to merge parts {} to {}",
         fmt::join(entry.source_parts, ", "), entry.new_part_name);
 
+    /// For replicated unique engine tables, due to the realtime data updating to each data part, the result data parts of executing same merge-type log entry on different replicas may have different file checksums, which may lead to the failure of checksum validation.
+    /// So we only execute each merge-type log entry on one replica, and then fetch the merged result on other replicas.
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique && storage.replica_name != entry.source_replica)
+    {
+        LOG_INFO(log, "Will fetch part {} because engine is unique.", entry.new_part_name);
+        return PrepareResult{false, true, {}};
+    }
+
     StorageMetadataPtr metadata_snapshot = storage.getInMemoryMetadataPtr();
     int32_t metadata_version = metadata_snapshot->getMetadataVersion();
     const auto storage_settings_ptr = storage.getSettings();
@@ -165,6 +173,49 @@ ReplicatedMergeMutateTaskBase::PrepareResult MergeFromLogEntryTask::prepare()
                 .need_to_check_missing_part_in_fetch = false,
                 .part_log_writer = part_log_writer,
             };
+        }
+
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+        {
+            if (source_part_or_covering->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::MERGING)
+            {
+                /// nothing, it's correct.
+            }
+            else if (source_part_or_covering->merge_update_status.load() == IMergeTreeDataPart::MergeUpdateStatus::NORMAL)
+            {
+                LOG_WARNING(
+                    log,
+                    "part {} has been selected to merge, but the merge_update_status of part is NORMAL, which may be caused by "
+                    "restart or other "
+                    "reasons, so change merge_update_status to merging to avoid the conflict between write and merge.",
+                    source_part_or_covering->name);
+
+                if (storage.changePartMergeUpdateStatus(
+                        source_part_or_covering,
+                        IMergeTreeDataPart::MergeUpdateStatus::NORMAL,
+                        IMergeTreeDataPart::MergeUpdateStatus::MERGING))
+                    LOG_WARNING(log, "the merge_update_status of part {} is changed to MERGING.", source_part_or_covering->name);
+                else
+                {
+                    LOG_WARNING(
+                        log,
+                        "failed to change merge_update_status of part {}, the part is probably being updated.",
+                        source_part_or_covering->name);
+                    return {false, true, {}};
+                }
+            }
+            else
+            {
+                LOG_WARNING(
+                    log,
+                    "part {} has been selected to merge, but the merge_update_status of part is {}, which may be caused by "
+                    "restart or other "
+                    "reasons, so wait for write to complete and then change merge_update_status to merging to avoid the conflict between "
+                    "write and merge.",
+                    source_part_or_covering->name,
+                    source_part_or_covering->getMergeUpdateStatusName());
+                return {false, true, {}};
+            }
         }
 
         parts.push_back(source_part_or_covering);

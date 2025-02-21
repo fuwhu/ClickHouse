@@ -313,6 +313,9 @@ public:
         /// The result of applying this filter is that only rows that pass all previous filtering steps will remain.
         FilterWithCachedCount final_filter;
 
+        /// delete bitmap filter for unique engine
+        FilterWithCachedCount unique_key_dedup_filter;
+
         /// This flag is true when prewhere column can be returned without filtering.
         /// It's true when it contains 0s from all filtering steps (not just the step when it was calculated).
         /// NOTE: If we accumulated the final_filter for several steps without applying it then prewhere column calculated at the last step
@@ -343,6 +346,7 @@ public:
     IMergeTreeReader * getReader() const { return merge_tree_reader; }
 
 private:
+    FilterWithCachedCount getUniqueKeyDedupFilter(const ColumnPtr & part_offset_col);
     void fillVirtualColumns(Columns & columns, ReadResult & result, UInt64 leading_begin_part_offset, UInt64 leading_end_part_offset);
     ColumnPtr createPartOffsetColumn(ReadResult & result, UInt64 leading_begin_part_offset, UInt64 leading_end_part_offset);
 

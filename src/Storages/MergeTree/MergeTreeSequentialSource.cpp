@@ -57,6 +57,14 @@ public:
 
     size_t getCurrentMark() const { return current_mark; }
 
+    size_t getCurrentRow() const { return current_row; }
+
+    void setUniqueDeleteBitmap(UniqueDeleteBitmapPtr unique_delete_bitmap_)
+    {
+        if (unique_delete_bitmap_)
+            unique_delete_bitmap = std::move(unique_delete_bitmap_);
+    }
+
 protected:
     Chunk generate() override;
 
@@ -74,9 +82,13 @@ private:
 
     MergeTreeReadTask::Readers readers;
     MergeTreeReadersChain readers_chain;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
 
     /// Should read using direct IO
     bool read_with_direct_io;
+
+    /// current row at which we stop reading
+    size_t current_row = 0;
 
     /// Current mark at which we stop reading
     size_t current_mark = 0;
@@ -110,11 +122,43 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
 
     /// Print column name but don't pollute logs in case of many columns.
     if (columns_to_read.size() == 1)
-        LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part, column {}",
-            data_part->getMarksCount(), data_part->name, data_part->rows_count, columns_to_read.front().name);
+    {
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+            LOG_DEBUG(
+                log,
+                "Reading {} marks from part {}, total {} rows effective {} rows starting from the beginning of the part, column {}",
+                data_part->getMarksCount(),
+                data_part->name,
+                data_part->rows_count,
+                data_part->effective_rows_count,
+                columns_to_read.front());
+        else
+            LOG_DEBUG(
+                log,
+                "Reading {} marks from part {}, total {} rows starting from the beginning of the part, column {}",
+                data_part->getMarksCount(),
+                data_part->name,
+                data_part->rows_count,
+                columns_to_read.front());
+    }
     else
-        LOG_DEBUG(log, "Reading {} marks from part {}, total {} rows starting from the beginning of the part",
-            data_part->getMarksCount(), data_part->name, data_part->rows_count);
+    {
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
+            LOG_DEBUG(
+                log,
+                "Reading {} marks from part {}, total {} rows effective {} rows starting from the beginning of the part",
+                data_part->getMarksCount(),
+                data_part->name,
+                data_part->rows_count,
+                data_part->effective_rows_count);
+        else
+            LOG_DEBUG(
+                log,
+                "Reading {} marks from part {}, total {} rows starting from the beginning of the part",
+                data_part->getMarksCount(),
+                data_part->name,
+                data_part->rows_count);
+    }
 
     /// Note, that we don't check setting collaborate_with_coordinator presence, because this source
     /// is only used in background merges.
@@ -180,69 +224,113 @@ void MergeTreeSequentialSource::updateRowsToRead(size_t mark_number)
         current_rows_to_read = index_granularity->getMarkRows(mark_number);
 }
 
+static void filterColumns(Columns & columns, const IColumn::Filter & filter)
+{
+    for (auto & column : columns)
+    {
+        if (column)
+        {
+            column = column->filter(filter, -1);
+
+            if (column->empty())
+            {
+                columns.clear();
+                return;
+            }
+        }
+    }
+}
+
 Chunk MergeTreeSequentialSource::generate()
 try
 {
-    const auto & index_granularity = read_task_info->data_part->index_granularity;
-    if (current_mark >= index_granularity->getMarksCountWithoutFinal())
+    while (true)
     {
-        finish();
-        return {};
-    }
-
-    if (isCancelled())
-        return {};
-
-    auto read_result = readers_chain.read(current_rows_to_read, mark_ranges);
-    if (!read_result.num_rows)
-        return {};
-
-    if (read_result.num_rows > current_rows_to_read)
-        throw Exception(ErrorCodes::LOGICAL_ERROR, "Read {} rows, more than requested to read: {}", read_result.num_rows, current_rows_to_read);
-
-    current_rows_to_read -= read_result.num_rows;
-
-    if (!current_rows_to_read)
-    {
-        ++current_mark;
-        updateRowsToRead(current_mark);
-    }
-
-    const auto & result_header = getPort().getHeader();
-    const auto & reader_header = readers_chain.getSampleBlock();
-
-    Columns result_columns;
-    result_columns.reserve(result_header.columns());
-
-    for (size_t i = 0; i < result_header.columns(); ++i)
-    {
-        const auto & name = result_header.safeGetByPosition(i).name;
-        auto pos = reader_header.getPositionByName(name);
-        auto & result_column = result_columns.emplace_back(std::move(read_result.columns[pos]));
-
-        /// When read_task_info->merged_part_offsets we need to adjust parent part offset in projection because it will
-        /// be different when parent has order by column and merge will change order of rows.
-        if (read_task_info->merged_part_offsets && read_task_info->data_part->isProjectionPart() && name == "_parent_part_offset")
+        const auto & index_granularity = read_task_info->data_part->index_granularity;
+        if (current_mark >= index_granularity->getMarksCountWithoutFinal() || current_row >= read_task_info->data_part->rows_count)
         {
-            chassert(read_task_info->merged_part_offsets->isFinalized());
-
-            result_column = result_column->convertToFullColumnIfSparse();
-            auto & column = result_column->assumeMutableRef();
-            auto & offset_data = assert_cast<ColumnUInt64 &>(column).getData();
-            for (auto & offset : offset_data)
-                offset = (*read_task_info->merged_part_offsets)[read_task_info->part_index_in_query, offset];
+            finish();
+            return {};
         }
-        result_column->assumeMutableRef().shrinkToFit();
+
+        if (isCancelled())
+            return {};
+
+        auto read_result = readers_chain.read(current_rows_to_read, mark_ranges);
+        if (!read_result.num_rows)
+            return {};
+
+        if (read_result.num_rows > current_rows_to_read)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Read {} rows, more than requested to read: {}", read_result.num_rows, current_rows_to_read);
+
+        size_t delete_size = 0;
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique
+                && unique_delete_bitmap && unique_delete_bitmap->deleteRowsSize())
+        {
+            auto col_vec = ColumnUInt8::create(read_result.num_rows);
+            auto & data = col_vec->getData();
+
+            UInt8 * pos = data.data();
+
+            for (size_t row = current_row; row < current_row + read_result.num_rows; ++row)
+            {
+                auto is_deleted = unique_delete_bitmap->isDeleted(row);
+                if (is_deleted)
+                    delete_size++;
+                *pos++ = !is_deleted;
+            }
+
+            filterColumns(read_result.columns, col_vec->getData());
+        }
+
+        current_row += read_result.num_rows;
+        current_rows_to_read -= read_result.num_rows;
+
+        if (!current_rows_to_read)
+        {
+            ++current_mark;
+            updateRowsToRead(current_mark);
+        }
+
+        if (read_result.columns.empty())
+            continue;
+
+        const auto & result_header = getPort().getHeader();
+        const auto & reader_header = readers_chain.getSampleBlock();
+
+        Columns result_columns;
+        result_columns.reserve(result_header.columns());
+
+        for (size_t i = 0; i < result_header.columns(); ++i)
+        {
+            const auto & name = result_header.safeGetByPosition(i).name;
+            auto pos = reader_header.getPositionByName(name);
+            auto & result_column = result_columns.emplace_back(std::move(read_result.columns[pos]));
+
+            /// When read_task_info->merged_part_offsets we need to adjust parent part offset in projection because it will
+            /// be different when parent has order by column and merge will change order of rows.
+            if (read_task_info->merged_part_offsets && read_task_info->data_part->isProjectionPart() && name == "_parent_part_offset")
+            {
+                chassert(read_task_info->merged_part_offsets->isFinalized());
+
+                result_column = result_column->convertToFullColumnIfSparse();
+                auto & column = result_column->assumeMutableRef();
+                auto & offset_data = assert_cast<ColumnUInt64 &>(column).getData();
+                for (auto & offset : offset_data)
+                    offset = (*read_task_info->merged_part_offsets)[read_task_info->part_index_in_query, offset];
+            }
+            result_column->assumeMutableRef().shrinkToFit();
+        }
+
+        auto result = Chunk(std::move(result_columns), read_result.num_rows - delete_size);
+        /// Part level is useful for next step for merging non-merge tree table
+        bool add_part_level = storage.merging_params.mode != MergeTreeData::MergingParams::Ordinary;
+
+        if (add_part_level)
+            result.getChunkInfos().add(std::make_shared<MergeTreeReadInfo>(read_task_info->data_part->info.level));
+
+        return result;
     }
-
-    auto result = Chunk(std::move(result_columns), read_result.num_rows);
-    /// Part level is useful for next step for merging non-merge tree table
-    bool add_part_level = storage.merging_params.mode != MergeTreeData::MergingParams::Ordinary;
-
-    if (add_part_level)
-        result.getChunkInfos().add(std::make_shared<MergeTreeReadInfo>(read_task_info->data_part->info.level));
-
-    return result;
 }
 catch (...)
 {
@@ -272,6 +360,7 @@ Pipe createMergeTreeSequentialSource(
     RangesInDataPart data_part,
     AlterConversionsPtr alter_conversions,
     MergedPartOffsetsPtr merged_part_offsets,
+    UniqueDeleteBitmapPtr unique_delete_bitmap,
     Names columns_to_read,
     std::optional<MarkRanges> mark_ranges,
     std::shared_ptr<std::atomic<size_t>> filtered_rows_count,
@@ -316,6 +405,8 @@ Pipe createMergeTreeSequentialSource(
         std::move(mark_ranges),
         read_with_direct_io,
         prefetch);
+
+    column_part_source->setUniqueDeleteBitmap(unique_delete_bitmap);
 
     Pipe pipe(std::move(column_part_source));
 
@@ -412,6 +503,7 @@ public:
             data_part,
             alter_conversions,
             merged_part_offsets,
+            data_part->getDataPartUniqueDeleteBitmap(),
             columns_to_read,
             std::move(mark_ranges),
             filtered_rows_count,

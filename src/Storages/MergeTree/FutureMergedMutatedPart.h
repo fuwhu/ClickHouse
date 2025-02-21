@@ -16,6 +16,8 @@ class MergeTreeData;
 /// Auxiliary struct holding metainformation for the future merged or mutated part.
 struct FutureMergedMutatedPart
 {
+    using UniqueDeleteBitmapVector = std::vector<UniqueDeleteBitmapPtr>;
+
     String name;
     UUID uuid = UUIDHelpers::Nil;
     String path;
@@ -23,6 +25,7 @@ struct FutureMergedMutatedPart
     MergeTreePartInfo part_info;
     MergeTreeData::DataPartsVector parts;
     std::vector<MergeTreePartInfo> blocking_parts_to_remove;
+    UniqueDeleteBitmapVector unique_delete_bitmaps;
     MergeType merge_type = MergeType::Regular;
     bool final = false;
 
@@ -44,6 +47,9 @@ struct FutureMergedMutatedPart
     void assign(MergeTreeData::DataPartsVector parts_, MergeTreeDataPartFormat future_part_format);
 
     void updatePath(const MergeTreeData & storage, const IReservation * reservation);
+
+    /// only be used for unique engine
+    void setUniqueDeleteBitmaps();
 };
 
 using FutureMergedMutatedPartPtr = std::shared_ptr<FutureMergedMutatedPart>;

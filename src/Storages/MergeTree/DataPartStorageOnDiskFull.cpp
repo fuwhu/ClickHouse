@@ -245,4 +245,8 @@ void DataPartStorageOnDiskFull::commitTransaction()
     transaction.reset();
 }
 
+std::string DataPartStorageOnDiskFull::getFullPathWithoutLastSlash() const
+{
+    return fs::path(volume->getDisk()->getPath()) / root_path / part_dir;
+}
 }

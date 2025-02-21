@@ -190,6 +190,15 @@ using ClassifierPtr = std::shared_ptr<IClassifier>;
 class IResourceManager;
 using ResourceManagerPtr = std::shared_ptr<IResourceManager>;
 
+namespace IndexFile
+{
+    class Cache;
+}
+
+class UniqueKeyIndexCache;
+using UniqueKeyIndexCachePtr = std::shared_ptr<UniqueKeyIndexCache>;
+using UniqueKeyIndexBlockCachePtr = std::shared_ptr<IndexFile::Cache>;
+
 /// Scheduling policy can be changed using `background_merges_mutations_scheduling_policy` config option.
 /// By default concurrent merges are scheduled using "round_robin" to ensure fair and starvation-free operation.
 /// Previously in heavily overloaded shards big merges could possibly be starved by smaller
@@ -1219,6 +1228,14 @@ public:
     void updateQueryConditionCacheConfiguration(const Poco::Util::AbstractConfiguration & config);
     std::shared_ptr<QueryConditionCache> getQueryConditionCache() const;
     void clearQueryConditionCache() const;
+
+    /// Create a cache of UniqueKeyIndex objects.
+    void setUniqueKeyIndexCache(size_t cache_size_in_bytes, size_t cache_elements_size);
+    UniqueKeyIndexCachePtr getUniqueKeyIndexCache() const;
+
+    /// Create a memory cache of data blocks reading from unique key index files.
+    void setUniqueKeyIndexBlockCache(size_t cache_size_in_bytes);
+    UniqueKeyIndexBlockCachePtr getUniqueKeyIndexBlockCache() const;
 
     /** Clear the caches of the uncompressed blocks and marks.
       * This is usually done when renaming tables, changing the type of columns, deleting a table.

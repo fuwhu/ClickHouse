@@ -65,6 +65,7 @@ public:
         size_t num_streams) override;
 
     std::optional<UInt64> totalRows(ContextPtr) const override;
+    std::optional<UInt64> totalEffectiveRows(ContextPtr query_context) const override;
     std::optional<UInt64> totalRowsByPartitionPredicate(const ActionsDAG & filter_actions_dag, ContextPtr) const override;
     std::optional<UInt64> totalBytes(ContextPtr) const override;
     std::optional<UInt64> totalBytesUncompressed(const Settings &) const override;

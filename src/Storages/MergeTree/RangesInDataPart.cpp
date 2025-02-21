@@ -122,6 +122,11 @@ size_t RangesInDataPart::getRowsCount() const
     return data_part->index_granularity->getRowsCountInRanges(ranges);
 }
 
+UniqueDeleteBitmapPtr getDataPartUniqueDeleteBitmap() const
+{
+    return data_part->getUniqueDeleteBitmap();
+}
+
 RangesInDataParts::RangesInDataParts(const DataPartsVector & parts)
 {
     size_t num_parts = parts.size();

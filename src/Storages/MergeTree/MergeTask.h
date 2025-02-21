@@ -97,6 +97,9 @@ public:
         {
             global_ctx = std::make_shared<GlobalRuntimeContext>();
 
+            if (merging_params_.mode == MergeTreeData::MergingParams::Unique)
+                future_part_->setUniqueDeleteBitmaps();
+
             global_ctx->future_part = std::move(future_part_);
             global_ctx->metadata_snapshot = std::move(metadata_snapshot_);
             global_ctx->merge_entry = std::move(merge_entry_);
@@ -336,6 +339,7 @@ private:
     {
         /// Begin dependencies from previous stage
         std::shared_ptr<RowsSourcesTemporaryFile> rows_sources_temporary_file;
+        MergeTreeData::MergingParams merging_params{};
         std::optional<ColumnSizeEstimator> column_sizes;
         CompressionCodecPtr compression_codec;
         std::list<DB::NameAndTypePair>::const_iterator it_name_and_type;

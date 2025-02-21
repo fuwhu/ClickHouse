@@ -189,6 +189,8 @@ else()
     message(STATUS "StorageFileLog is only supported on Linux")
 endif ()
 
+add_headers_and_sources(dbms Storages/IndexFile)
+
 list(APPEND clickhouse_common_io_sources ${CONFIG_INCLUDE_PATH}/config_version.cpp)
 
 if (NOT ENABLE_SSL)

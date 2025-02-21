@@ -1844,6 +1844,45 @@ namespace ErrorCodes
     DECLARE(UInt64, max_implicit_columns, 300, R"(
     If more than this number implicit columns in MapV2, throw 'Too many implicit columns ...' exception.
     )", 0) \
+    DECLARE(UInt64, unique_delete_bitmap_type, 64, R"(
+    The type of delete bitmap used by unique engine. 64 - Roaring64Bitmap; 32 - Roaring32Bitmap.
+    )", 0) \
+    DECLARE(UInt64, unique_key_index_type, 3, R"(
+    The type of index used by unique engine for unique key.
+    0 - StandardMapUniqueKeyIndex; 1 - StandardUnOrderedMapUniqueKeyIndex; 2 - StringHashMapUniqueKeyIndex; 3 - LevelDB.
+    )", 0) \
+    DECLARE(UInt64, unique_key_update_parallelism, 8, R"(
+    The parallelism of checking and deleting the duplicate keys for single unique engine table,
+    this should not be bigger than 'background_unique_engine_update_pool_size'.
+    )", 0) \
+    DECLARE(UInt64, unique_key_update_parallel_type, 0, R"(
+    Control how to parallelize the process of checking and deleting the duplicate keys for unique engine tables.
+    0 - parallelize by data part; 1 - parallelize by keys.
+    )", 0) \
+    DECLARE(Bool, unique_key_index_resident_in_memory, false, R"(
+    Control if the unique key index of unique engine table should be resident in memory.
+    )", 0) \
+    DECLARE(UInt64, unique_key_deduplicate_level, 0, R"(
+    The level of deduplicate rows for unique engine. 0 - table level; 1 - partition level
+    )", 0) \
+    DECLARE(UInt64, enable_unique_key_bucket, 0, R"(
+    Control whether the unique key of unique engine table is divided into buckets. 0 - no, 1 - yes.
+    )", 0) \
+    DECLARE(UInt64, unique_key_bucket_size, 131072, R"(
+    The number of unique keys that each bucket can store at most for unique engine.
+    )", 0) \
+    DECLARE(UInt64, unique_key_bucket_load_parallelism, 8, R"(
+    The parallelism of loading unique key buckets for single unique engine table,
+    this should not be bigger than 'background_unique_engine_load_pool_size'.
+    )", 0) \
+    DECLARE(Bool, eanble_unique_key_partition_lock, 1, R"(
+    Enable the unique key partition lock, if this value is set to 0,
+    even if the table is deduplicated at the partition level, the lock granularity will be at the table level.
+    )", 0) \
+    DECLARE(UInt64, unique_key_partition_lock_lru_size, 1000, R"(
+    Maximum number of partition lock lru size, this value is only to prevent the number of partition locks in memory from growing infinitely,
+    and does not affect the normal acquisition of locks.
+    )", 0) \
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \
     M(TYPE, NAME, DEFAULT, "Obsolete setting, does nothing.", SettingsTierType::OBSOLETE)

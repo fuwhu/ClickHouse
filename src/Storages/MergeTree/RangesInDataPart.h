@@ -60,6 +60,7 @@ struct RangesInDataPart
 
     size_t getMarksCount() const;
     size_t getRowsCount() const;
+    UniqueDeleteBitmapPtr getDataPartUniqueDeleteBitmap() const;
 };
 
 class IMergeTreeDataPart;

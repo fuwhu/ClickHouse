@@ -7,6 +7,8 @@
 #include <Common/MemoryTrackerBlockerInThread.h>
 #include <Common/logger_useful.h>
 #include <Compression/CompressionFactory.h>
+#include <Storages/MergeTree/DataPartStorageOnDiskFull.h>
+#include <Storages/MergeTree/UniqueEngineDataWriter.h>
 
 namespace ProfileEvents
 {
@@ -181,7 +183,8 @@ MergeTreeDataPartWriterOnDisk::MergeTreeDataPartWriterOnDisk(
     const String & marks_file_extension_,
     const CompressionCodecPtr & default_codec_,
     const MergeTreeWriterSettings & settings_,
-    MergeTreeIndexGranularityPtr index_granularity_)
+    MergeTreeIndexGranularityPtr index_granularity_,
+    const MergeTreeData::MergingParams & merging_params_)
     : IMergeTreeDataPartWriter(
         data_part_name_, serializations_, data_part_storage_, index_granularity_info_,
         storage_settings_, columns_list_, metadata_snapshot_, virtual_columns_, settings_, std::move(index_granularity_))
@@ -191,6 +194,7 @@ MergeTreeDataPartWriterOnDisk::MergeTreeDataPartWriterOnDisk(
     , default_codec(default_codec_)
     , compute_granularity(index_granularity->empty())
     , compress_primary_key(settings.compress_primary_key)
+    , merging_params(merging_params_)
     , execution_stats(skip_indices.size(), stats.size())
     , log(getLogger(logger_name_ + " (DataPartWriter)"))
 {
@@ -204,6 +208,9 @@ MergeTreeDataPartWriterOnDisk::MergeTreeDataPartWriterOnDisk(
     if (settings.rewrite_primary_key)
         initPrimaryIndex();
 
+    if (settings.rewrite_unique_key && merging_params.mode == MergeTreeData::MergingParams::Unique){
+        initUniqueIndex();
+}
     initSkipIndices();
     initStatistics();
 }
@@ -553,6 +560,437 @@ void MergeTreeDataPartWriterOnDisk::finishSkipIndicesSerialization(bool sync)
     skip_indices_streams.clear();
     skip_indices_aggregators.clear();
     skip_index_accumulated_marks.clear();
+}
+
+void MergeTreeDataPartWriterOnDisk::calculateAndSerializeUniqueData(const Block & unique_key_version_block, const Granules & granules_to_write)
+{
+    if (unique_key_version_block.columns() < 1)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "UniqueMergeTree must have uniq key.");
+
+    size_t uk_rows = unique_key_version_block.rows();
+
+    Stopwatch stopwatch;
+
+    const auto & unique_key_names = metadata_snapshot->unique_key.column_names;
+    const auto & version_name = merging_params.version_column;
+    const auto & version_column = unique_key_version_block.getByName(version_name).column;
+
+    auto combine_key_column = DataTypeString{}.createColumn();
+
+    size_t last_row_count = 0;
+
+    auto unique_key_index_type = storage_settings->unique_key_index_type;
+    if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+    {
+        ColumnRawPtrs unique_key_columns;
+        for (const auto & unique_key_name : unique_key_names)
+            unique_key_columns.emplace_back(unique_key_version_block.getByName(unique_key_name).column.get());
+
+        Arena pool;
+        for (size_t i = 0; i < uk_rows; ++i)
+        {
+            auto encoded_value = serializeKeysToPoolContiguous(i, unique_key_names.size(), unique_key_columns, pool);
+            combine_key_column->insertData(encoded_value.data, encoded_value.size);
+        }
+
+        FieldRef unique_key_min_field;
+        FieldRef unique_key_max_field;
+        combine_key_column->getExtremes(unique_key_min_field, unique_key_max_field);
+        String unique_key_min_value = unique_key_min_field.safeGet<String>();
+        String unique_key_max_value = unique_key_max_field.safeGet<String>();
+
+        if (!unique_key_index->empty())
+        {
+            last_row_count = unique_key_index->size() + unique_delete_bitmap->deleteRowsSize();
+
+            if (unique_key_minmax_index)
+            {
+                String exists_min = unique_key_minmax_index->getMin();
+                String exists_max = unique_key_minmax_index->getMax();
+
+                String final_min = exists_min <= unique_key_min_value ? exists_min : unique_key_min_value;
+                String final_max = exists_max >= unique_key_max_value ? exists_max : unique_key_max_value;
+
+                unique_key_minmax_index->setMinMax(final_min, final_max);
+            }
+        }
+        else
+        {
+            if (unique_key_minmax_index)
+                unique_key_minmax_index->setMinMax(unique_key_min_value, unique_key_max_value);
+
+            if (storage_settings->enable_unique_key_bucket)
+            {
+                unique_key_bucket_index->init(storage_settings->unique_key_bucket_size, index_granularity.getTotalRows());
+                unique_key_index->initBucket(unique_key_bucket_index->getBucketNum());
+            }
+        }
+
+        for (const auto & granule : granules_to_write)
+        {
+            size_t pos = granule.start_row;
+
+            size_t rows_read = std::min(granule.rows_to_write, uk_rows - pos);
+
+            for (size_t index = 0; index < rows_read; ++index)
+            {
+                size_t row_number = pos + index;
+                UInt64 version_field = version_column.get()->getUInt(row_number);
+
+                StringRef key_ref = combine_key_column->getDataAt(row_number);
+                const String & key = key_ref.toString();
+
+                auto version_and_row = unique_key_index->get(key);
+                if (version_and_row)
+                {
+                    const auto & pre_version_field = std::get<0>(version_and_row.value());
+                    const auto & pre_row_number = std::get<1>(version_and_row.value());
+
+                    if (pre_version_field >= version_field)
+                        unique_delete_bitmap->deleteRow(row_number + last_row_count);
+                    else
+                    {
+                        unique_delete_bitmap->deleteRow(pre_row_number);
+                        unique_key_index->add(key, std::make_tuple(version_field, row_number + last_row_count));
+                    }
+                }
+                else
+                    unique_key_index->add(key, std::make_tuple(version_field, row_number + last_row_count));
+            }
+        }
+    }
+    else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
+    {
+        ColumnsWithTypeAndName unique_key_columns;
+        for (const auto & unique_key_name : unique_key_names)
+            unique_key_columns.emplace_back(unique_key_version_block.getByName(unique_key_name));
+
+        for (size_t i = 0; i < uk_rows; ++i)
+        {
+            WriteBufferFromOwnString key_buf;
+            for (auto & unique_key_col : unique_key_columns)
+                unique_key_col.type->getDefaultSerialization()->serializeMemComparable(*unique_key_col.column, i, key_buf);
+            String combine_key = key_buf.str();
+            combine_key_column->insertData(combine_key.data(), combine_key.size());
+        }
+
+        Block tmp_unique_key_version_block;
+        tmp_unique_key_version_block.insert(
+            ColumnWithTypeAndName(std::move(combine_key_column), std::make_shared<DataTypeString>(), UNIQUE_VIRTUAL_KEY_COLUMN_NAME));
+        tmp_unique_key_version_block.insert(
+            ColumnWithTypeAndName(version_column, std::make_shared<DataTypeUInt64>(), UNIQUE_VIRTUAL_VERSION_COLUMN_NAME));
+
+        auto rowid_column = DataTypeUInt64{}.createColumn();
+        for (const auto & granule : granules_to_write)
+        {
+            size_t pos = granule.start_row;
+            size_t rows_read = std::min(granule.rows_to_write, uk_rows - pos);
+
+            for (size_t index = 0; index < rows_read; ++index)
+            {
+                size_t row_number = pos + index + rows_count;
+                rowid_column->insert(row_number);
+            }
+        }
+
+        tmp_unique_key_version_block.insert(
+            ColumnWithTypeAndName(std::move(rowid_column), std::make_shared<DataTypeUInt64>(), UNIQUE_VIRTUAL_ROWID_COLUMN_NAME));
+
+        /// If the part contains only one block (normal insert case or merge case), we store unique_key_version_block directly into buffered_unique_block,
+        /// then serialize to leveldb in the fillUniqueDataChecksums function.
+
+        /// If the part contains more than one blocks (merge case) and unique key is not a prefix of sorting key,
+        /// we frist store unique_key_version_block into rocksdb, then read it from rocksdb and serialize to leveldb in fillUniqueDataChecksums function.
+
+        /// If the part contains more than one blocks (merge case) and unique key is a prefix of sorting key,
+        /// we store unique_key_version_block directly into leveldb.
+        if (!tmp_rocksdb_index_writer && !leveldb_index_writer)
+        {
+            if (rows_count == 0)
+                buffered_unique_block = std::move(tmp_unique_key_version_block);
+            else if (tmp_unique_key_version_block.rows() > 0)
+            {
+                assert(buffered_unique_block.rows() > 0);
+
+                if (!metadata_snapshot->isUniqueKeyPrefixToSortKey())
+                {
+                    rocksdb::Options opts;
+                    opts.create_if_missing = true;
+                    opts.error_if_exists = true;
+                    opts.write_buffer_size = 16 << 20; /// 16MB
+                    tmp_rocksdb_index_dir = fs::path(data_part_storage->getFullPath() + UniqueEngineDataWriter::TEMP_MERGING_STAGE_DIR_SUFFIX);
+                    rocksdb::DB * db;
+                    auto status = rocksdb::DB::Open(opts, tmp_rocksdb_index_dir, &db);
+                    tmp_rocksdb_index_writer = std::unique_ptr<rocksdb::DB>(db);
+                    if (!status.ok())
+                        throw Exception(ErrorCodes::LOGICAL_ERROR, "Can't create temp unique key: {}", status.ToString());
+                }
+                else
+                {
+                    IndexFile::Options options;
+                    options.filter_policy.reset(IndexFile::NewBloomFilterPolicy(10));
+                    leveldb_index_writer = std::make_unique<IndexFile::IndexFileWriter>(options);
+                    String index_path = fs::path(data_part_storage->getFullPath()) / UNIQUE_ENGINE_KEY_INDEX;
+                    auto status = leveldb_index_writer->Open(index_path);
+                    if (!status.ok())
+                        throw Exception(ErrorCodes::CANNOT_OPEN_FILE, "Error while opening file {}: {}", index_path, status.ToString());
+                }
+
+                writeToUniqueKeyIndex(buffered_unique_block);
+                buffered_unique_block.clear();
+            }
+        }
+
+        if (tmp_rocksdb_index_writer || leveldb_index_writer)
+            writeToUniqueKeyIndex(tmp_unique_key_version_block);
+    }
+    else
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+
+    rows_count += uk_rows;
+
+    LOG_DEBUG(getLogger("UniqueMergeTreeIndex"), "part {} calculateUniqueData cost {} ms", data_part_name, stopwatch.elapsedMilliseconds());
+}
+
+void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataPart::Checksums & checksums)
+{
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        Stopwatch stopwatch;
+
+        auto unique_key_index_type = storage_settings->unique_key_index_type;
+        if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+        {
+            if (!unique_key_bucket_index_hashing_stream)
+                unique_key_index->serializeBinary(*unique_key_index_hashing_stream, nullptr);
+            else
+            {
+                unique_key_index->serializeBinary(*unique_key_index_hashing_stream, unique_key_bucket_index);
+                unique_key_bucket_index->serializeBinary(*unique_key_bucket_index_hashing_stream);
+
+                unique_key_bucket_index_hashing_stream->finalize();
+                checksums.files[UNIQUE_ENGINE_KEY_BUCKET_INDEX].file_size = unique_key_bucket_index_hashing_stream->count();
+                checksums.files[UNIQUE_ENGINE_KEY_BUCKET_INDEX].file_hash = unique_key_bucket_index_hashing_stream->getHash();
+                unique_key_bucket_index_file_stream->preFinalize();
+            }
+
+            unique_key_index_hashing_stream->finalize();
+            checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_size = unique_key_index_hashing_stream->count();
+            checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_hash = unique_key_index_hashing_stream->getHash();
+            unique_key_index_file_stream->preFinalize();
+
+            unique_key_minmax_index->serializeBinary(*unique_key_minmax_index_hashing_stream);
+            unique_key_minmax_index_hashing_stream->finalize();
+            checksums.files[UNIQUE_ENGINE_KEY_MINMAX_INDEX].file_size = unique_key_minmax_index_hashing_stream->count();
+            checksums.files[UNIQUE_ENGINE_KEY_MINMAX_INDEX].file_hash = unique_key_minmax_index_hashing_stream->getHash();
+            unique_key_minmax_index_file_stream->preFinalize();
+        }
+        else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
+        {
+            IndexFile::IndexFileInfo file_info;
+
+            if (!tmp_rocksdb_index_writer && !leveldb_index_writer)
+            {
+                bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+                unique_key_index->serializeBinary(
+                    fs::path(data_part_storage->getFullPath()) / UNIQUE_ENGINE_KEY_INDEX,
+                    buffered_unique_block,
+                    unique_delete_bitmap,
+                    file_info,
+                    rowid_is_uinit32,
+                    metadata_snapshot->isUniqueKeyPrefixToSortKey());
+            }
+            else
+            {
+                if (tmp_rocksdb_index_writer)
+                {
+                    unique_key_index->serializeBinary(
+                        fs::path(data_part_storage->getFullPath()) / UNIQUE_ENGINE_KEY_INDEX,
+                        file_info,
+                        tmp_rocksdb_index_dir,
+                        tmp_rocksdb_index_writer);
+
+                    const auto & data_part_storage = dynamic_cast<const DataPartStorageOnDiskFull &>(getDataPartStorage());
+                    auto disk = data_part_storage.volume->getDisk();
+                    if (disk->exists(tmp_rocksdb_index_dir))
+                        disk->removeRecursive(tmp_rocksdb_index_dir);
+                }
+                else
+                {
+                    /// TODO move this to finish* function.
+                    auto status = leveldb_index_writer->Finish(&file_info);
+                    if (!status.ok())
+                        throw Exception(ErrorCodes::LOGICAL_ERROR, "Error while finishing file {}", status.ToString());
+                }
+            }
+
+            checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_size = file_info.file_size;
+            checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_hash = file_info.file_hash;
+        }
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+
+        unique_delete_bitmap->serializeBinary(*unique_delete_bitmap_file_stream);
+        unique_delete_bitmap_file_stream->preFinalize();
+
+        LOG_DEBUG(
+            getLogger("UniqueMergeTreeIndex"),
+            "part {} fillUniqueDataChecksums cost {} ms",
+            data_part_name,
+            stopwatch.elapsedMilliseconds());
+    }
+}
+
+void MergeTreeDataPartWriterOnDisk::finishUniqueDataSerialization(bool sync)
+{
+    if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        Stopwatch stopwatch;
+        if (IUniqueKeyIndex::isMapUniqueKeyIndex(storage_settings->unique_key_index_type))
+        {
+            if (unique_key_index_hashing_stream)
+            {
+                unique_key_index_file_stream->finalize();
+                if (sync)
+                    unique_key_index_file_stream->sync();
+                unique_key_index_hashing_stream = nullptr;
+            }
+
+            if (unique_key_bucket_index_hashing_stream)
+            {
+                unique_key_bucket_index_file_stream->finalize();
+                if (sync)
+                    unique_key_bucket_index_file_stream->sync();
+                unique_key_bucket_index_hashing_stream = nullptr;
+            }
+
+            if (unique_key_minmax_index_hashing_stream)
+            {
+                unique_key_minmax_index_file_stream->finalize();
+                if (sync)
+                    unique_key_minmax_index_file_stream->sync();
+                unique_key_minmax_index_hashing_stream = nullptr;
+            }
+        }
+
+        if (unique_delete_bitmap_file_stream)
+        {
+            unique_delete_bitmap_file_stream->finalize();
+            if (sync)
+                unique_delete_bitmap_file_stream->sync();
+        }
+
+        LOG_DEBUG(
+            getLogger("UniqueMergeTreeIndex"),
+            "part {} finishUniqueDataSerialization cost {} ms",
+            data_part_name,
+            stopwatch.elapsedMilliseconds());
+    }
+}
+
+void MergeTreeDataPartWriterOnDisk::writeToUniqueKeyIndex(Block & block)
+{
+    size_t rows = block.rows();
+    if (rows == 0)
+        return;
+
+    bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+
+    const auto & unique_key_col = block.getByName(UNIQUE_VIRTUAL_KEY_COLUMN_NAME);
+    const auto & unique_version_col = block.getByName(UNIQUE_VIRTUAL_VERSION_COLUMN_NAME);
+    const auto & unique_rowid_col = block.getByName(UNIQUE_VIRTUAL_ROWID_COLUMN_NAME);
+
+    rocksdb::WriteOptions opts;
+    bool rocksdb_index_flag = false;
+
+    if (tmp_rocksdb_index_writer)
+    {
+        opts.disableWAL = true;
+        rocksdb_index_flag = true;
+    }
+
+    for (size_t i = 0; i < rows; ++i)
+    {
+        auto key_ref = unique_key_col.column->getDataAt(i);
+        const String & key = key_ref.toString();
+        const UInt64 & version = unique_version_col.column->getUInt(i);
+        const UInt64 & rowid = unique_rowid_col.column->getUInt(i);
+
+        String value;
+
+        if (rowid_is_uinit32)
+            PutVarint32(&value, static_cast<UInt32>(rowid));
+        else
+            PutVarint64(&value, rowid);
+
+        /// Handle explicit version column
+        PutFixed64(&value, version); /// must use correct index, not rid
+
+        if (rocksdb_index_flag)
+        {
+            auto status = tmp_rocksdb_index_writer->Put(opts, key, value);
+            if (!status.ok())
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "RocksDB Failed to add unique key {} ", status.ToString());
+        }
+        else
+        {
+            auto status = leveldb_index_writer->Add(key, value);
+            if (!status.ok())
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "LevelDB Failed to add unique key {} ", status.ToString());
+        }
+    }
+}
+
+std::optional<UniqueEngineData> MergeTreeDataPartWriterOnDisk::getUniqueEngineData() const
+{
+    UniqueEngineData unique_data;
+
+    /// the effective_rows of merge part may be equal to zero.
+    /// if effective_rows = 0, set the empty unique key index, unique_delete_bitmap and unique_key_bucket_index to avoid null pointer.
+    unique_data.unique_delete_bitmap = unique_delete_bitmap;
+    auto unique_key_index_type = storage_settings->unique_key_index_type;
+    if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+    {
+        unique_data.unique_key_index = unique_key_index;
+        unique_data.unique_key_minmax_index = unique_key_minmax_index;
+
+        if (storage_settings->enable_unique_key_bucket)
+            unique_data.unique_key_bucket_index = unique_key_bucket_index;
+    }
+
+    return unique_data;
+}
+
+void MergeTreeDataPartWriterOnDisk::initUniqueIndex()
+{
+    if (metadata_snapshot->hasUniqueKey())
+    {
+        auto unique_key_index_type = storage_settings->unique_key_index_type;
+
+        unique_key_index = IMergeTreeDataPart::createUniqueIndex(unique_key_index_type);
+        unique_delete_bitmap = IMergeTreeDataPart::createUniqueDeleteBitmap(storage_settings->unique_delete_bitmap_type);
+
+        if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
+        {
+            unique_key_minmax_index = std::make_shared<UniqueKeyMinMaxIndex>();
+            unique_key_index_file_stream = getDataPartStorage().writeFile(UNIQUE_ENGINE_KEY_INDEX, DBMS_DEFAULT_BUFFER_SIZE, {});
+            unique_key_index_hashing_stream = std::make_unique<HashingWriteBuffer>(*unique_key_index_file_stream);
+
+            if (storage_settings->enable_unique_key_bucket)
+            {
+                unique_key_bucket_index = std::make_shared<UniqueKeyBucketIndex>();
+                unique_key_bucket_index_file_stream
+                    = getDataPartStorage().writeFile(UNIQUE_ENGINE_KEY_BUCKET_INDEX, DBMS_DEFAULT_BUFFER_SIZE, {});
+                unique_key_bucket_index_hashing_stream = std::make_unique<HashingWriteBuffer>(*unique_key_bucket_index_file_stream);
+            }
+
+            unique_key_minmax_index_file_stream
+                = getDataPartStorage().writeFile(UNIQUE_ENGINE_KEY_MINMAX_INDEX, DBMS_DEFAULT_BUFFER_SIZE, {});
+            unique_key_minmax_index_hashing_stream = std::make_unique<HashingWriteBuffer>(*unique_key_minmax_index_file_stream);
+        }
+
+        unique_delete_bitmap_file_stream = getDataPartStorage().writeFile(UNIQUE_ENGINE_DELETE_BITMAP, DBMS_DEFAULT_BUFFER_SIZE, {});
+    }
 }
 
 Names MergeTreeDataPartWriterOnDisk::getSkipIndicesColumns() const

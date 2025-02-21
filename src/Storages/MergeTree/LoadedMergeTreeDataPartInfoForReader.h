@@ -65,6 +65,13 @@ public:
 
     const IMergeTreeDataPart::HashCollisionMap & getHashCollisionMap() const override { return data_part->getHashCollisionMap(); }
 
+    bool isUniqueEngineTable() const override { return data_part->storage.merging_params.mode == MergeTreeData::MergingParams::Unique; }
+
+    UniqueDeleteBitmapPtr getUniqueDeleteBitmap() const override
+    {
+        return isUniqueEngineTable() ? data_part->getUniqueDeleteBitmap() : nullptr;
+    }
+
 private:
     MergeTreeData::DataPartPtr data_part;
     AlterConversionsPtr alter_conversions;

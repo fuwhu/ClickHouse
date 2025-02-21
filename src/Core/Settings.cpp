@@ -6582,6 +6582,18 @@ Time interval between two rounds of block number znodes cleanup.
     DECLARE(UInt64, block_number_cleanup_timediff_hours, 30 * 24, R"(
 Only the block number znode that exists longer than this time interval could be cleared up.
 )", 0) \
+    DECLARE(UInt64, background_unique_engine_update_pool_size, 16, R"(
+Number of threads performing background tasks for unique engine tables to update existing data parts.
+)", 0) \
+    DECLARE(UInt64, background_unique_engine_update_schedule_timeout, 10, R"(
+Timeout of scheduling unique engine data updating task, unit is second.
+)", 0) \
+    DECLARE(UInt64, background_unique_engine_load_pool_size, 16, R"(
+Number of threads performing background tasks for unique engine tables to load unique key buckets.
+)", 0) \
+    DECLARE(UInt64, background_unique_engine_load_schedule_timeout, 10, R"(
+Timeout of scheduling unique engine unique key buckets loading task, unit is second.
+)", 0) \
     \
     /* ####################################################### */ \
     /* ########### START OF EXPERIMENTAL FEATURES ############ */ \

@@ -5,6 +5,7 @@
 #include <Processors/Transforms/DeduplicationTokenTransforms.h>
 #include <DataTypes/ObjectUtils.h>
 #include <Common/ProfileEventsScope.h>
+#include "Storages/MergeTree/MergeTreeData.h"
 #include <Core/Settings.h>
 
 
@@ -226,35 +227,65 @@ bool MergeTreeSink::commitPart(MergeTreeMutableDataPartPtr & part, const String 
     /// otherwise it can lock parts in destructor and deadlock is possible.
     MergeTreeData::Transaction transaction(storage, context->getCurrentTransaction().get());
     {
-        auto lock = storage.lockParts();
-        storage.fillNewPartName(part, lock);
-
-        auto * deduplication_log = storage.getDeduplicationLog();
-
-        if (context->getSettingsRef()[Setting::insert_deduplicate] && deduplication_log)
+        /// The unique engine will perform a comparison for deduplication with historical parts, which takes a relatively long time. 
+        /// If this operation is performed under the data_parts_mutex lock, it will affect the select, so after executing renameTempPartAndAdd, the lock should be released.
+        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique)
         {
-            const String block_id = part->getNewPartBlockID(deduplication_token);
-            auto res = deduplication_log->addPart(block_id, part->info);
-            if (!res.second)
             {
-                ProfileEvents::increment(ProfileEvents::DuplicatedInsertedBlocks);
-                LOG_INFO(storage.log, "Block with ID {} already exists as part {}; ignoring it", block_id, res.first.getPartNameForLogs());
-                return false;
-            }
-        }
+                auto lock = storage.lockParts();
+                storage.fillNewPartName(part, lock);
 
-        /// FIXME: renames for MergeTree should be done under the same lock
-        /// to avoid removing extra covered parts after merge.
-        ///
-        /// Image the following:
-        /// - T1: all_2_2_0 is in renameParts()
-        /// - T2: merge assigned for [all_1_1_0, all_3_3_0]
-        /// - T1: renameParts() finished, part had been added as Active
-        /// - T2: merge finished, covered parts removed, and it will include all_2_2_0!
-        ///
-        /// Hence, for now rename_in_transaction is false.
-        added = storage.renameTempPartAndAdd(part, transaction, lock, /*rename_in_transaction=*/ false);
-        transaction.commit(&lock);
+                auto * deduplication_log = storage.getDeduplicationLog();
+
+                if (settings.insert_deduplicate && deduplication_log)
+                {
+                    const String block_id = part->getZeroLevelPartBlockID(partition.block_dedup_token);
+                    auto res = deduplication_log->addPart(block_id, part->info);
+                    if (!res.second)
+                    {
+                        ProfileEvents::increment(ProfileEvents::DuplicatedInsertedBlocks);
+                        LOG_INFO(storage.log, "Block with ID {} already exists as part {}; ignoring it", block_id, res.first.getPartNameForLogs());
+                        continue;
+                    }
+                }
+
+                added = storage.renameTempPartAndAdd(part, transaction, lock);
+            }
+
+            transaction.commit();
+        }
+        else
+        {
+            auto lock = storage.lockParts();
+            storage.fillNewPartName(part, lock);
+
+            auto * deduplication_log = storage.getDeduplicationLog();
+
+            if (context->getSettingsRef()[Setting::insert_deduplicate] && deduplication_log)
+            {
+                const String block_id = part->getNewPartBlockID(deduplication_token);
+                auto res = deduplication_log->addPart(block_id, part->info);
+                if (!res.second)
+                {
+                    ProfileEvents::increment(ProfileEvents::DuplicatedInsertedBlocks);
+                    LOG_INFO(storage.log, "Block with ID {} already exists as part {}; ignoring it", block_id, res.first.getPartNameForLogs());
+                    return false;
+                }
+            }
+
+            /// FIXME: renames for MergeTree should be done under the same lock
+            /// to avoid removing extra covered parts after merge.
+            ///
+            /// Image the following:
+            /// - T1: all_2_2_0 is in renameParts()
+            /// - T2: merge assigned for [all_1_1_0, all_3_3_0]
+            /// - T1: renameParts() finished, part had been added as Active
+            /// - T2: merge finished, covered parts removed, and it will include all_2_2_0!
+            ///
+            /// Hence, for now rename_in_transaction is false.
+            added = storage.renameTempPartAndAdd(part, transaction, lock, /*rename_in_transaction=*/ false);
+            transaction.commit(&lock);
+        }
     }
 
     return added;

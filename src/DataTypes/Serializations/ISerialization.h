@@ -485,6 +485,17 @@ public:
 
     virtual void serializeTextMarkdown(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings & settings) const;
 
+    /** Text serialization intended for memory comparasion.
+      */
+    /// A mem-comparable encoding guarantees that we can compare encoded value using memcmp without decoding
+    virtual bool supportMemComparableEncoding() const { return false; }
+    /// Serialize one value of a column into mem-comparable format.
+    /// Throws exception when supportMemComparableEncoding() == false
+    virtual void serializeMemComparable(const IColumn & column, size_t row_num, WriteBuffer & ostr) const;
+    /// Deserialize one value from mem-comparable format and insert into a column.
+    /// Throws exception when supportMemComparableEncoding() == false
+    virtual void deserializeMemComparable(IColumn & column, ReadBuffer & istr) const;
+
     static String getFileNameForStream(const NameAndTypePair & column, const SubstreamPath & path);
     static String getFileNameForStream(const String & name_in_storage, const SubstreamPath & path);
 

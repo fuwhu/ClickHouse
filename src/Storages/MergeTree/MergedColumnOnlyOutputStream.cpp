@@ -37,14 +37,18 @@ MergedColumnOnlyOutputStream::MergedColumnOnlyOutputStream(
         storage_settings,
         data_part->index_granularity_info.mark_type.adaptive,
         /*rewrite_primary_key=*/ false,
+        /*rewrite_unique_key=*/ false,
         save_marks_in_cache,
         save_primary_index_in_memory,
         /*blocks_are_granules_size=*/ false);
 
     writer = createMergeTreeDataPartWriter(
         data_part->getType(),
-        data_part->name, data_part->storage.getLogName(), data_part->getSerializations(),
-        data_part_storage, data_part->index_granularity_info,
+        data_part->name,
+        data_part->storage.getLogName(),
+        data_part->getSerializations(),
+        data_part_storage,
+        data_part->index_granularity_info,
         storage_settings,
         columns_list_,
         data_part->getColumnPositions(),
@@ -55,7 +59,8 @@ MergedColumnOnlyOutputStream::MergedColumnOnlyOutputStream(
         data_part->getMarksFileExtension(),
         default_codec,
         writer_settings,
-        std::move(index_granularity_ptr));
+        std::move(index_granularity_ptr),
+        data_part->storage.merging_params);
 
     auto * writer_on_disk = dynamic_cast<MergeTreeDataPartWriterOnDisk *>(writer.get());
     if (!writer_on_disk)

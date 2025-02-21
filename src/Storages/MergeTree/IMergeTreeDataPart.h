@@ -25,6 +25,9 @@
 #include <Storages/ColumnsDescription.h>
 #include <Interpreters/TransactionVersionMetadata.h>
 #include <DataTypes/Serializations/SerializationInfo.h>
+#include <Storages/MergeTree/IPartMetadataManager.h>
+#include <Storages/MergeTree/MergeTreeRowMapping.h>
+#include <Storages/MergeTree/UniqueMergeTreeIndexCommon.h>
 
 namespace zkutil
 {
@@ -66,6 +69,9 @@ enum class DataPartRemovalState : uint8_t
     REMOVE_ROLLED_BACK,
     REMOVE_RETRY,
 };
+
+using MergeTreeDataPartPtr = std::shared_ptr<const IMergeTreeDataPart>;
+using MergeTreeMutableDataPartPtr = std::shared_ptr<IMergeTreeDataPart>;
 
 /// Description of the data part.
 class IMergeTreeDataPart : public std::enable_shared_from_this<IMergeTreeDataPart>, public DataPartStorageHolder
@@ -249,6 +255,8 @@ public:
 
     size_t rows_count = 0;
 
+    size_t effective_rows_count = 0;
+
     /// Existing rows count (excluding lightweight deleted rows)
     std::optional<size_t> existing_rows_count;
 
@@ -333,6 +341,65 @@ public:
     void assertState(const std::initializer_list<MergeTreeDataPartState> & affordable_states) const;
 
     MergeTreePartition partition;
+
+    enum class MergeUpdateStatus
+    {
+        NORMAL,     /// Not being merged and not being updated and not being moved.
+        MERGING,    /// Being merged.
+        UPDATING,   /// Being updated.
+        MOVING      /// Being moved.
+    };
+
+    mutable std::atomic<MergeUpdateStatus> merge_update_status{MergeUpdateStatus::NORMAL};
+
+    std::string_view getMergeUpdateStatusName() const
+    {
+        switch (merge_update_status.load())
+        {
+            case MergeUpdateStatus::NORMAL:
+                return "NORMAL";
+            case MergeUpdateStatus::MERGING:
+                return "MERGING";
+            case MergeUpdateStatus::UPDATING:
+                return "UPDATING";
+            case MergeUpdateStatus::MOVING:
+                return "MOVING";
+        }
+
+        return "UNKNOWN";
+    }
+
+    enum class CommitType
+    {
+        NORMAL_INSERT,
+        EXECUTE_MERGE,    /// triggered by current replica merge.
+        MERGE_BY_FETCH,   /// merge part by fetch part.
+        EXECUTE_MOVE      /// triggered by current replica move.
+    };
+
+    mutable CommitType commit_type{CommitType::NORMAL_INSERT};
+
+    std::string_view getCommitTypeName() const
+    {
+        switch (commit_type)
+        {
+            case CommitType::NORMAL_INSERT:
+                return "NORMAL_INSERT";
+            case CommitType::EXECUTE_MERGE:
+                return "EXECUTE_MERGE";
+            case CommitType::MERGE_BY_FETCH:
+                return "MERGE_BY_FETCH";
+            case CommitType::EXECUTE_MOVE:
+                return "EXECUTE_MOVE";
+        }
+
+        return "UNKNOWN";
+    }
+
+    /// for merge result part, store the source parts from which current part is merged.
+    std::vector<MergeTreeDataPartPtr> merge_source_parts;
+    /// for move result part, store the source part from which current part is moved.
+    MergeTreeDataPartPtr move_source_part;
 
     /// Amount of rows between marks
     /// As index always loaded into memory
@@ -425,6 +492,9 @@ public:
     /// Makes checks and move part to new directory
     /// Changes only relative_dir_name, you need to update other metadata (name, is_temp) explicitly
     virtual void renameTo(const String & new_relative_path, bool remove_new_dir_if_exists);
+
+    /// move part uniq tmp file to new directory for unique engine
+    void renameUniqueTempDir(const String & new_relative_path, bool remove_new_dir_if_exists) const;
 
     /// Makes clone of a part in detached/ directory via hard links
     virtual DataPartStoragePtr makeCloneInDetached(const String & prefix, const StorageMetadataPtr & metadata_snapshot,
@@ -540,6 +610,10 @@ public:
     /// Required for distinguish different copies of the same part on remote FS.
     String getUniqueId() const;
 
+    /// Load rows count for this part from disk (for the newer storage format version).
+    /// For the older format version calculates rows count from the size of a column with a fixed size.
+    void loadRowsCount();
+
     /// Ensures that creation_tid was correctly set after part creation.
     void assertHasVersionMetadata(MergeTreeTransaction * txn) const;
 
@@ -591,6 +665,48 @@ public:
     /// Read a file associated to a part
     std::unique_ptr<ReadBuffer> readFile(const String & file_name) const;
     std::unique_ptr<ReadBuffer> readFileIfExists(const String & file_name) const;
+
+    void setUniqueKeyIndex(const UniqueKeyIndexPtr & unique_key_index_) { unique_key_index = unique_key_index_; }
+
+    void setUniqueKeyBucketIndex(const UniqueKeyBucketIndexPtr & unique_key_bucket_index_)
+    {
+        unique_key_bucket_index = unique_key_bucket_index_;
+    }
+
+    void clearUniqueKeyIndex() { unique_key_index = nullptr; }
+
+    void setUniqueDeleteBitmap(const UniqueDeleteBitmapPtr & unique_delete_bitmap_)
+    {
+        std::unique_lock<std::shared_mutex> lock(unique_delete_bitmap_rw_lock);
+        unique_delete_bitmap = unique_delete_bitmap_;
+    }
+
+    void setUniqueKeyMinMaxIndex(const UniqueKeyMinMaxIndexPtr & unique_key_minmax_index_)
+    {
+        unique_key_minmax_index = unique_key_minmax_index_;
+    }
+
+    UniqueKeyIndexPtr getUniqueKeyIndex(
+        bool keep_loaded_in_memory = false,
+        LoadingBucketPoolPtr loading_bucket_pool = nullptr,
+        BucketIndexRangePtr bucket_range = nullptr,
+        bool use_meta_cache = false);
+
+    UniqueKeyBucketIndexPtr getUniqueKeyBucketIndex() const { return unique_key_bucket_index; }
+
+    UniqueDeleteBitmapPtr getUniqueDeleteBitmap() const
+    {
+        std::shared_lock<std::shared_mutex> lock(unique_delete_bitmap_rw_lock);
+        return unique_delete_bitmap;
+    }
+
+    UniqueKeyMinMaxIndexPtr getUniqueKeyMinMaxIndex() const { return unique_key_minmax_index; }
+
+    static UniqueKeyIndexPtr createUniqueIndex(size_t unique_key_index_type);
+
+    static UniqueDeleteBitmapPtr createUniqueDeleteBitmap(size_t unique_delete_bitmap_type);
+
+    UniqueKeyIndexPtr loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool = nullptr, BucketIndexRangePtr bucket_range = nullptr);
 
     struct HashCollisionMap : std::unordered_map<String, String>
     {
@@ -679,6 +795,14 @@ protected:
     /// Used only in Compact parts.
     ColumnsSubstreams columns_substreams;
 
+    /// Data for uniq engine.
+    mutable std::shared_mutex unique_delete_bitmap_rw_lock;
+
+    UniqueKeyIndexPtr unique_key_index;
+    UniqueKeyBucketIndexPtr unique_key_bucket_index;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
+
     /// Map for Hash collision of file name conversion
     std::shared_ptr<HashCollisionMap> hash_collision_map;
 
@@ -748,6 +872,12 @@ private:
     /// Reads columns substreams from columns_substreams.txt (only in Compact parts).
     void loadColumnsSubstreams();
 
+    void loadUniqueKeyBucketIndex();
+
+    void loadUniqueDeleteBitmap();
+
+    void loadUniqueKeyMinMaxIndex();
+
     void loadHashCollisionMap();
 
     /// Loads marks index granularity into memory
@@ -759,10 +889,6 @@ private:
     /// Optimize index. Drop useless columns from suffix of primary key.
     template <typename Columns>
     void optimizeIndexColumns(size_t marks_count, Columns & index_columns) const;
-
-    /// Load rows count for this part from disk (for the newer storage format version).
-    /// For the older format version calculates rows count from the size of a column with a fixed size.
-    void loadRowsCount();
 
     /// Load existing rows count from _row_exists column
     /// if load_existing_rows_count_for_old_parts and exclude_deleted_rows_for_part_size_in_merge are both enabled.
@@ -806,9 +932,6 @@ private:
     /// If it's true then data related to this part is cleared from mark and index caches.
     mutable std::atomic_bool cleared_data_in_caches = false;
 };
-
-using MergeTreeDataPartPtr = std::shared_ptr<const IMergeTreeDataPart>;
-using MergeTreeMutableDataPartPtr = std::shared_ptr<IMergeTreeDataPart>;
 
 bool isCompactPart(const MergeTreeDataPartPtr & data_part);
 bool isWidePart(const MergeTreeDataPartPtr & data_part);

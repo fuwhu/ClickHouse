@@ -544,6 +544,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     ParserKeyword s_partition_by(Keyword::PARTITION_BY);
     ParserKeyword s_primary_key(Keyword::PRIMARY_KEY);
     ParserKeyword s_order_by(Keyword::ORDER_BY);
+    ParserKeyword s_unique_key(Keyword::UNIQUE_KEY);
     ParserKeyword s_sample_by(Keyword::SAMPLE_BY);
     ParserKeyword s_ttl(Keyword::TTL);
     ParserKeyword s_settings(Keyword::SETTINGS);
@@ -559,6 +560,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     ASTPtr partition_by;
     ASTPtr primary_key;
     ASTPtr order_by;
+    ASTPtr unique_key;
     ASTPtr sample_by;
     ASTPtr ttl_table;
     ASTPtr settings;
@@ -605,6 +607,14 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
                 continue;
             }
             return false;
+        }
+
+        if (!unique_key && s_unique_key.ignore(pos, expected))
+        {
+            if (expression_p.parse(pos, unique_key, expected))
+                continue;
+            else
+                return false;
         }
 
         if (!sample_by && s_sample_by.ignore(pos, expected))
@@ -663,6 +673,7 @@ bool ParserStorage::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     storage->set(storage->partition_by, partition_by);
     storage->set(storage->primary_key, primary_key);
     storage->set(storage->order_by, order_by);
+    storage->set(storage->unique_key, unique_key);
     storage->set(storage->sample_by, sample_by);
     storage->set(storage->ttl_table, ttl_table);
     storage->set(storage->settings, settings);
@@ -1321,6 +1332,7 @@ bool ParserTableOverrideDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
     ParserKeyword s_partition_by(Keyword::PARTITION_BY);
     ParserKeyword s_primary_key(Keyword::PRIMARY_KEY);
     ParserKeyword s_order_by(Keyword::ORDER_BY);
+    ParserKeyword s_unique_key(Keyword::UNIQUE_KEY);
     ParserKeyword s_sample_by(Keyword::SAMPLE_BY);
     ParserKeyword s_ttl(Keyword::TTL);
     ASTPtr table_name;
@@ -1328,6 +1340,7 @@ bool ParserTableOverrideDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
     ASTPtr partition_by;
     ASTPtr primary_key;
     ASTPtr order_by;
+    ASTPtr unique_key;
     ASTPtr sample_by;
     ASTPtr ttl_table;
 
@@ -1375,6 +1388,14 @@ bool ParserTableOverrideDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
             return false;
         }
 
+        if (!unique_key && s_unique_key.ignore(pos, expected))
+        {
+            if (expression_p.parse(pos, unique_key, expected))
+                continue;
+            else
+                return false;
+        }
+
         if (!sample_by && s_sample_by.ignore(pos, expected))
         {
             if (expression_p.parse(pos, sample_by, expected))
@@ -1399,6 +1420,7 @@ bool ParserTableOverrideDeclaration::parseImpl(Pos & pos, ASTPtr & node, Expecte
     storage->set(storage->partition_by, partition_by);
     storage->set(storage->primary_key, primary_key);
     storage->set(storage->order_by, order_by);
+    storage->set(storage->unique_key, unique_key);
     storage->set(storage->sample_by, sample_by);
     storage->set(storage->ttl_table, ttl_table);
 

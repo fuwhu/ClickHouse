@@ -35,6 +35,7 @@
 #include <Poco/Timestamp.h>
 #include <Common/threadPoolCallbackRunner.h>
 #include <Storages/MergeTree/DataPartsReceive.h>
+#include <Storages/MergeTree/UniqueEngineDataWriter.h>
 
 #include <boost/multi_index_container.hpp>
 #include <boost/multi_index/ordered_index.hpp>
@@ -254,6 +255,27 @@ public:
         }
     };
 
+    class UniqueEnginePartitionMutexes : public CacheBase<String, std::mutex>
+    {
+    private:
+        using Base = CacheBase<String, std::mutex>;
+
+    public:
+        explicit UniqueEnginePartitionMutexes(size_t max_size) : Base(max_size) { }
+    };
+
+    using UniqueEngineDataWriterPtr = std::shared_ptr<UniqueEngineDataWriter>;
+    using UniqueEngineDataWriters = std::map<String, UniqueEngineDataWriterPtr>;
+    using UniqueEngineTableMutexPtr = std::shared_ptr<std::mutex>;
+    using UniqueEnginePartitionMutexesPtr = std::shared_ptr<UniqueEnginePartitionMutexes>;
+    using UniqueEngineWriteLock = std::unique_lock<std::mutex>;
+
+    /// Lock for writing data to unique engine table, including merged data part.
+    UniqueEngineTableMutexPtr unique_engine_table_mutex;
+    UniqueEnginePartitionMutexesPtr unique_engine_partition_mutexes;
+    std::function<std::shared_ptr<std::mutex>()> load_partition_mutex_func = []() { return std::make_shared<std::mutex>(); };
+    UniqueEngineWriteLock lockUniqueEngineForWrite(const String & partition_id) const;
+
     using DataParts = std::set<DataPartPtr, LessDataPart>;
     using MutableDataParts = std::set<MutableDataPartPtr, LessDataPart>;
     using DataPartsVector = std::vector<DataPartPtr>;
@@ -265,6 +287,9 @@ public:
 
     MergeTreeDataPartFormat choosePartFormat(size_t bytes_uncompressed, size_t rows_count) const;
     MergeTreeDataPartBuilder getDataPartBuilder(const String & name, const VolumePtr & volume, const String & part_dir, const ReadSettings & read_settings_) const;
+
+    bool changePartMergeUpdateStatus(
+        DataPartPtr part, IMergeTreeDataPart::MergeUpdateStatus from, IMergeTreeDataPart::MergeUpdateStatus to) const;
 
     /// Auxiliary object to add a set of parts into the working set in two steps:
     /// * First, as PreActive parts (the parts are ready, but not yet in the active set).
@@ -283,7 +308,9 @@ public:
         /// bound, while data parts lock is the bottleneck)
         void renameParts();
 
-        void addPart(MutableDataPartPtr & part, bool need_rename);
+        // void addPart(MutableDataPartPtr & part, bool need_rename);
+
+        void enrollDataPart(MutableDataPartPtr & part, bool need_rename);
 
         void rollback(DataPartsLock * lock = nullptr);
 
@@ -312,11 +339,14 @@ public:
     private:
         friend class MergeTreeData;
 
+        void prepareForUniqueEngineWrite(DataPartsLock * lock = nullptr);
+
         MergeTreeData & data;
         MergeTreeTransaction * txn;
 
         MutableDataParts precommitted_parts;
         MutableDataParts precommitted_parts_need_rename;
+        UniqueEngineDataWriters unique_engine_data_writers;
     };
 
     using TransactionUniquePtr = std::unique_ptr<Transaction>;
@@ -369,6 +399,7 @@ public:
             Replacing           = 5,
             Graphite            = 6,
             VersionedCollapsing = 7,
+            Unique              = 8,
         };
 
         Mode mode;
@@ -1091,6 +1122,8 @@ public:
     ExpressionActionsPtr
     getSortingKeyAndSkipIndicesExpression(const StorageMetadataPtr & metadata_snapshot, const MergeTreeIndices & indices) const;
 
+    ExpressionActionsPtr getUniqueKeyExpression(const StorageMetadataPtr & metadata_snapshot) const;
+
     /// Get compression codec for part according to TTL rules and <compression>
     /// section from config.xml.
     CompressionCodecPtr getCompressionCodecForPart(size_t part_size_compressed, const IMergeTreeDataPart::TTLInfos & ttl_infos, time_t current_time) const;
@@ -1416,6 +1449,8 @@ protected:
         ContextPtr local_context = nullptr);
 
     void checkPartitionKeyAndInitMinMax(const KeyDescription & new_partition_key);
+
+    void checkUniqueEngineSettings(const MergeTreeSettings & settings) const;
 
     void checkTTLExpressions(const StorageInMemoryMetadata & new_metadata, const StorageInMemoryMetadata & old_metadata) const;
 

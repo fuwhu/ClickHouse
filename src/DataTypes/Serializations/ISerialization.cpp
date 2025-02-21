@@ -393,6 +393,16 @@ void ISerialization::serializeTextRaw(const IColumn & column, size_t row_num, Wr
     serializeText(column, row_num, ostr, settings);
 }
 
+void ISerialization::serializeMemComparable(const IColumn &, size_t, WriteBuffer &) const
+{
+    throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Serialization type doesn't support mem-comparable encoding");
+}
+
+void ISerialization::deserializeMemComparable(IColumn &, ReadBuffer &) const
+{
+    throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Serialization type doesn't support mem-comparable encoding");
+}
+
 size_t ISerialization::getArrayLevel(const SubstreamPath & path)
 {
     size_t level = 0;

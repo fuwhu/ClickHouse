@@ -92,4 +92,14 @@ void FutureMergedMutatedPart::updatePath(const MergeTreeData & storage, const IR
     path += "/";
 }
 
+void FutureMergedMutatedPart::setUniqueDeleteBitmaps()
+{
+    if (!parts.empty())
+    {
+        for (const auto & part_item : parts)
+        {
+            unique_delete_bitmaps.emplace_back(part_item->getUniqueDeleteBitmap());
+        }
+    }
+}
 }

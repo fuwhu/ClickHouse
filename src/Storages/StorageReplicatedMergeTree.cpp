@@ -2515,6 +2515,13 @@ bool StorageReplicatedMergeTree::executeFetch(LogEntry & entry, bool need_to_che
             if (!entry.actual_new_part_name.empty())
                 LOG_DEBUG(log, "Will fetch part {} instead of {}", entry.actual_new_part_name, entry.new_part_name);
 
+            bool fetch_merged = false;
+            if (merging_params.mode == MergeTreeData::MergingParams::Unique && replica_name != entry.source_replica
+                && (entry.type == LogEntry::MERGE_PARTS
+                    || (entry.type == LogEntry::GET_PART && !entry.actual_new_part_name.empty()
+                        && entry.actual_new_part_name != entry.new_part_name)))
+                fetch_merged = true;
+
             String source_replica_path = fs::path(zookeeper_path) / "replicas" / replica;
             if (!fetchPart(part_name,
                 metadata_snapshot,
@@ -2523,7 +2530,8 @@ bool StorageReplicatedMergeTree::executeFetch(LogEntry & entry, bool need_to_che
                 /* to_detached= */ false,
                 entry.quorum,
                 /* zookeeper_ */ nullptr,
-                /* try_fetch_shared= */ true))
+                /* try_fetch_shared= */ true,
+                fetch_merged))
             {
                 return false;
             }
@@ -4024,6 +4032,7 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
         CannotSelect,
     };
 
+    MergeTreeData::DataPartsVector merging_parts;
     auto try_assign_merge = [&]() -> AttemptStatus
     {
         /// We must select parts for merge under merge_selecting_mutex because other threads
@@ -4115,6 +4124,9 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
                     return AttemptStatus::NeedRetry;
                 }
 
+                if (merging_params.mode == MergeTreeData::MergingParams::Unique)
+                    merging_parts.insert(merging_parts.end(), future_merged_part->parts.begin(), future_merged_part->parts.end());
+
                 bool cleanup = future_merged_part->final
                     && (*storage_settings_ptr)[MergeTreeSetting::allow_experimental_replacing_merge_with_cleanup]
                     && (*storage_settings_ptr)[MergeTreeSetting::enable_replacing_merge_with_cleanup_for_min_age_to_force_merge]
@@ -4199,6 +4211,13 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
         tryLogCurrentException(log, __PRETTY_FUNCTION__);
     }
 
+    /// rollback merge_update_status of part
+    if (!merging_parts.empty() && create_result != CreateMergeEntryResult::Ok)
+    {
+        for (const auto & merging_part : merging_parts)
+            changePartMergeUpdateStatus(
+                merging_part, IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
+    }
 
     Float32 new_sleep_ms = merge_selecting_sleep_ms;
     if (result == AttemptStatus::EntryCreated || result == AttemptStatus::NeedRetry)
@@ -5067,7 +5086,8 @@ bool StorageReplicatedMergeTree::fetchPart(
     bool to_detached,
     size_t quorum,
     zkutil::ZooKeeper::Ptr zookeeper_,
-    bool try_fetch_shared)
+    bool try_fetch_shared,
+    bool fetch_merged)
 {
     if (isStaticStorage())
         throw Exception(ErrorCodes::TABLE_IS_READ_ONLY, "Table is in readonly mode due to static storage");
@@ -5257,6 +5277,11 @@ bool StorageReplicatedMergeTree::fetchPart(
         if (!to_detached)
         {
             Transaction transaction(*this, NO_TRANSACTION_RAW);
+
+            /// Fetch merged data part of unique engine table from another replica.
+            if (merging_params.mode == MergeTreeData::MergingParams::Unique && fetch_merged)
+                part->commit_type = IMergeTreeDataPart::CommitType::MERGE_BY_FETCH;
+
             renameTempPartAndReplace(part, transaction, /*rename_in_transaction=*/ true);
             transaction.renameParts();
 
@@ -5934,6 +5959,17 @@ std::optional<UInt64> StorageReplicatedMergeTree::totalRows(ContextPtr query_con
     const auto & settings = query_context->getSettingsRef();
     UInt64 res = 0;
     foreachActiveParts([&res](auto & part) { res += part->rows_count; }, settings[Setting::select_sequential_consistency]);
+    return res;
+}
+
+std::optional<UInt64> StorageReplicatedMergeTree::totalEffectiveRows(ContextPtr query_context) const
+{
+    if (merging_params.mode != MergeTreeData::MergingParams::Unique)
+        return totalRows(query_context);
+
+    const auto & settings = query_context->getSettingsRef();
+    UInt64 res = 0;
+    foreachActiveParts([&res](auto & part) { res += part->effective_rows_count; }, settings[Setting::select_sequential_consistency]);
     return res;
 }
 

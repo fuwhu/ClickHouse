@@ -399,6 +399,15 @@
     M(StatelessWorkerThreadsActive, "Number of threads in the stateless worker thread pool running a task.") \
     M(StatelessWorkerThreadsScheduled, "Number of queued or active jobs in the stateless worker thread pool.") \
     M(PartReceive, "Number of data parts being received.") \
+    \
+    M(UniqueKeyUpdateThreads, "Number of threads doing unique key updating") \
+    M(UniqueKeyUpdateThreadsActive, "Number of threads doing unique key updating") \
+    M(UniqueKeyUpdateThreadsScheduled, "Number of threads doing unique key updating") \
+    M(UniqueKeyBucketLoadThreads, "Number of threads doing unique key bucket loading") \
+    M(UniqueKeyBucketLoadThreadsActive, "Number of threads doing unique key bucket loading") \
+    M(UniqueKeyBucketLoadThreadsScheduled, "Number of threads doing unique key updating") \
+    M(BackgroundUniqueEngineUpdateTask, "Number of active tasks updating unique engine data parts.") \
+    M(BackgroundUniqueEngineLoadTask, "Number of active tasks loading unique key buckets of unique engine.") \
 
 #ifdef APPLY_FOR_EXTERNAL_METRICS
     #define APPLY_FOR_METRICS(M) APPLY_FOR_BUILTIN_METRICS(M) APPLY_FOR_EXTERNAL_METRICS(M)

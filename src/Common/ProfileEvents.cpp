@@ -1029,6 +1029,9 @@ The server successfully detected this situation and will download merged part fr
     \
     M(RemoteQueryTimeoutCount, "Number of timeout childern queries in distributed query") \
     M(RemoteTotalLeafQueryCount, "Number of total childern queries in distributed query") \
+    \
+    M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache") \
+    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely") \
 
 
 #ifdef APPLY_FOR_EXTERNAL_EVENTS

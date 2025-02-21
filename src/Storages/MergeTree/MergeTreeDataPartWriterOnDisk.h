@@ -124,7 +124,8 @@ public:
         const String & marks_file_extension,
         const CompressionCodecPtr & default_codec,
         const MergeTreeWriterSettings & settings,
-        MergeTreeIndexGranularityPtr index_granularity_);
+        MergeTreeIndexGranularityPtr index_granularity_,
+        const MergeTreeData::MergingParams & merging_params_);
 
     void setWrittenOffsetColumns(WrittenOffsetColumns * written_offset_columns_)
     {
@@ -136,6 +137,8 @@ public:
 
     const Block & getColumnsSample() const override { return block_sample; }
     const ColumnsSubstreams & getColumnsSubstreams() const override { return columns_substreams; }
+
+    std::optional<UniqueEngineData> getUniqueEngineData() const override;
 
 protected:
      /// Count index_granularity for block and store in `index_granularity`
@@ -150,6 +153,9 @@ protected:
 
     void calculateAndSerializeStatistics(const Block & stats_block);
 
+    /// Update and write unique map , unique index, deleted bitmap to disk
+    void calculateAndSerializeUniqueData(const Block & unique_key_version_block, const Granules & granules_to_write);
+
     /// Finishes primary index serialization: write final primary index row (if required) and compute checksums
     void fillPrimaryIndexChecksums(MergeTreeDataPartChecksums & checksums);
     void finishPrimaryIndexSerialization(bool sync);
@@ -159,6 +165,10 @@ protected:
 
     void fillStatisticsChecksums(MergeTreeDataPartChecksums & checksums);
     void finishStatisticsSerialization(bool sync);
+
+    /// Finishes unique data serialization: write all accumulated data to disk and compute checksums
+    void fillUniqueDataChecksums(MergeTreeDataPartChecksums & checksums);
+    void finishUniqueDataSerialization(bool sync);
 
     /// Get global number of the current which we are writing (or going to start to write)
     size_t getCurrentMark() const { return current_mark; }
@@ -196,6 +206,21 @@ protected:
     std::unique_ptr<HashingWriteBuffer> index_source_hashing_stream;
     bool compress_primary_key;
 
+    const MergeTreeData::MergingParams merging_params;
+
+    UniqueKeyIndexPtr unique_key_index;
+    UniqueDeleteBitmapPtr unique_delete_bitmap;
+    UniqueKeyBucketIndexPtr unique_key_bucket_index;
+    UniqueKeyMinMaxIndexPtr unique_key_minmax_index;
+
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_index_hashing_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_bucket_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_bucket_index_hashing_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_key_minmax_index_file_stream;
+    std::unique_ptr<HashingWriteBuffer> unique_key_minmax_index_hashing_stream;
+    std::unique_ptr<WriteBufferFromFileBase> unique_delete_bitmap_file_stream;
+
     /// Last block with index columns.
     /// It's written to index file in the `writeSuffixAndFinalizePart` method.
     Block last_index_block;
@@ -208,6 +233,9 @@ protected:
 
     /// Data is already written up to this mark.
     size_t current_mark = 0;
+
+    /// Unique engine
+    size_t rows_count = 0;
 
     GinIndexStoreFactory::GinIndexStores gin_index_stores;
 
@@ -222,6 +250,7 @@ private:
     void initSkipIndices();
     void initPrimaryIndex();
     void initStatistics();
+    void initUniqueIndex();
 
     virtual void fillIndexGranularity(size_t index_granularity_for_block, size_t rows_in_block) = 0;
     void calculateAndSerializePrimaryIndexRow(const Block & index_block, size_t row);
@@ -239,6 +268,26 @@ private:
     ExecutionStatistics execution_stats;
 
     LoggerPtr log;
+
+    /** ------------------ Unique Engine Only --------------------- **/
+
+    /// If the part contains only one block (normal insert case), we generate the key index file
+    /// directly from the buffered block, avoiding the overhead of "tmp_rocksdb_index_writer".
+    /// If the part contains more than one blocks (merge case), we only store first block into the buffered block.
+    Block buffered_unique_block;
+
+    /// If the part contains more than one blocks (merge case) and unique key is not a prefix of sorting key, 
+    /// we first use "tmp_rocksdb_index_writer" to sort and persist index entries, 
+    /// then generate the key index file from "tmp_rocksdb_index_writer"
+    String tmp_rocksdb_index_dir;
+    std::unique_ptr<rocksdb::DB> tmp_rocksdb_index_writer;
+
+    /// If the part contains more than one blocks (merge case) and unique key is a prefix of sorting key, 
+    /// we store unique key directly into levelDB.
+    IndexFile::IndexFileWriterPtr leveldb_index_writer;
+
+    /// Write block to tmp_rocksdb_index_writer or leveldb_index_writer.
+    void writeToUniqueKeyIndex(Block & block);
 };
 
 }

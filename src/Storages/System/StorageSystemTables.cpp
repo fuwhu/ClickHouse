@@ -180,6 +180,9 @@ StorageSystemTables::StorageSystemTables(const StorageID & table_id_)
         {"total_rows", std::make_shared<DataTypeNullable>(std::make_shared<DataTypeUInt64>()),
             "Total number of rows, if it is possible to quickly determine exact number of rows in the table, otherwise NULL (including underlying Buffer table)."
         },
+        {"total_effective_rows", std::make_shared<DataTypeNullable>(std::make_shared<DataTypeUInt64>()),
+            "Total number of effective rows, if it is possible to quickly determine exact number of rows in the table, otherwise NULL (including underlying Buffer table)."
+        },
         {"total_bytes", std::make_shared<DataTypeNullable>(std::make_shared<DataTypeUInt64>()),
             "Total number of bytes, if it is possible to quickly determine exact number "
             "of bytes for the table on storage, otherwise NULL (does not includes any underlying storage). "
@@ -384,12 +387,12 @@ protected:
 
                         while (src_index < columns_mask.size())
                         {
-                            // total_rows
                             if (src_index == 14 && columns_mask[src_index])
                             {
                                 // parameterized view parameters
                                 fillParametralizedViewData(res_columns, table.second, res_index);
                             }
+                            // total_rows
                             else if (src_index == 20 && columns_mask[src_index])
                             {
                                 try
@@ -407,8 +410,26 @@ protected:
                                 }
                                 ++res_index;
                             }
-                            // total_bytes
+                            // total_effective_rows
                             else if (src_index == 21 && columns_mask[src_index])
+                            {
+                                try
+                                {
+                                    if (auto total_effective_rows = table.second->totalEffectiveRows(settings))
+                                        res_columns[res_index]->insert(*total_effective_rows);
+                                    else
+                                        res_columns[res_index]->insertDefault();
+                                }
+                                catch(const std::exception& e)
+                                {
+                                    /// Even if the method throws, it should not prevent querying system.tables.
+                                    tryLogCurrentException("StorageSystemTables");
+                                    res_columns[res_index]->insertDefault();
+                                }
+                                ++res_index;
+                            }
+                            // total_bytes
+                            else if (src_index == 22 && columns_mask[src_index])
                             {
                                 try
                                 {
@@ -421,7 +442,7 @@ protected:
                                 {
                                     /// Even if the method throws, it should not prevent querying system.tables.
                                     tryLogCurrentException("StorageSystemTables");
-                                    res_columns[res_index++]->insertDefault();
+                                    res_columns[res_index]->insertDefault();
                                 }
                                 ++res_index;
                             }
@@ -658,6 +679,25 @@ protected:
                             res_columns[res_index]->insertDefault();
                     }
                     catch (const Exception &)
+                    {
+                        /// Even if the method throws, it should not prevent querying system.tables.
+                        tryLogCurrentException("StorageSystemTables");
+                        res_columns[res_index]->insertDefault();
+                    }
+                    ++res_index;
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    try
+                    {
+                        auto total_effective_rows = table ? table->totalEffectiveRows(settings) : std::nullopt;
+                        if (total_effective_rows)
+                            res_columns[res_index]->insert(*total_effective_rows);
+                        else
+                            res_columns[res_index]->insertDefault();                        
+                    }
+                    catch(const Exception &)
                     {
                         /// Even if the method throws, it should not prevent querying system.tables.
                         tryLogCurrentException("StorageSystemTables");

@@ -1002,6 +1002,12 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::startReadingChain(size_t 
     if (!result.rows_per_granule.empty())
         result.adjustLastGranule();
 
+    if (merge_tree_reader->data_part_info_for_read->isUniqueEngineTable())
+    {
+        ColumnPtr part_offset_column = createPartOffsetColumn(result, leading_begin_part_offset, leading_end_part_offset);
+        result.unique_key_dedup_filter = getUniqueKeyDedupFilter(part_offset_column);
+    }
+
     fillVirtualColumns(result.columns, result, leading_begin_part_offset, leading_end_part_offset);
     result.num_rows = result.numReadRows();
 
@@ -1064,6 +1070,34 @@ ColumnPtr MergeTreeRangeReader::createPartOffsetColumn(ReadResult & result, UInt
     }
 
     return column;
+}
+
+FilterWithCachedCount MergeTreeRangeReader::getUniqueKeyDedupFilter(const ColumnPtr & part_offset_col)
+{
+    if (part_offset_col->empty())
+        return FilterWithCachedCount{};
+
+    auto delete_bitmap = merge_tree_reader->data_part_info_for_read->getUniqueDeleteBitmap();
+
+    /// No deletes
+    if (!delete_bitmap || !delete_bitmap->deleteRowsSize())
+        return FilterWithCachedCount{};
+
+    /// Create filter by delete bitmap and rows id
+    auto filter = ColumnUInt8::create(part_offset_col->size());
+    auto & data = filter->getData();
+
+    UInt8 * pos = data.data();
+    UInt8 * end = data.end();
+
+    const PaddedPODArray<UInt64> & part_offset_col_data = typeid_cast<const ColumnUInt64 *>(part_offset_col.get())->getData();
+    const UInt64 * rows_pos = part_offset_col_data.data();
+    const UInt64 * rows_end = part_offset_col_data.end();
+
+    while (pos < end && rows_pos < rows_end)
+        *pos++ = !delete_bitmap->isDeleted(*rows_pos++);
+
+    return FilterWithCachedCount(std::move(filter));
 }
 
 Columns MergeTreeRangeReader::continueReadingChain(ReadResult & result, size_t & num_rows)
@@ -1313,6 +1347,49 @@ static ColumnPtr combineFilters(ColumnPtr first, ColumnPtr second)
     return mut_first;
 }
 
+static ColumnPtr combineUniqueKeyDedupFilter(ColumnPtr first, ColumnPtr second)
+{
+    checkCombinedFiltersSize(first->size(), second->size());
+
+    ConstantFilterDescription firsrt_const_descr(*first);
+
+    if (firsrt_const_descr.always_true)
+        return second;
+
+    if (firsrt_const_descr.always_false)
+        return first;
+
+    ConstantFilterDescription second_const_descr(*second);
+
+    if (second_const_descr.always_true)
+        return first;
+
+    if (second_const_descr.always_false)
+        return second;
+
+    FilterDescription first_descr(*first);
+
+    MutableColumnPtr mut_first;
+    if (first_descr.data_holder)
+        mut_first = IColumn::mutate(std::move(first_descr.data_holder));
+    else
+        mut_first = IColumn::mutate(std::move(first));
+
+    auto & first_data = typeid_cast<ColumnUInt8 *>(mut_first.get())->getData();
+
+    FilterDescription second_descr(*second);
+    const auto * second_data = second_descr.data->data();
+
+    for (auto & val : first_data)
+    {
+        if (val)
+            val = *second_data;
+        ++second_data;
+    }
+
+    return mut_first;
+}
+
 void MergeTreeRangeReader::executeActionsBeforePrewhere(ReadResult & result, Columns & read_columns, const Block & previous_header, size_t num_read_rows) const
 {
     merge_tree_reader->fillVirtualColumns(read_columns, num_read_rows);
@@ -1356,8 +1433,15 @@ void MergeTreeRangeReader::executePrewhereActionsAndFilterColumns(ReadResult & r
 {
     result.checkInternalConsistency();
 
-    if (!prewhere_info)
+    if (!prewhere_info && !result.unique_key_dedup_filter.present())
         return;
+
+    /// neither prewhere nor row_level_filter exists in select query.
+    if (!prewhere_info)
+    {
+        result.applyFilter(result.unique_key_dedup_filter);
+        return;
+    }
 
     const auto & header = read_sample_block;
     size_t num_columns = header.columns();
@@ -1431,6 +1515,12 @@ void MergeTreeRangeReader::executePrewhereActionsAndFilterColumns(ReadResult & r
 
         if (prewhere_info->remove_filter_column)
             result.columns.erase(result.columns.begin() + filter_column_pos);
+
+        if (result.unique_key_dedup_filter.present())
+        {
+            current_step_filter = combineUniqueKeyDedupFilter(current_step_filter, result.unique_key_dedup_filter.getColumn());
+            result.unique_key_dedup_filter = FilterWithCachedCount{};
+        }
 
         FilterWithCachedCount current_filter(current_step_filter);
         result.optimize(current_filter, merge_tree_reader->canReadIncompleteGranules());

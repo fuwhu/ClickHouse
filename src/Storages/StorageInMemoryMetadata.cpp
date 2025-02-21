@@ -46,6 +46,7 @@ StorageInMemoryMetadata::StorageInMemoryMetadata(const StorageInMemoryMetadata &
     , partition_key(other.partition_key)
     , primary_key(other.primary_key)
     , sorting_key(other.sorting_key)
+    , unique_key(other.unique_key)
     , sampling_key(other.sampling_key)
     , column_ttls_by_name(other.column_ttls_by_name)
     , table_ttl(other.table_ttl)
@@ -75,6 +76,7 @@ StorageInMemoryMetadata & StorageInMemoryMetadata::operator=(const StorageInMemo
     partition_key = other.partition_key;
     primary_key = other.primary_key;
     sorting_key = other.sorting_key;
+    unique_key = other.unique_key;
     sampling_key = other.sampling_key;
     column_ttls_by_name = other.column_ttls_by_name;
     table_ttl = other.table_ttl;
@@ -536,9 +538,41 @@ std::vector<bool> StorageInMemoryMetadata::getSortingKeyReverseFlags() const
     return {};
 }
 
+const KeyDescription & StorageInMemoryMetadata::getUniqueKey() const
+{
+    return unique_key;
+}
+
+bool StorageInMemoryMetadata::hasUniqueKey() const
+{
+    return !unique_key.column_names.empty();
+}
+
 const KeyDescription & StorageInMemoryMetadata::getSamplingKey() const
 {
     return sampling_key;
+}
+
+bool StorageInMemoryMetadata::isUniqueKeyPrefixToSortKey() const
+{
+    if (!hasUniqueKey() || !(hasSortingKey()))
+        return false;
+
+    const auto & uk_cols = unique_key.column_names;
+    const auto & sk_cols = sorting_key.column_names;
+
+    if (uk_cols.size() <= sk_cols.size())
+    {
+        for (size_t i = 0; i < uk_cols.size(); i++)
+        {
+            if (uk_cols[i] != sk_cols[i])
+                return false;
+        }
+    }
+    else
+        return false;
+
+    return true;
 }
 
 bool StorageInMemoryMetadata::isSamplingKeyDefined() const

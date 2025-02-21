@@ -67,7 +67,8 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartCompactWriter(
     const String & marks_file_extension_,
     const CompressionCodecPtr & default_codec_,
     const MergeTreeWriterSettings & writer_settings,
-    MergeTreeIndexGranularityPtr computed_index_granularity)
+    MergeTreeIndexGranularityPtr computed_index_granularity,
+    const MergeTreeData::MergingParams & merging_params_)
 {
     NamesAndTypesList ordered_columns_list;
     std::copy_if(columns_list.begin(), columns_list.end(), std::back_inserter(ordered_columns_list),
@@ -81,7 +82,7 @@ MergeTreeDataPartWriterPtr createMergeTreeDataPartCompactWriter(
         data_part_name_, logger_name_, serializations_, data_part_storage_,
         index_granularity_info_, storage_settings_, ordered_columns_list, metadata_snapshot, virtual_columns,
         indices_to_recalc, stats_to_recalc_, marks_file_extension_,
-        default_codec_, writer_settings, std::move(computed_index_granularity));
+        default_codec_, writer_settings, std::move(computed_index_granularity), merging_params_);
 }
 
 

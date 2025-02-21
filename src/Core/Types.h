@@ -50,4 +50,15 @@ using Int256 = ::Int256;
 /// Not a data type in database, defined just for convenience.
 using Strings = std::vector<String>;
 using TypeIndexesSet = std::unordered_set<TypeIndex>;
+
+template <typename T> constexpr bool OverBigInt = false;
+template <> inline constexpr bool OverBigInt<Int128> = true;
+template <> inline constexpr bool OverBigInt<UInt128> = true;
+template <> inline constexpr bool OverBigInt<Int256> = true;
+template <> inline constexpr bool OverBigInt<UInt256> = true;
+
+template <typename T>
+constexpr bool IsNumberMemComparable = !OverBigInt<T>;
+template <> inline constexpr bool IsNumberMemComparable<Float32> = false;
+template <> inline constexpr bool IsNumberMemComparable<Float64> = false;
 }

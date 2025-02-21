@@ -340,6 +340,19 @@ std::optional<UInt64> StorageMergeTree::totalRows(ContextPtr) const
     return getTotalActiveSizeInRows();
 }
 
+std::optional<UInt64> StorageMergeTree::totalEffectiveRows(ContextPtr query_context) const
+{
+    if (merging_params.mode != MergeTreeData::MergingParams::Unique)
+        return totalRows(query_context);
+
+    UInt64 res = 0;
+    auto parts = getDataPartsVectorForInternalUsage();
+    for (const auto & part : parts)
+        res += part->effective_rows_count;
+
+    return res;
+}
+
 std::optional<UInt64> StorageMergeTree::totalRowsByPartitionPredicate(const ActionsDAG & filter_actions_dag, ContextPtr local_context) const
 {
     auto parts = getVisibleDataPartsVector(local_context);

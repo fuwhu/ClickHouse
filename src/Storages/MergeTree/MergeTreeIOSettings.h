@@ -69,6 +69,7 @@ struct MergeTreeWriterSettings
         const MergeTreeSettingsPtr & storage_settings,
         bool can_use_adaptive_granularity_,
         bool rewrite_primary_key_,
+        bool rewrite_unique_key_,
         bool save_marks_in_cache_,
         bool save_primary_index_in_memory_,
         bool blocks_are_granules_size_);
@@ -87,6 +88,7 @@ struct MergeTreeWriterSettings
     bool rewrite_primary_key;
     bool save_marks_in_cache;
     bool save_primary_index_in_memory;
+    bool rewrite_unique_key;
     bool blocks_are_granules_size;
     WriteSettings query_write_settings;
 

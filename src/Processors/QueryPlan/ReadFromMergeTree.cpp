@@ -1327,6 +1327,7 @@ static void addMergingFinal(
         switch (merging_params.mode)
         {
             case MergeTreeData::MergingParams::Ordinary:
+            case MergeTreeData::MergingParams::Unique:
                 return std::make_shared<MergingSortedTransform>(header, num_outputs,
                             sort_description, max_block_size_rows, /*max_block_size_bytes=*/0, SortingQueueStrategy::Batch);
 

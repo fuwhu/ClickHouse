@@ -283,6 +283,15 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::extractMergingAndGatheringColu
     if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing)
         key_columns.emplace(global_ctx->merging_params.sign_column);
 
+    /// Force unique key and version column for Unique mode
+    if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        const auto & unique_key_expr = global_ctx->metadata_snapshot->getUniqueKey().expression;
+        Names unique_key_columns_vec = unique_key_expr->getRequiredColumns();
+        std::copy(unique_key_columns_vec.cbegin(), unique_key_columns_vec.cend(), std::inserter(key_columns, key_columns.end()));
+        key_columns.emplace(ctx->merging_params.version_column);
+    }
+
     /// Force to merge at least one column in case of empty key
     if (key_columns.empty())
         key_columns.emplace(global_ctx->storage_columns.front().name);
@@ -464,6 +473,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
     extractMergingAndGatheringColumns();
 
+    global_ctx->new_data_part->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MERGE;
     global_ctx->new_data_part->uuid = global_ctx->future_part->uuid;
     global_ctx->new_data_part->partition.assign(global_ctx->future_part->getPartition());
     global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr;
@@ -500,8 +510,15 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
     SerializationInfoByName infos(global_ctx->storage_columns, info_settings);
     global_ctx->alter_conversions.reserve(global_ctx->future_part->parts.size());
 
+    size_t total_effective_rows_count = 0;
     for (const auto & part : global_ctx->future_part->parts)
     {
+        if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+        {
+            total_effective_rows_count += part->effective_rows_count;
+            global_ctx->new_data_part->merge_source_parts.emplace_back(part);
+        }
+
         global_ctx->new_data_part->ttl_infos.update(part->ttl_infos);
 
         if (global_ctx->metadata_snapshot->hasAnyTTL() && !part->checkAllTTLCalculated(global_ctx->metadata_snapshot))
@@ -527,6 +544,8 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
         global_ctx->alter_conversions.push_back(MergeTreeData::getAlterConversionsForPart(part, mutations_snapshot, global_ctx->context));
     }
+
+    global_ctx->new_data_part->rows_count = total_effective_rows_count;
 
     const auto & local_part_min_ttl = global_ctx->new_data_part->ttl_infos.part_min_ttl;
     if (global_ctx->metadata_snapshot->hasAnyTTL() && local_part_min_ttl && local_part_min_ttl <= global_ctx->time_of_merge)
@@ -714,6 +733,7 @@ MergeTask::StageRuntimeContextPtr MergeTask::ExecuteAndFinalizeHorizontalPart::g
 
     auto new_ctx = std::make_shared<VerticalMergeRuntimeContext>();
 
+    new_ctx->merging_params = std::move(ctx->merging_params);
     new_ctx->rows_sources_temporary_file = std::move(ctx->rows_sources_temporary_file);
     new_ctx->column_sizes = std::move(ctx->column_sizes);
     new_ctx->compression_codec = std::move(ctx->compression_codec);
@@ -1646,6 +1666,7 @@ public:
         switch (merging_params.mode)
         {
             case MergeTreeData::MergingParams::Ordinary:
+            case MergeTreeData::MergingParams::Unique:
                 merged_transform = std::make_shared<MergingSortedTransform>(
                     header,
                     input_streams_count,
@@ -1989,6 +2010,12 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream() const
         merge_parts_query_plan.addStep(std::move(calculate_indices_expression_step));
     }
 
+    if (global_ctx->metadata_snapshot->hasUniqueKey())
+    {
+        builder->addTransform(std::make_shared<ExpressionTransform>(
+            builder->getHeader(), global_ctx->data->getUniqueKeyExpression(global_ctx->metadata_snapshot)));
+    }
+
     if (!subqueries.empty())
         addCreatingSetsStep(merge_parts_query_plan, std::move(subqueries), global_ctx->context);
 
@@ -2050,7 +2077,8 @@ MergeAlgorithm MergeTask::ExecuteAndFinalizeHorizontalPart::chooseMergeAlgorithm
         global_ctx->merging_params.mode == MergeTreeData::MergingParams::Ordinary ||
         global_ctx->merging_params.mode == MergeTreeData::MergingParams::Collapsing ||
         global_ctx->merging_params.mode == MergeTreeData::MergingParams::Replacing ||
-        global_ctx->merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing;
+        global_ctx->merging_params.mode == MergeTreeData::MergingParams::VersionedCollapsing ||
+        global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique;
 
     bool enough_ordinary_cols = global_ctx->gathering_columns.size() >= (*merge_tree_settings)[MergeTreeSetting::vertical_merge_algorithm_min_columns_to_activate];
 
