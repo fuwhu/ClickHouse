@@ -95,6 +95,8 @@ private:
         QueryProcessingStage::Enum processed_stage,
         std::ostringstream& filter_expression_oss);
 
+    void checkPartitionKeyInFilter(SelectQueryInfo & query_info) const;
+
     IcebergCatalogConfig iceberg_config;
     mutable IcebergTableMetadata iceberg_metadata;
     ContextPtr context;
