@@ -438,6 +438,46 @@ NamesAndTypesList StorageIceberg::getVirtuals() const
     return NamesAndTypesList{{"_file", std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>())}};
 }
 
+void StorageIceberg::checkPartitionKeyInFilter(SelectQueryInfo & query_info) const
+{
+    auto & query = query_info.query->as<ASTSelectQuery &>();
+    const auto & metadata = getIcebergMetadata();        
+    auto partition_keys = metadata.partition_keys;
+    
+    if (partition_keys.empty()) 
+        return;
+
+    const auto & where = query.where();
+    const auto & prewhere = query.prewhere();
+    
+    if (!where && !prewhere)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, 
+            "Filter required on {}.{} for at least one partition column: {}", 
+            metadata.database, 
+            metadata.table,
+            metadata.partition_keys[0].name);
+
+    const String & where_name = where ? where->getColumnName() : "";
+    const String & prewhere_name = prewhere ? prewhere->getColumnName() : "";
+    
+    bool has_partition_condition = false;
+    std::for_each(partition_keys.begin(), partition_keys.end(), [&](IcebergTableMetadata::PartitionKey & partition_key)
+    {
+        if (where_name.find(partition_key.name) != std::string::npos 
+                || prewhere_name.find(partition_key.name) != std::string::npos)
+        {
+            has_partition_condition = true;
+            return;
+        }
+    });
+    if (!has_partition_condition)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, 
+                "Filter required on {}.{} for at least one partition column: {}", 
+                metadata.database, 
+                metadata.table,
+                metadata.partition_keys[0].name);
+}
+
 Pipe StorageIceberg::read(
     const Names & column_names,
     const StorageSnapshotPtr & storage_snapshot,
@@ -449,6 +489,8 @@ Pipe StorageIceberg::read(
 {
     Stopwatch watch;
     SCOPE_EXIT({ ProfileEvents::increment(ProfileEvents::IcebergAnalysisElapsedMicroseconds, watch.elapsedMicroseconds()); });
+
+    checkPartitionKeyInFilter(query_info);
 
     Names format_columns_names;
     bool need_file_column = false;
