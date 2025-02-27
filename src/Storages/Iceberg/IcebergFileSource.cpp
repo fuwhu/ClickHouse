@@ -936,7 +936,7 @@ Pipe IcebergFileSource::spreadSplitsAmongStreams(
     while (!files->empty())
     {
         IcebergFilePtr & file = files->back();
-        if (streams[stream_id].empty() || streams_splits[stream_id] + file->totalSplitsSize() <= avg_splits)
+        if (streams_splits[stream_id] + file->totalSplitsSize() <= avg_splits)
         {
             streams_splits[stream_id] += file->totalSplitsSize();
             streams[stream_id].emplace_back(std::move(file));
