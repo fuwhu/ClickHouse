@@ -988,8 +988,10 @@ Chunk NativeORCBlockInputFormat::generate()
         }
     };
 
-    fill_res(pre_res_columns);
+    /// First put the res_columns and then pre_res_column(do not change the positions), or the columns that have values will be override by default values
+    /// It happens when an expression filteration is placed in prewhere and it/its sub-expressions are used in final projection.
     fill_res(res_columns);
+    fill_res(pre_res_columns);
 
     return Chunk{std::move(columns), num_rows};
 }
