@@ -222,7 +222,7 @@ namespace
         return FileSystemKind::UNKNOWN;
     }
 
-    std::shared_ptr<IReadBufferFromRemote> getReadBufferForFile(const IcebergDataFile & data_file, [[maybe_unused]] const ContextPtr & context, FileCachePtr cache, size_t size)
+    std::shared_ptr<IReadBufferFromRemote> getReadBufferForFile(const IcebergDataFile & data_file, [[maybe_unused]] const ContextPtr & context, [[maybe_unused]] FileCachePtr cache, [[maybe_unused]] size_t size)
     {
         auto kind = getFileSystemKind(data_file.path);
         auto uri = Poco::URI(data_file.path);
