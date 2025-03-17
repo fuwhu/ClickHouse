@@ -448,7 +448,7 @@ void CachedReadBufferFromRemoteFS::predownload(FileSegmentPtr & file_segment)
         /// download from offset a'' < a', but return buffer from offset a'.
         LOG_TEST(log, "Bytes to predownload: {}, caller_id: {}", bytes_to_predownload, FileSegment::getCallerId());
 
-        assert(implementation_buffer->getFileOffsetOfBufferEnd() == file_segment->getDownloadOffset());
+        assert(implementation_buffer_reusable->getFileOffsetOfBufferEnd() == file_segment->getDownloadOffset());
         const auto & current_range = file_segment->range();
 
         while (true)

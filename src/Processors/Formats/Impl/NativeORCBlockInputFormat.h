@@ -71,7 +71,7 @@ Range buildRange(const orc::ColumnStatistics * col_stats);
 class ORCInputStream : public orc::InputStream
 {
 public:
-    static const uint64_t MAX_BUFFER_SIZE = 8 * 1024 * 1024; // TODO : make it configurable.
+    static inline const uint64_t MAX_BUFFER_SIZE = 8 * 1024 * 1024; // TODO : make it configurable.
     ORCInputStream(SeekableReadBuffer & in_, size_t file_size_);
 
     uint64_t getLength() const override;
