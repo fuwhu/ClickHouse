@@ -249,6 +249,7 @@ namespace
         Poco::Net::HTTPRequest request(Poco::Net::HTTPRequest::HTTP_POST, path, Poco::Net::HTTPRequest::HTTP_1_1);
         request.set("Content-Type", "application/json");
         request.set("Content-Length", std::to_string(data.size()));
+        request.set("Host", endpoint.substr(7));
 
         PooledHTTPSessionPtr session;
         Poco::Net::HTTPResponse response;
