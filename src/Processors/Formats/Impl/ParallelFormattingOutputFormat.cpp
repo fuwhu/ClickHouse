@@ -137,6 +137,15 @@ namespace DB
                         if (!http_response.has("X-ClickHouse-Total-Child-Query-Count"))
                             http_response.add("X-ClickHouse-Total-Child-Query-Count", std::to_string(context->getTotalChildQueryCount()));
                     }
+                    
+                    auto skip_unavailable_shards = context->getHasSkipedUnavialableShard();
+                    if (skip_unavailable_shards)
+                    {
+                        if(!http_response.has("X-ClickHouse-Has-Skiped-Unavailable-Shard"))
+                        {
+                            http_response.add("X-ClickHouse-Has-Skiped-Unavailable-Shard", std::to_string(context->getHasSkipedUnavialableShard()));
+                        }
+                    }
                 }
 
                 /// Do main work here.

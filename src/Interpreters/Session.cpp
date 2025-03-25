@@ -511,6 +511,7 @@ ContextMutablePtr Session::makeQueryContextImpl(const ClientInfo * client_info_t
 
     query_context->initRemoteQueryTimeoutCount();
     query_context->initTotalChildQueryCount();
+    query_context->initHasSkipedUnavialableShard();
 
     return query_context;
 }

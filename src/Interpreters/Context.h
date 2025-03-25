@@ -397,6 +397,8 @@ private:
 
     mutable IcebergCreateFilesMetricsPtr iceberg_create_files_metrics = nullptr;
 
+    mutable std::shared_ptr<bool> has_skiped_unavailable_shard = nullptr;
+
 public:
     // Top-level OpenTelemetry trace context for the query. Makes sense only for a query context.
     OpenTelemetryTraceContext query_trace_context;
@@ -1012,6 +1014,10 @@ public:
     IcebergDataStreamsMetricsPtr getIcebergDataStreamsMetrics() const;
     Int32 newIcebergDataStreamMetrics() const;
     void setIcebergFileSourceReadStartTime(Int32 metrics_index, Decimal64 time) const;
+
+    void initHasSkipedUnavialableShard() const;
+    void skipUnavialableShard() const;
+    bool getHasSkipedUnavialableShard() const;
     
     void updateIcebergFileMetrics(
         Int32 metrics_index,

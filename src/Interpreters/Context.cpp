@@ -3358,6 +3358,26 @@ void Context::setIcebergFileSourceReadStartTime(Int32 metrics_index, Decimal64 t
     }
 }
 
+void Context::initHasSkipedUnavialableShard() const
+{
+    auto lock = getLock();
+    if (has_skiped_unavailable_shard == nullptr)
+        has_skiped_unavailable_shard = std::make_shared<bool>(false);
+}
+
+void Context::skipUnavialableShard() const
+{
+    auto lock = getLock();
+    if (has_skiped_unavailable_shard != nullptr)
+        *has_skiped_unavailable_shard = true;
+}
+
+bool Context::getHasSkipedUnavialableShard() const
+{
+    auto lock = getLock();
+    return has_skiped_unavailable_shard ? *has_skiped_unavailable_shard : false;
+}
+
 void Context::setStreamAssignedFileCount(Int32 metrics_index, UInt32 assigned_file_cnt) const
 {
     auto lock = getLock();
