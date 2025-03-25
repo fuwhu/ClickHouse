@@ -225,7 +225,10 @@ void RemoteQueryExecutor::sendQuery(ClientInfo::QueryKind query_kind)
 
     const auto & settings = context->getSettingsRef();
     if (settings.skip_unavailable_shards && 0 == connections->size())
+    {
+        context->skipUnavialableShard();
         return;
+    }
 
     /// Query cannot be canceled in the middle of the send query,
     /// since there are multiple packets:
