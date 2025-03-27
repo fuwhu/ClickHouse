@@ -6,6 +6,7 @@
 #include "IcebergKeyCondition.h"
 #include "Interpreters/getHeaderForProcessingStage.h"
 #include "Storages/Iceberg/IcebergCommon.h"
+#include "base/types.h"
 
 #include <consistent_hashing.h>
 #include <DataTypes/DataTypeTuple.h>
@@ -572,19 +573,15 @@ Pipe StorageIceberg::read(
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not get needed iceberg files from context scalars");
         if (!scalars.contains("_iceberg_filters"))
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not get needed iceberg filters from context scalars");
+        if (!scalars.contains("_iceberg_files_sorting_status"))
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not get needed iceberg files sorting status from context scalars");
 
         std::vector<IcebergDataFile> data_files = unpack_files(scalars["_iceberg_files"]);
 
         IcebergExpression filter_expr;
         String filter_str = (*(scalars["_iceberg_filters"].getByName("iceberg_filters").column))[0].get<String>();
         filter_expr.deserialize(filter_str);
-        std::optional<bool> files_sorted = std::nullopt;
-        if (scalars.contains("_iceberg_files_sorted"))
-        {
-            LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "Received iceberg_files_sorted from initial query node.");
-            files_sorted = (*(scalars["_iceberg_files_sorted"].getByName("iceberg_files_sorted").column))[0].get<UInt8>();
-        } else
-            LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "Not received iceberg_files_sorted from initial query node.");
+        FilesSortingStatus files_sorting_status = static_cast<FilesSortingStatus>((*(scalars["_iceberg_files_sorting_status"].getByName("iceberg_files_sorting_status").column))[0].get<UInt8>());
 
         return readFromLocal(
             storage_snapshot,
@@ -598,7 +595,7 @@ Pipe StorageIceberg::read(
             num_streams,
             format_columns_names,
             need_file_column,
-            files_sorted);
+            files_sorting_status);
     }
 }
 
@@ -614,36 +611,34 @@ Pipe StorageIceberg::readFromLocal(
     unsigned num_streams,
     const Names & format_columns_names,
     bool need_file_column,
-    std::optional<bool> files_sorted)
+    FilesSortingStatus files_sorting_status)
 {
-    /// check if all files have the same sorting key, if not don't use RIO
-    if (files_sorted.has_value())
-    {
-        bool sorted = files_sorted.value();
-        if (!sorted)
-        {
-            LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "The files from initial query node are sorted, so disable the read-in-order optimzation.");
-            query_info.input_order_info = nullptr;
-        }
-    } else
+    /// Check if all files have the same sorting key with the table sorting key, if not, then disable the RIO.
+    if (files_sorting_status == FilesSortingStatus::UNKNOWN)
     {
         Int64 table_sorting_key_id = iceberg_metadata.order_id;
         for (const auto & file : data_files)
         {
             if (!file.sorting_key_id.has_value() || table_sorting_key_id != file.sorting_key_id.value())
             {
-                LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "the file {} has different sorting key id {}, but metadata has key id {}",
+                LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "the file {} has sorting key id {}, but metadata has key id {}",
                     file.path, file.sorting_key_id.has_value() ? file.sorting_key_id.value() : -1, table_sorting_key_id);
                 query_info.input_order_info = nullptr;
                 break;
             }
         }
+    } else if (files_sorting_status == FilesSortingStatus::NOT_SORTED)
+    {
+        LOG_DEBUG(&Poco::Logger::get("StorageIceberg"), "The files from initial query node are not sorted, so disable the read-in-order optimzation.");
+        query_info.input_order_info = nullptr;
     }
 
-    /// if no RIO, we don't need to unpack statistics
-    if (query_info.input_order_info && local_context->getClientInfo().query_kind != ClientInfo::QueryKind::INITIAL_QUERY)
+    /// We only unpack the statistics in case the RIO is applicable for non-initial query.
+    if (local_context->getClientInfo().query_kind != ClientInfo::QueryKind::INITIAL_QUERY
+        && query_info.input_order_info)
     {
         auto scalars = local_context->hasQueryContext() ? local_context->getQueryContext()->getScalars() : Scalars{};
+        // Note : the scalar '_iceberg_files_stats' must have already be set by initial node here.
         if (!scalars.contains("_iceberg_files_stats"))
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not get the iceberg files statitics from context scalars while the read-in-order is enabled.");
         unpack_stats(scalars["_iceberg_files_stats"], iceberg_metadata, data_files);
@@ -786,7 +781,7 @@ Pipe StorageIceberg::readFromLocal(
 std::shared_ptr<RemoteQueryExecutor> StorageIceberg::constructRemoteQueryExecutor(
         ContextPtr local_context,
         std::vector<IcebergDataFile>& files,
-        std::optional<bool> files_sorted,
+        FilesSortingStatus files_sorting_status,
         String query,
         ConnectionPoolWithFailoverPtr connection_pool,
         Block header,
@@ -796,10 +791,11 @@ std::shared_ptr<RemoteQueryExecutor> StorageIceberg::constructRemoteQueryExecuto
     auto scalars = local_context->hasQueryContext() ? local_context->getQueryContext()->getScalars() : Scalars{};
     scalars["_iceberg_filters"] = Block{{DataTypeString().createColumnConst(1, filter_expression_oss.str()), std::make_shared<DataTypeString>(), "iceberg_filters"}};
     scalars["_iceberg_files"] = pack_files(files);
-    if (!files_sorted.has_value() || files_sorted.value())
+    scalars["_iceberg_files_sorting_status"] = Block{{DataTypeUInt8().createColumnConst(1, static_cast<UInt8>(files_sorting_status)), std::make_shared<DataTypeUInt8>(), "iceberg_files_sorting_status"}};
+
+    // Send the scalar '_iceberg_files_stats' to remote node only when the table has sorting key and the files aren't known to be non-sorted.
+    if (!iceberg_metadata.sorting_keys.empty() && files_sorting_status != FilesSortingStatus::NOT_SORTED)
         scalars["_iceberg_files_stats"] = pack_stats(files, iceberg_metadata);
-    if (files_sorted.has_value())
-        scalars["_iceberg_files_sorted"] = Block{{DataTypeUInt8().createColumnConst(1, files_sorted.value()), std::make_shared<DataTypeUInt8>(), "iceberg_files_sorted"}};
 
     auto remote_query_executor = std::make_shared<RemoteQueryExecutor>(
         connection_pool,
@@ -865,13 +861,16 @@ Pipe StorageIceberg::readFromRemote(
     for (size_t i = 0, size = cluster->getShardsInfo().size(); i < size; ++i)
     {
         auto &files = files_per_shard[i];
-        // Do not separate the sorted and non-sorted files in case the input_order_info is null or the setting `separate_sorted_and_non_sorted_iceberg_file_processing` is false.
+
+        // Do not separate the sorted and non-sorted files in the cases below:
+        // 1. the input_order_info is null which means the RIO is applicable.
+        // 2. the setting `separate_sorted_and_non_sorted_iceberg_file_processing` is false.
         if (query_info.input_order_info == nullptr || !local_context->getSettingsRef().separate_sorted_and_non_sorted_iceberg_file_processing)
         {
             auto remote_query_executor = constructRemoteQueryExecutor(
                 local_context,
                 files,
-                std::nullopt,
+                FilesSortingStatus::UNKNOWN,
                 queryToString(new_query),
                 cluster->getShardsInfo()[i].pool,
                 source_block,
@@ -894,7 +893,7 @@ Pipe StorageIceberg::readFromRemote(
             auto remote_query_executor = constructRemoteQueryExecutor(
                 local_context,
                 sorted_files,
-                true,
+                FilesSortingStatus::SORTED,
                 queryToString(new_query),
                 cluster->getShardsInfo()[i].pool,
                 source_block,
@@ -907,7 +906,7 @@ Pipe StorageIceberg::readFromRemote(
             auto remote_query_executor = constructRemoteQueryExecutor(
                 local_context,
                 non_sorted_files,
-                false,
+                FilesSortingStatus::NOT_SORTED,
                 queryToString(new_query),
                 cluster->getShardsInfo()[i].pool,
                 source_block,

@@ -11,6 +11,13 @@ namespace DB
 class StorageIceberg final : public shared_ptr_helper<StorageIceberg>, public IStorage
 {
 public:
+    enum FilesSortingStatus
+    {
+        SORTED = 0,
+        NOT_SORTED = 1,
+        UNKNOWN = 2
+    };
+
     StorageIceberg(StorageID table_id, const IcebergCatalogConfig & iceberg_config_, ContextPtr context_);
 
     StorageIceberg(
@@ -70,7 +77,7 @@ private:
         unsigned /*num_streams*/,
         const Names & format_columns_names,
         bool need_file_column,
-        std::optional<bool> files_sorted = std::nullopt);
+        FilesSortingStatus files_sorting_status = FilesSortingStatus::UNKNOWN);
 
     Pipe readFromRemote(
         const StorageSnapshotPtr & storage_snapshot,
@@ -88,7 +95,7 @@ private:
     std::shared_ptr<RemoteQueryExecutor> constructRemoteQueryExecutor(
         ContextPtr local_context,
         std::vector<IcebergDataFile>& files,
-        std::optional<bool> files_sorted,
+        FilesSortingStatus files_sorting_status,
         String query,
         ConnectionPoolWithFailoverPtr connection_pool,
         Block header,
