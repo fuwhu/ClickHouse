@@ -4,7 +4,8 @@
   */
 
 /// It is only enabled in debug build (its intended use is for CI checks).
-#if !defined(NDEBUG)
+// jvm use a lot of non thread-safe functions.
+#if !defined(NDEBUG) && !defined (USE_LIBHDFS)
 
 #if defined(__clang__)
     #pragma clang diagnostic ignored "-Wincompatible-library-redeclaration"
