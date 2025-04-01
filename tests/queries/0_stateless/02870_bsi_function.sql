@@ -18,23 +18,31 @@ DROP TABLE IF EXISTS test_bsi_functions;
 SELECT '==========================';
 
 DROP TABLE IF EXISTS test_bsi_agg_functions;
-CREATE TABLE test_bsi_agg_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY tuple();
+CREATE TABLE test_bsi_agg_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY id;
 
 
 INSERT INTO test_bsi_agg_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
 (
-    select 1 as u_id, 2 as gmv
-    union all
-    select 3 as u_id, 3 as gmv
-    union all
-    select 2 as u_id, 10 as gmv
-);
+    SELECT * FROM
+    (
+        select 1 as u_id, 2 as gmv
+        union all
+        select 3 as u_id, 3 as gmv
+        union all
+        select 2 as u_id, 10 as gmv
+    )
+    ORDER BY u_id
+)
+;
 
 INSERT INTO test_bsi_agg_functions SELECT 2, bsi_build(u_id, gmv) AS bsi FROM
 (
-    select 1 as u_id, 2 as gmv
-    union all
-    select 2 as u_id, 10 as gmv
+    SELECT * FROM
+    (
+        select 1 as u_id, 2 as gmv
+        union all
+        select 2 as u_id, 10 as gmv
+    ) ORDER BY u_id
 );
 
 SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_agg_functions ORDER BY id;
@@ -47,25 +55,33 @@ DROP TABLE IF EXISTS test_bsi_agg_functions;
 SELECT '==========================';
 
 DROP TABLE IF EXISTS test_bsi_zero_metric_functions;
-CREATE TABLE test_bsi_zero_metric_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY tuple();
+CREATE TABLE test_bsi_zero_metric_functions (id UInt32, bsi BSI) ENGINE=MergeTree() ORDER BY id;
 
 
 INSERT INTO test_bsi_zero_metric_functions SELECT 1, bsi_build(u_id, gmv) AS bsi FROM
 (
-    select 1 as u_id, 0 as gmv
-    union all
-    select 3 as u_id, 0 as gmv
-    union all
-    select 2 as u_id, 0 as gmv
+    SELECT * FROM
+    (
+        select 1 as u_id, 0 as gmv
+        union all
+        select 3 as u_id, 0 as gmv
+        union all
+        select 2 as u_id, 0 as gmv
+    )
+    ORDER BY u_id
 );
 
 INSERT INTO test_bsi_zero_metric_functions SELECT 2, bsi_build(u_id, gmv) AS bsi FROM
 (
-    select 1 as u_id, 0 as gmv
-    union all
-    select 2 as u_id, 0 as gmv
-    union all
-    select 5 as u_id, 0 as gmv
+    SELECT * FROM
+    (
+        select 1 as u_id, 0 as gmv
+        union all
+        select 2 as u_id, 0 as gmv
+        union all
+        select 5 as u_id, 0 as gmv
+    )
+    ORDER BY u_id
 );
 
 SELECT id, arrayMap(x->bitmapToArray(x), bsi) FROM test_bsi_zero_metric_functions ORDER BY id;
