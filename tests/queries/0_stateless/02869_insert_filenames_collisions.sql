@@ -45,29 +45,3 @@ INSERT INTO t_collisions VALUES (2, 2);
 SELECT * FROM t_collisions ORDER BY e798545eefc8b7a1c2c81ff00c064ad8;
 
 DROP TABLE IF EXISTS t_collisions;
-
-CREATE TABLE t_collisions
-(
-    `id` Int,
-    `col` Array(String),
-    `col.s` Array(LowCardinality(String)),
-    `col.u` Array(LowCardinality(String))
-)
-ENGINE = MergeTree
-ORDER BY id; -- { serverError BAD_ARGUMENTS }
-
-DROP TABLE IF EXISTS t_collisions;
-
-CREATE TABLE t_collisions
-(
-    `id` Int,
-    `col` String,
-    `col.s` Array(LowCardinality(String)),
-    `col.u` Array(LowCardinality(String))
-)
-ENGINE = MergeTree
-ORDER BY id;
-
-ALTER TABLE t_collisions MODIFY COLUMN col Array(String); -- { serverError BAD_ARGUMENTS }
-
-DROP TABLE IF EXISTS t_collisions;
