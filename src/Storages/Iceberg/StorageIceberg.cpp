@@ -55,7 +55,7 @@ namespace
         {
             if (!schema.empty())
                 schema.append(", ");
-            schema.append(name_and_type.name);
+            schema.append("`" + name_and_type.name + "`"); /// If the column has "-", it would have syntax error
             schema.append(" ");
             schema.append(name_and_type.type->getName());
         }
