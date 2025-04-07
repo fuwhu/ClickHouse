@@ -645,8 +645,9 @@ std::unique_ptr<NativeORCBlockInputFormat::StripeReader> NativeORCBlockInputForm
 
 bool NativeORCBlockInputFormat::checkStripeColumnConstantness(UInt64 stripe_index, UInt64 column_index, Field & constant_value)
 {
+    /// If the key condition is always true or unknown, it would not initialize stripes_statistics.
     if (!stripes_statistics)
-        throw Exception(ErrorCodes::LOGICAL_ERROR, "stripes statistics is null while checking the column constantness, which could be an bug.");
+        stripes_statistics = getStripesStatistics();
     const auto & stripe_statistics = (*stripes_statistics)[stripe_index];
     const orc::ColumnStatistics * col_stats = stripe_statistics->getColumnStatistics(column_index);
     auto range = buildRange(col_stats);
