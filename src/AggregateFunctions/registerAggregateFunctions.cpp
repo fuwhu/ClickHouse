@@ -62,6 +62,9 @@ void registerAggregateFunctionExponentialMovingAverage(AggregateFunctionFactory 
 void registerAggregateFunctionSparkbar(AggregateFunctionFactory &);
 void registerAggregateFunctionIntervalLengthSum(AggregateFunctionFactory &);
 void registerAggregateFunctionBsiBuild(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricIncrease(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricHistogramQuantile(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricRate(AggregateFunctionFactory &);
 
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
@@ -136,6 +139,9 @@ void registerAggregateFunctions()
         registerAggregateFunctionExponentialMovingAverage(factory);
         registerAggregateFunctionSparkbar(factory);
         registerAggregateFunctionBsiBuild(factory);
+        registerAggregateFunctionPromMetricIncrease(factory);
+        registerAggregateFunctionPromMetricHistogramQuantile(factory);
+        registerAggregateFunctionPromMetricRate(factory);
 
         registerWindowFunctions(factory);
     }
