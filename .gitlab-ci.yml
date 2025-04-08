@@ -101,7 +101,7 @@ functional_tests:
     - echo "clickhouse-server-ci restart end"
   script:
     - echo "functional_tests begin"
-    - ./tests/clickhouse-test create alter select drop group ttl unique_engine bsi read_in_order insert --skip 00459_group_array_insert_at 01883_with_grouping_sets 01593_concurrent_alter_mutations_kill 01530_drop_database_atomic_sync 01181_db_atomic_drop_on_cluster 00754_alter_modify_order_by 02020_alter_table_modify_comment 02456_alter-nullable-column-bag-2 02262_column_ttl 02117_show_create_table_system 02187_async_inserts_all_formats 02124_insert_deduplication_token_multiple_blocks_replica 02124_insert_deduplication_token_replica 01179_insert_values_semicolon 01246_insert_into_watch_live_view 01923_network_receive_time_metric_insert 01509_check_many_parallel_quorum_inserts_long 01509_check_parallel_quorum_inserts_long
+    - ./tests/clickhouse-test create alter select drop group ttl unique_engine bsi read_in_order insert prom_metric --skip 00459_group_array_insert_at 01883_with_grouping_sets 01593_concurrent_alter_mutations_kill 01530_drop_database_atomic_sync 01181_db_atomic_drop_on_cluster 00754_alter_modify_order_by 02020_alter_table_modify_comment 02456_alter-nullable-column-bag-2 02262_column_ttl 02117_show_create_table_system 02187_async_inserts_all_formats 02124_insert_deduplication_token_multiple_blocks_replica 02124_insert_deduplication_token_replica 01179_insert_values_semicolon 01246_insert_into_watch_live_view 01923_network_receive_time_metric_insert 01509_check_many_parallel_quorum_inserts_long 01509_check_parallel_quorum_inserts_long
     - echo "functional_tests end"
   after_script:
     - echo "clickhouse-server-ci stop begin"
