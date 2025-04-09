@@ -110,6 +110,9 @@ void FilterTransform::transform(Chunk & chunk)
 
         columns = block.getColumns();
     }
+    /// It prevents certain stripes/row groups from having all constant columns in the filter, 
+    /// causing subsequent chunks to be filtered or not filtered.
+    constant_filter_description = ConstantFilterDescription();
 
     if (constant_filter_description.always_true || on_totals)
     {
