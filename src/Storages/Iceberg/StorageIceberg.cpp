@@ -232,7 +232,7 @@ namespace
                 if (file.sorting_key_id.has_value())
                     column_sort_order_id->insertValue(file.sorting_key_id.value());
                 else
-                    column_sort_order_id->insertValue(-1); /// unpack should treat -1 as null   
+                    column_sort_order_id->insertValue(-1); /// unpack should treat -1 as null 
             });
 
         Block block{
@@ -264,6 +264,7 @@ namespace
             data_files[i].path = (*column_path)[i].get<String>();
             data_files[i].format = (*column_format)[i].get<String>();
             data_files[i].size = (*column_size)[i].get<Int64>();
+
             Int64 sort_key_id = (*column_sort_order_id)[i].get<Int64>();
             if (sort_key_id == -1)
                 data_files[i].sorting_key_id = std::nullopt;
@@ -364,7 +365,7 @@ std::optional<UInt64> StorageIceberg::totalRowsByPartitionPredicate(const Select
 {
     if (iceberg_metadata.total_records.has_value() && iceberg_metadata.total_records.value() == 0)
         return 0;
-
+    
     std::vector<String> partition_column_names;
     std::for_each(
         iceberg_metadata.partition_keys.begin(),

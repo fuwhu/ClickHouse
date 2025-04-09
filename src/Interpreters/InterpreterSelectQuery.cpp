@@ -1815,8 +1815,21 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
         && query_analyzer->hasAggregation()
         && (query_analyzer->aggregates().size() == 1)
         && typeid_cast<const AggregateFunctionCount *>(query_analyzer->aggregates()[0].function.get());
+    
+    /// Optimization for trivial query for storage iceberg with distributed query. 
+    bool optimize_trivial_count_for_iceberg =
+        syntax_analyzer_result->optimize_trivial_count
+        && (settings.max_parallel_replicas <= 1)
+        && !settings.allow_experimental_query_deduplication
+        && storage
+        && storage->getName() == "Iceberg"
+        && !row_policy_filter
+        && processing_stage == QueryProcessingStage::WithMergeableState
+        && query_analyzer->hasAggregation()
+        && (query_analyzer->aggregates().size() == 1)
+        && typeid_cast<const AggregateFunctionCount *>(query_analyzer->aggregates()[0].function.get());
 
-    if (optimize_trivial_count)
+    if (optimize_trivial_count || optimize_trivial_count_for_iceberg)
     {
         const auto & desc = query_analyzer->aggregates()[0];
         const auto & func = desc.function;
