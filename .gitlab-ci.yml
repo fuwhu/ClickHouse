@@ -63,7 +63,7 @@ build:
     - echo "check local build dir is exist"
     - if [[ ! -d "$BUILD_PATH" ]]; then echo "build dir is not exist" && mkdir -p $BUILD_PATH; else echo "build dir is exist" && rm -rf $BUILD_PATH/*; fi
     - echo "cmake begin"
-    - cd $BUILD_PATH && cmake .. -DCMAKE_C_COMPILER=`which clang-14` -DCMAKE_CXX_COMPILER=`which clang++-14` -DCMAKE_BUILD_TYPE=Release
+    - cd $BUILD_PATH && cmake .. -DCMAKE_C_COMPILER=`which clang-14` -DCMAKE_CXX_COMPILER=`which clang++-14` -DCMAKE_BUILD_TYPE=Release -DUSE_LIBHDFS=1
     - echo "cmake end"
     - echo "ninja begin"
     - ninja
