@@ -235,7 +235,7 @@ namespace
     ConnectionTimeouts timeouts(
         Poco::Timespan(3000000), /// Connection timeout. 3s
         Poco::Timespan(10000000), /// Send timeout. 10s
-        Poco::Timespan(10000000) /// Receive timeout. 10s
+        Poco::Timespan(30000000) /// Receive timeout. 30s
     );
 
     constexpr auto max_try_times = 3;
@@ -383,8 +383,13 @@ void IcebergTableMetadata::deserialize(const Poco::JSON::Object::Ptr & obj)
         if (snapshots_obj_arr && snapshots_obj_arr->size() != 0)
         {
             auto summary = snapshots_obj_arr->getObject(0)->getObject("summary");
-            this->total_records = summary->getValue<Int64>("total-records");
-            this->total_files_size = summary->getValue<Int64>("total-files-size");
+            if (summary)
+            {
+                if (summary->has("total-records"))
+                    this->total_records = summary->getValue<Int64>("total-records");
+                if (summary->has("total-files-size"))
+                    this->total_files_size = summary->getValue<Int64>("total-files-size");
+            }
         }
     }
 }
