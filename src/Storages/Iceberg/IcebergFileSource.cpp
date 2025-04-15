@@ -408,6 +408,13 @@ bool IcebergFileSource::prepareReader()
         return false;
     }
 
+    const ContextPtr & local_context = getContext();
+
+    if (input_format_preinit_pool && file_index_to_open < iceberg_files->size())
+    {
+        preInitFile(local_context);
+    }
+
     if (current_file)
     {
         const auto * orc_input_format = dynamic_cast<NativeORCBlockInputFormat *>((*current_file_iterator)->input_format.get());
@@ -420,9 +427,9 @@ bool IcebergFileSource::prepareReader()
     current_file_iterator = file_iterator;
     current_file = (*current_file_iterator).get();
     Stopwatch stop_watch;
-    current_file->prepare(getContext(), read_type);
+    current_file->prepare(local_context, read_type);
     stop_watch.stop();
-    getContext()->increaseStreamPrepareFilesTimeCostMicroseconds(metrics_index_in_context, stop_watch.elapsedMicroseconds());
+    local_context->increaseStreamPrepareFilesTimeCostMicroseconds(metrics_index_in_context, stop_watch.elapsedMicroseconds());
 
     auto input_format = current_file->input_format;
     QueryPipelineBuilder builder;
@@ -432,7 +439,7 @@ bool IcebergFileSource::prepareReader()
     {
         builder.addSimpleTransform(
             [&](const Block & header)
-            { return std::make_shared<AddingDefaultsTransform>(header, columns_description, *input_format, getContext()); });
+            { return std::make_shared<AddingDefaultsTransform>(header, columns_description, *input_format, local_context); });
     }
 
     if (read_type == ReadType::InReverseOrder)
@@ -442,7 +449,7 @@ bool IcebergFileSource::prepareReader()
 
     pipeline = std::make_unique<QueryPipeline>(QueryPipelineBuilder::getPipeline(std::move(builder)));
     reader = std::make_unique<PullingPipelineExecutor>(*pipeline);
-    getContext()->incrementStreamReadFileCount(metrics_index_in_context);
+    local_context->incrementStreamReadFileCount(metrics_index_in_context);
 
     ++file_iterator;
     ++file_index;
@@ -550,11 +557,6 @@ Chunk IcebergFileSource::generate()
         auto current_time_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         local_context->setIcebergFileSourceReadStartTime(metrics_index_in_context, current_time_us);
         data_generate_started = true;
-    }
-
-    if (input_format_preinit_pool && file_index_to_open < iceberg_files->size())
-    {
-        preInitFile(local_context);
     }
 
     while (true)
