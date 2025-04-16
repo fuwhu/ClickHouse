@@ -491,7 +491,14 @@ Poco::JSON::Object::Ptr IcebergExpression::serialize() const
             obj->set("term", node->element->reference);
             if (node->element->type == IcebergExpression::Type::IN || node->element->type == IcebergExpression::Type::NOT_IN)
             {
-                obj->set("values", visitField(node->element->literal));
+                auto & field = node->element->literal;
+                if (field.getType() != Field::Types::Tuple && field.getType() != Field::Types::Array)
+                {
+                    Array new_field{field};
+                    obj->set("values", visitField(new_field));
+                }
+                else 
+                    obj->set("values", visitField(field));
             }
             else if (
                 node->element->type != IcebergExpression::Type::IS_NULL && node->element->type != IcebergExpression::Type::NOT_NULL
