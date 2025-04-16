@@ -91,7 +91,7 @@ namespace
         return modified_query_ast;
     }
 
-    Block pack_stats(const std::vector<IcebergDataFile> & data_files, const IcebergTableMetadata & iceberg_metadata)
+    Block pack_stats(std::vector<IcebergDataFile> & data_files, const IcebergTableMetadata & iceberg_metadata)
     {   
         const auto & schema = iceberg_metadata.schema;
         const auto & sorting_keys = iceberg_metadata.sorting_keys;
@@ -107,7 +107,7 @@ namespace
             auto min_column = type->createColumn();
             auto max_column = type->createColumn();
 
-            for (const auto & data_file : data_files)
+            for (auto & data_file : data_files)
             {
                 if (!data_file.sorting_key_id.has_value() || data_file.sorting_key_id.value() != iceberg_metadata.order_id)
                 {
@@ -116,8 +116,15 @@ namespace
                 }
                 else 
                 {
-                    min_column->insert(data_file.statistics.min.values[idx]);
-                    max_column->insert(data_file.statistics.max.values[idx]);
+                    if (idx < data_file.statistics.min.values.size())
+                        min_column->insert(data_file.statistics.min.values[idx]);
+                    else
+                        data_file.sorting_key_id = std::nullopt;
+
+                    if (idx < data_file.statistics.max.values.size())
+                        max_column->insert(data_file.statistics.max.values[idx]);
+                    else
+                        data_file.sorting_key_id = std::nullopt;
                 }
             }
             

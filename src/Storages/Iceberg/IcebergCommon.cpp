@@ -326,13 +326,16 @@ void IcebergTableMetadata::deserialize(const Poco::JSON::Object::Ptr & obj)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "At least one element in schemas");
 
     auto fields_obj_arr = schemas_obj_arr->getObject(0)->getArray("fields");
+    std::unordered_map<uint64_t, String> schema_id_map;
     for (const auto & field_obj : *fields_obj_arr)
     {
         const auto & field_struct = field_obj.extract<Poco::JSON::Object::Ptr>();
         auto name = field_struct->getValue<String>("name");
         auto required = field_struct->getValue<bool>("required");
+        auto id = field_struct->getValue<UInt64>("id");
         auto type = getFieldType(field_struct, "type", required);
         this->schema.push_back({name, type});
+        schema_id_map[id] = name;
     }
 
     /// parse partition keys
@@ -367,7 +370,7 @@ void IcebergTableMetadata::deserialize(const Poco::JSON::Object::Ptr & obj)
             {
                 const auto & field_struct = field_obj.extract<Poco::JSON::Object::Ptr>();
                 auto source_id = field_struct->getValue<int>("source-id");
-                auto name = this->schema.getNames()[source_id - 1];
+                auto name = schema_id_map[source_id];
 
                 auto direction = field_struct->getValue<String>("direction");
                 auto nulls_direction = field_struct->getValue<String>("null-order");
