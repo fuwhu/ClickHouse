@@ -154,8 +154,11 @@ namespace Nested
         auto nested_types = getSubcolumnsOfNested(names_and_types);
 
         for (const auto & name_type : names_and_types)
-            if (!isArray(name_type.type) || !nested_types.count(splitName(name_type.name).first))
+        {
+            auto split = splitName(name_type.name);
+            if (!isArray(name_type.type) || split.second.empty() || !nested_types.contains(split.first))
                 res.push_back(name_type);
+        }
 
         for (const auto & name_type : nested_types)
             res.emplace_back(name_type.first, name_type.second);
