@@ -126,7 +126,7 @@ namespace DB
                 auto copy_if_unit_type = unit.type;
 
                 /// TODO : Make other output formats who does not support parralel formatting return extra parameters for remote query timeout in the header of http response as well.
-                if (auto * write_buffer_from_http_response = reinterpret_cast<WriteBufferFromHTTPServerResponse *>(&out))
+                if (auto * write_buffer_from_http_response = dynamic_cast<WriteBufferFromHTTPServerResponse *>(&out))
                 {
                     auto & http_response = write_buffer_from_http_response->getHTTPResponse();
                     auto remote_query_timeout_count = context->getRemoteQueryTimeoutCount();
