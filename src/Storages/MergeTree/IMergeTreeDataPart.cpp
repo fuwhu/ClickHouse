@@ -477,14 +477,23 @@ void IMergeTreeDataPart::removeIfNeeded()
             if (file_name.empty())
                 throw Exception(ErrorCodes::LOGICAL_ERROR, "relative_path {} of part {} is invalid or not set", relative_path, name);
 
-            if (!startsWith(file_name, "tmp") && !endsWith(file_name, ".tmp_proj"))
+            fs::path part_directory_path = fs::path(path);
+            String part_parent_directory = parentPath(part_directory_path);
+            bool is_moving_part = part_parent_directory.ends_with("moving/");
+                
+            if (!startsWith(file_name, "tmp") && !endsWith(file_name, ".tmp_proj") && !is_moving_part)
             {
                 LOG_ERROR(
                     storage.log,
-                    "~DataPart() should remove part {} but its name doesn't start with \"tmp\" or end with \".tmp_proj\". Too "
+                    "~DataPart() should remove part {} but its name doesn't start with \"tmp\" or end with \".tmp_proj\", and it is not in moving directory. Too "
                     "suspicious, keeping the part.",
                     path);
                 return;
+            }
+
+            if (is_moving_part)
+            {
+                LOG_TRACE(storage.log, "Removing unneeded moved part from {}", path);
             }
         }
 
@@ -1493,8 +1502,24 @@ void IMergeTreeDataPart::remove() const
     /// NOTE We rename part to delete_tmp_<relative_path> instead of delete_tmp_<name> to avoid race condition
     /// when we try to remove two parts with the same name, but different relative paths,
     /// for example all_1_2_1 (in Deleting state) and tmp_merge_all_1_2_1 (in Temporary state).
-    fs::path from = fs::path(storage.relative_data_path) / relative_path;
-    fs::path to = fs::path(storage.relative_data_path) / ("delete_tmp_" + relative_path);
+    fs::path from;
+    fs::path to;
+
+    from = fs::path(storage.relative_data_path) / relative_path;
+
+    if (relative_path.starts_with("moving/")) 
+    {
+        size_t pos = relative_path.find('/');
+        if (pos == std::string::npos || pos + 1 >= relative_path.size()) {
+            throw std::invalid_argument("Invalid relative_path format");
+        }
+        std::string real_part_name = relative_path.substr(pos + 1);
+
+        to = fs::path(storage.relative_data_path) / "moving" / ("delete_tmp_" + real_part_name);
+    }
+    else
+        to = fs::path(storage.relative_data_path) / ("delete_tmp_" + relative_path);
+
     // TODO directory delete_tmp_<name> is never removed if server crashes before returning from this function
 
     auto disk = volume->getDisk();
