@@ -55,6 +55,7 @@
 #include <Storages/StorageMergeTree.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 #include <Storages/VirtualColumnUtils.h>
+#include <Common/Config/ConfigHelper.h>
 #include "Common/SipHash.h"
 #include <Common/Increment.h>
 #include <Common/SimpleIncrement.h>
@@ -1438,7 +1439,23 @@ static bool isOldPartDirectory(const DiskPtr & disk, const String & directory_pa
 }
 
 
-size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lifetime_seconds)
+size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lifetime_seconds, const NameSet & valid_prefixes)
+{
+    size_t cleared_count = 0;
+
+    cleared_count += clearOldTemporaryDirectories(relative_data_path, custom_directories_lifetime_seconds, valid_prefixes);
+
+    if (allowRemoveStaleMovingParts())
+    {
+        /// Clear _all_ parts from the `moving` directory
+        cleared_count += clearOldTemporaryDirectories(fs::path(relative_data_path) / "moving", custom_directories_lifetime_seconds, {""});
+    }
+
+    return cleared_count;
+}
+
+
+size_t MergeTreeData::clearOldTemporaryDirectories(const String & root_path, size_t custom_directories_lifetime_seconds, const NameSet & valid_prefixes)
 {
     /// If the method is already called from another thread, then we don't need to do anything.
     std::unique_lock lock(clear_old_temporary_directories_mutex, std::defer_lock);
@@ -1457,13 +1474,21 @@ size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lif
         if (disk->isBroken())
             continue;
 
-        for (auto it = disk->iterateDirectory(relative_data_path); it->isValid(); it->next())
+        for (auto it = disk->iterateDirectory(root_path); it->isValid(); it->next())
         {
             const std::string & basename = it->name();
-            if (!startsWith(basename, "tmp_"))
+            bool start_with_valid_prefix = false;
+            for (const auto & prefix : valid_prefixes)
             {
-                continue;
+                if (startsWith(basename, prefix))
+                {
+                    start_with_valid_prefix = true;
+                    break;
+                }
             }
+            if (!start_with_valid_prefix)
+                continue;
+
             const std::string & full_path = fullPath(disk, it->path());
 
             try
@@ -1508,6 +1533,11 @@ size_t MergeTreeData::clearOldTemporaryDirectories(size_t custom_directories_lif
     return cleared_count;
 }
 
+scope_guard MergeTreeData::getTemporaryPartDirectoryHolder(const String & part_dir_name) const
+{
+    temporary_parts.add(part_dir_name);
+    return [this, part_dir_name]() { temporary_parts.remove(part_dir_name); };
+}
 
 MergeTreeData::DataPartsVector MergeTreeData::grabOldParts(bool force)
 {
@@ -5867,6 +5897,11 @@ MergeTreeData::CurrentlyMovingPartsTagger::CurrentlyMovingPartsTagger(MergeTreeM
             throw Exception("Cannot move part '" + moving_part.part->name + "'. It's already moving.", ErrorCodes::LOGICAL_ERROR);
 }
 
+bool MergeTreeData::allowRemoveStaleMovingParts() const
+{
+    return ConfigHelper::getBool(getContext()->getConfigRef(), "allow_remove_stale_moving_parts", false, true);
+}
+
 MergeTreeData::CurrentlyMovingPartsTagger::~CurrentlyMovingPartsTagger()
 {
     std::lock_guard lock(data.moving_parts_mutex);
@@ -5998,7 +6033,7 @@ bool MergeTreeData::moveParts(const CurrentlyMovingPartsTaggerPtr & moving_tagge
     for (const auto & moving_part : moving_tagger->parts_to_move)
     {
         Stopwatch stopwatch;
-        DataPartPtr cloned_part;
+        MergeTreePartsMover::TemporaryClonedPart cloned_part;
 
         auto write_part_log = [&](const ExecutionStatus & execution_status)
         {
@@ -6007,7 +6042,7 @@ bool MergeTreeData::moveParts(const CurrentlyMovingPartsTaggerPtr & moving_tagge
                 execution_status,
                 stopwatch.elapsed(),
                 moving_part.part->name,
-                cloned_part,
+                cloned_part.part,
                 {moving_part.part},
                 nullptr);
         };
@@ -6054,8 +6089,6 @@ bool MergeTreeData::moveParts(const CurrentlyMovingPartsTaggerPtr & moving_tagge
         catch (...)
         {
             write_part_log(ExecutionStatus::fromCurrentException());
-            if (cloned_part)
-                cloned_part->remove();
 
             if (changePartMergeUpdateStatus(moving_part.part, IMergeTreeDataPart::MergeUpdateStatus::MOVING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL))
                 LOG_ERROR(log, "part {} move error, rollback part MERGE_UPDATE_STATUS from moving to normal error.", moving_part.part->name);

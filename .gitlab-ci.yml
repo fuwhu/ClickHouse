@@ -123,7 +123,7 @@ integration_tests:
     - /release.*$/
   script:
     - echo "integration_tests begin"
-    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_repliacted_storage_unique_engine test_replicated_bsi -ss'
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --odbc-bridge-binary $BUILD_PATH/programs/clickhouse-odbc-bridge --base-configs-dir /etc/clickhouse-server 'test_ddl_alter_query test_distributed_ddl/test.py::test_create_as_select test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_repliacted_storage_unique_engine test_replicated_bsi test_consistant_parts_after_move_partition test_multiple_disks test_rename_column test_ttl_move -ss'
     - echo "integration_tests end"
   dependencies:
     - build
