@@ -20,6 +20,7 @@ SELECT metric_histogram_quantile(0.9)(le, __value__) FROM metric_app_test;
 SELECT metric_histogram_quantile(0.99)(le, __value__) FROM metric_app_test;
 SELECT metric_histogram_quantile(1)(le, __value__) FROM metric_app_test;
 SELECT metric_rate(__timestamp__, __value__) AS __value__ FROM metric_app_test;
+SELECT metric_irate(__timestamp__, __value__) AS __value__ FROM metric_app_test;
 
 DROP TABLE IF EXISTS metric_app_test;
 
@@ -46,5 +47,6 @@ SELECT metric_histogram_quantile(0.9)(le, __value__) FROM metric_app_test_not_nu
 SELECT metric_histogram_quantile(0.99)(le, __value__) FROM metric_app_test_not_null;
 SELECT metric_histogram_quantile(1)(le, __value__) FROM metric_app_test_not_null;
 SELECT metric_rate(__timestamp__, __value__) AS __value__ FROM metric_app_test_not_null;
+SELECT metric_irate(__timestamp__, __value__) AS __value__ FROM metric_app_test_not_null;
 
 DROP TABLE IF EXISTS metric_app_test_not_null;
