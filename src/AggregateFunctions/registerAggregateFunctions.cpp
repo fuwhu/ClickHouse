@@ -65,6 +65,7 @@ void registerAggregateFunctionBsiBuild(AggregateFunctionFactory &);
 void registerAggregateFunctionPromMetricIncrease(AggregateFunctionFactory &);
 void registerAggregateFunctionPromMetricHistogramQuantile(AggregateFunctionFactory &);
 void registerAggregateFunctionPromMetricRate(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricIRate(AggregateFunctionFactory &);
 
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
@@ -142,6 +143,7 @@ void registerAggregateFunctions()
         registerAggregateFunctionPromMetricIncrease(factory);
         registerAggregateFunctionPromMetricHistogramQuantile(factory);
         registerAggregateFunctionPromMetricRate(factory);
+        registerAggregateFunctionPromMetricIRate(factory);
 
         registerWindowFunctions(factory);
     }
