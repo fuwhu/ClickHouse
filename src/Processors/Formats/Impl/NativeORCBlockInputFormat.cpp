@@ -1107,7 +1107,7 @@ static ColumnWithTypeAndName
 readColumnWithBooleanData(const orc::ColumnVectorBatch * orc_column, const orc::Type *, const String & column_name)
 {
     const auto * orc_bool_column = dynamic_cast<const orc::LongVectorBatch *>(orc_column);
-    auto internal_type = std::make_shared<DataTypeInt8>();
+    auto internal_type = std::make_shared<DataTypeUInt8>();
     auto internal_column = internal_type->createColumn();
     auto & column_data = assert_cast<ColumnVector<UInt8> &>(*internal_column).getData();
     column_data.reserve_exact(orc_bool_column->numElements);
@@ -1161,26 +1161,50 @@ readColumnWithStringData(const orc::ColumnVectorBatch * orc_column, const orc::T
     const auto * orc_str_column = dynamic_cast<const orc::StringVectorBatch *>(orc_column);
     size_t reserver_size = 0;
     for (size_t i = 0; i < orc_str_column->numElements; ++i)
-        reserver_size += orc_str_column->length[i] + 1;
+    {
+        if (!orc_str_column->hasNulls || orc_str_column->notNull[i])
+            reserver_size += orc_str_column->length[i];
+        reserver_size += 1;
+    }
+        
     column_chars_t.reserve_exact(reserver_size);
     column_offsets.reserve_exact(orc_str_column->numElements);
 
     size_t curr_offset = 0;
-    for (size_t i = 0; i < orc_str_column->numElements; ++i)
+    if (!orc_str_column->hasNulls)
     {
-        const auto * buf = orc_str_column->data[i];
-        if (buf)
+        for (size_t i = 0; i < orc_str_column->numElements; ++i)
         {
+            const auto * buf = orc_str_column->data[i];
             size_t buf_size = orc_str_column->length[i];
+
             column_chars_t.insert_assume_reserved(buf, buf + buf_size);
             curr_offset += buf_size;
+
+            column_chars_t.push_back(0);
+            ++curr_offset;
+            column_offsets.push_back(curr_offset);
         }
-
-        column_chars_t.push_back(0);
-        ++curr_offset;
-
-        column_offsets.push_back(curr_offset);
     }
+    else 
+    {
+        for (size_t i = 0; i < orc_str_column->numElements; ++i)
+        {
+            if (orc_str_column->notNull[i])
+            {
+                const auto * buf = orc_str_column->data[i];
+                size_t buf_size = orc_str_column->length[i];
+                
+                column_chars_t.insert_assume_reserved(buf, buf + buf_size);
+                curr_offset += buf_size;
+            }
+
+            column_chars_t.push_back(0);
+            ++curr_offset;
+            column_offsets.push_back(curr_offset);
+        }   
+    }
+    
     return {std::move(internal_column), std::move(internal_type), column_name};
 }
 
@@ -1196,7 +1220,7 @@ readColumnWithFixedStringData(const orc::ColumnVectorBatch * orc_column, const o
     const auto * orc_str_column = dynamic_cast<const orc::StringVectorBatch *>(orc_column);
     for (size_t i = 0; i < orc_str_column->numElements; ++i)
     {
-        if (orc_str_column->data[i])
+        if (!orc_str_column->hasNulls || orc_str_column->notNull[i])
             column_chars_t.insert_assume_reserved(orc_str_column->data[i], orc_str_column->data[i] + orc_str_column->length[i]);
         else
             column_chars_t.resize_fill(column_chars_t.size() + fixed_len);
@@ -1249,9 +1273,7 @@ static ColumnWithTypeAndName readColumnWithBigNumberFromBinaryData(
 
     for (size_t i = 0; i < orc_str_column->numElements; ++i)
     {
-        if (!orc_str_column->data[i]) [[unlikely]]
-            integer_column.insertDefault();
-        else
+        if (!orc_str_column->hasNulls || orc_str_column->notNull[i])
         {
             if (sizeof(typename ColumnType::ValueType) != orc_str_column->length[i])
                 throw Exception(
@@ -1262,6 +1284,10 @@ static ColumnWithTypeAndName readColumnWithBigNumberFromBinaryData(
                     orc_str_column->length[i]);
 
             integer_column.insertData(orc_str_column->data[i], orc_str_column->length[i]);
+        }
+        else
+        {
+            integer_column.insertDefault();
         }
     }
     return {std::move(internal_column), column_type, column_name};
@@ -1290,15 +1316,22 @@ static ColumnWithTypeAndName readColumnWithDateData(
 
     for (size_t i = 0; i < orc_int_column->numElements; ++i)
     {
-        Int32 days_num = static_cast<Int32>(orc_int_column->data[i]);
-        if (check_date_range && (days_num > DATE_LUT_MAX_EXTEND_DAY_NUM || days_num < -DAYNUM_OFFSET_EPOCH))
-            throw Exception(
-                ErrorCodes::VALUE_IS_OUT_OF_RANGE_OF_DATA_TYPE,
-                "Input value {} of a column \"{}\" exceeds the range of type Date32",
-                days_num,
-                column_name);
+        if (!orc_int_column->hasNulls || orc_int_column->notNull[i])
+        {
+            Int32 days_num = static_cast<Int32>(orc_int_column->data[i]);
+            if (check_date_range && (days_num > DATE_LUT_MAX_EXTEND_DAY_NUM || days_num < -DAYNUM_OFFSET_EPOCH))
+                throw Exception(
+                    ErrorCodes::VALUE_IS_OUT_OF_RANGE_OF_DATA_TYPE,
+                    "Input value {} of a column \"{}\" exceeds the range of type Date32",
+                    days_num,
+                    column_name);
 
-        column_data.push_back(days_num);
+            column_data.push_back(days_num);
+        }
+        else 
+        {
+            column_data.push_back(0);
+        }
     }
 
     return {std::move(internal_column), internal_type, column_name};
