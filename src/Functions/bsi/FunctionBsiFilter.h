@@ -109,6 +109,15 @@ public:
         const ColumnAggregateFunction & rbm_col = isColumnConst(*arguments[1].column)
             ? typeid_cast<const ColumnAggregateFunction &>(typeid_cast<const ColumnConst &>(*arguments[1].column).getDataColumn())
             : typeid_cast<const ColumnAggregateFunction &>(*arguments[1].column);
+        
+        const auto & aggregate_function = rbm_col.getAggregateFunction();
+        const auto & data_type = aggregate_function->getArgumentTypes()[0];
+
+        if (!WhichDataType(data_type).isUInt64()) {
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                          "Function {} only supports UInt64 bitmap types.",
+                          getName());
+        }
 
         MutableColumnPtr result;
         filter(array_data, array_offsets, result, rbm_col);

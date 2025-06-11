@@ -134,6 +134,15 @@ public:
                     = &typeid_cast<const ColumnAggregateFunction &>(typeid_cast<const ColumnConst &>(*arguments[1].column).getDataColumn());
             else
                 rbm_col = &typeid_cast<const ColumnAggregateFunction &>(*arguments[1].column);
+
+            const auto & aggregate_function = rbm_col->getAggregateFunction();
+            const auto & data_type = aggregate_function->getArgumentTypes()[0];
+
+            if (!WhichDataType(data_type).isUInt64()) {
+                throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                              "Function {} only supports UInt64 bitmap types.",
+                              getName());
+            }
         }
 
         ColumnPtr result;
