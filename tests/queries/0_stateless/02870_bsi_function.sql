@@ -103,3 +103,88 @@ SELECT bitmapToArray(bsi_gt([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), 
 SELECT bitmapToArray(bsi_ge([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
 SELECT bitmapToArray(bsi_lt([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
 SELECT bitmapToArray(bsi_le([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(3, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(3, 'UInt64')])], 0));
+
+
+
+SELECT '==========================';
+
+DROP TABLE IF EXISTS user_click_detail;
+DROP TABLE IF EXISTS user_click_bsi;
+
+CREATE TABLE user_click_detail
+(
+    `u_id` UInt64,
+    `sex` String,
+    `city` String,
+    `click` UInt64
+)
+ENGINE = MergeTree
+ORDER BY u_id;
+
+INSERT INTO user_click_detail VALUES (1, 'woman', 'sh', 2), (2, 'man', 'sh', 3), (3, 'woman', 'bj', 6), (4, 'man', 'sh', 8), (5, 'woman', 'sh', 8), (6, 'man', 'bj', 5);
+
+SELECT * FROM user_click_detail ORDER BY u_id ASC;
+
+CREATE TABLE user_click_bsi
+(
+    `no` UInt32,
+    `tag_name` Enum('sex' = 1, 'city' = 2),
+    `tag_value` String,
+    `click_bsi` BSI
+)
+ENGINE = MergeTree
+ORDER BY tuple();
+
+INSERT INTO user_click_bsi SELECT 1, 'sex', sex, bsi_build(u_id, click) FROM user_click_detail group by sex;
+INSERT INTO user_click_bsi SELECT 2, 'city', city, bsi_build(u_id, click) FROM user_click_detail group by city;
+
+SELECT
+    no,
+    tag_name,
+    tag_value,
+    arrayMap(x -> bitmapToArray(x), bsi) AS arr_id,
+    arrayMap(x -> bitmapCardinality(x), bsi) AS arr_cardinality
+FROM
+(
+    SELECT
+        no,
+        tag_name,
+        tag_value,
+        click_bsi AS bsi
+    FROM user_click_bsi
+    ORDER BY
+        no ASC,
+        tag_name ASC,
+        tag_value ASC
+);
+
+WITH 
+(select click_bsi from user_click_bsi where tag_name = 'sex' and tag_value = 'woman') as sex_man_bsi,
+(select click_bsi from user_click_bsi where tag_name = 'city' and tag_value = 'sh') as city_sh_bsi
+SELECT bsi_product_sum(sex_man_bsi, city_sh_bsi);
+
+WITH 
+(select click_bsi from user_click_bsi where tag_name = 'sex' and tag_value = 'woman') as sex_man_bsi
+SELECT `no`, tag_name, tag_value, bsi_product_sum(click_bsi, sex_man_bsi) from user_click_bsi order by `no`, tag_name, tag_value;
+
+WITH 
+(select click_bsi from user_click_bsi where tag_name = 'sex' and tag_value = 'woman') as sex_man_bsi
+SELECT bsi_product_sum(sex_man_bsi, sex_man_bsi);
+
+SELECT `no`, tag_name, tag_value, bsi_product_sum(click_bsi, click_bsi) from user_click_bsi order by `no`, tag_name, tag_value;
+
+SELECT bsi_product_sum([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')])], [bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')])]);
+
+SELECT bsi_product_sum([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')])], [bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')])]);
+
+
+WITH 
+(select click_bsi from user_click_bsi where tag_name = 'sex' and tag_value = 'woman') as sex_man_bsi
+SELECT bsi_square_sum(sex_man_bsi);
+
+SELECT `no`, tag_name, tag_value, bsi_square_sum(click_bsi) from user_click_bsi order by `no`, tag_name, tag_value;
+
+SELECT bsi_square_sum([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3, 'UInt64'), cast(4, 'UInt64')]), bitmapBuild([cast(2, 'UInt64'), cast(3, 'UInt64')]), bitmapBuild([cast(4, 'UInt64')])]);
+
+DROP TABLE IF EXISTS user_click_detail;
+DROP TABLE IF EXISTS user_click_bsi;
