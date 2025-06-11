@@ -34,3 +34,32 @@
 [1,3,2]
 []
 [2]
+==========================
+1	woman	sh	2
+2	man	sh	3
+3	woman	bj	6
+4	man	sh	8
+5	woman	sh	8
+6	man	bj	5
+1	sex	man	[[2,4,6],[2,6],[2],[6],[4]]	[3,2,1,1,1]
+1	sex	woman	[[1,3,5],[],[1,3],[3],[5]]	[3,0,2,1,1]
+2	city	bj	[[3,6],[6],[3],[3,6]]	[2,1,1,2]
+2	city	sh	[[1,2,4,5],[2],[1,2],[],[4,5]]	[4,1,2,0,2]
+68
+1	sex	man	0
+1	sex	woman	104
+2	city	bj	36
+2	city	sh	68
+104
+1	sex	man	98
+1	sex	woman	104
+2	city	bj	61
+2	city	sh	141
+84
+44
+104
+1	sex	man	98
+1	sex	woman	104
+2	city	bj	61
+2	city	sh	141
+44
