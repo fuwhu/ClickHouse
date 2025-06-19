@@ -739,7 +739,7 @@ IcebergFilePtr IcebergFileSource::createIcebergFile(
 }
 
 std::vector<IcebergFilePtr>
-IcebergFileSource::splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_splits, const ContextPtr & local_context)
+IcebergFileSource::splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_splits, const ContextPtr & local_context, bool is_read_in_order)
 {
     IcebergFilePtr new_file = IcebergFile::newFile(iceberg_file->scan_result.data_file.format);
 
@@ -758,6 +758,9 @@ IcebergFileSource::splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_
     if (auto * old_orc_file = dynamic_cast<IcebergORCFile *>(iceberg_file.get()))
     {
         auto * new_orc_file = dynamic_cast<IcebergORCFile *>(new_file.get());
+        if (is_read_in_order)
+            new_orc_file->getORCInputFormat()->setColumnNameToIndexMapping(old_orc_file->getORCInputFormat()->getColumnNameToIndexMapping());
+
         auto & old_stripes = old_orc_file->stripes_to_read;
 
         if (request_splits > old_stripes->size())
@@ -1299,7 +1302,7 @@ Pipe IcebergFileSource::spreadSplitsAmongStreamsWithOrder(
                     stream_id += step;
                     continue;
                 }
-                auto new_files = splitIcebergFile(std::move(file), avg_split_count - streams_splits[stream_id], local_context);
+                auto new_files = splitIcebergFile(std::move(file), avg_split_count - streams_splits[stream_id], local_context, true);
                 new_files[1]->getFileSortingKeyRanges(order_key_description, direction);
                 new_files[0]->getFileSortingKeyRanges(order_key_description, direction);
                 files->pop_back();

@@ -125,6 +125,8 @@ public:
 
     const std::unordered_map<String, int> & getColumnNameToIndexMapping() { return column_name_to_index; }
 
+    void setColumnNameToIndexMapping(const std::unordered_map<String, int> & map) { column_name_to_index = map; }
+
     const BlockMissingValues & getMissingValues() const override;
 
     StripesStatisticsPtr getStripesStatistics();
@@ -135,7 +137,7 @@ public:
 
     void setStripesToRead(const OrcStripesInformationPtr & stripes_information) { stripes_to_read = stripes_information; }
 
-    void setStripesStatistics(const StripesStatisticsPtr & stripes_information_) { stripes_statistics = stripes_information_; }
+    void setStripesStatistics(const StripesStatisticsPtr & stripes_statistics_) { stripes_statistics = stripes_statistics_; }
 
     void setRequiredColumns(ColumnsDescription &columns_desc) { required_columns = columns_desc; }
 

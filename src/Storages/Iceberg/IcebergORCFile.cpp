@@ -150,7 +150,7 @@ namespace
         std::vector<size_t> row_groups_to_remove;
         for (size_t i = 0; i < row_group_num; ++i)
         {
-            if (filterOrcRowGroupsWithEnforedBitmap(mask.get(), stripe, i))
+            if (filterOrcRowGroupsWithEnforedBitmap(mask.get(), stripe, stripe.row_groups[i]))
             {
                 row_groups_to_remove.emplace_back(i);
                 continue;
@@ -158,7 +158,7 @@ namespace
 
             if (key_condition
                 && filterOrcRowGroupsWithStatistics(
-                    *(stripe_statistics), i, columns_description, columns, column_name_to_index, key_condition))
+                    *(stripe_statistics), stripe.row_groups[i], columns_description, columns, column_name_to_index, key_condition))
             {
                 row_groups_to_remove.emplace_back(i);
                 continue;
@@ -283,6 +283,7 @@ void IcebergORCFile::reverseSplits()
     }
 
     std::reverse(stripes_to_read->begin(), stripes_to_read->end());
+    std::reverse(stripes_statistics->begin(), stripes_statistics->end());
 
     orc_input_format->ignoreBatchSizeLimit();
 }
@@ -298,6 +299,9 @@ void IcebergORCFile::prepare(const ContextPtr & context, const ReadType & read_t
 
     if (!splitsInitialized())
         initializeSplits();
+
+    if (!stripes_statistics)
+        loadSplitsStatistics();
 
     if (read_type == ReadType::InReverseOrder)
         reverseSplits();
