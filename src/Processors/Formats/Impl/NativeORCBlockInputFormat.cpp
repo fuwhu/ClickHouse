@@ -490,7 +490,9 @@ void NativeORCBlockInputFormat::StripeReader::prepare()
     
     for (size_t i = current_row_group_index; i < stripe_info.row_groups.size() - 1; ++i)
     {
-        if (stripe_info.row_groups[i + 1] == stripe_info.row_groups[i] + 1)
+        if ((stripe_info.row_groups[i + 1] > stripe_info.row_groups[i] && stripe_info.row_groups[i + 1] == stripe_info.row_groups[i] + 1)
+            || (stripe_info.row_groups[i + 1] < stripe_info.row_groups[i]
+                && stripe_info.row_groups[i + 1] == stripe_info.row_groups[i] - 1))
             succssive_size++;
         else 
             break;
@@ -562,12 +564,18 @@ size_t NativeORCBlockInputFormat::StripeReader::readColumns(ColumnsWithTypeAndNa
         return 0;
 
     prepare();
-    row_reader->readData(*batch, row_groups_to_read);
+    /// if reverse, read last row group firstly.
+    size_t start_row_group = row_groups_to_read[0];
+    if (row_groups_to_read.size() > 1 && row_groups_to_read[0] > row_groups_to_read[1])
+      start_row_group = row_groups_to_read[row_groups_to_read.size() - 1];
+
+    row_reader->readData(*batch, start_row_group);
     size_t num_rows = batch->numElements;
     if (num_rows != to_read_rows)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Should read exactly {} rows, bug got {}", to_read_rows, num_rows);
 
-    current_row = row_reader->getRowNumber() + num_rows; // TODO :: update RowReaderImpl::previousRow to keep getRowNumber() returns correct rown number.
+    /// update current_row for checking if has pending data in this stripe, pay attention to reversed order
+    current_row = stripe_info.first_row_of_stripe + std::min((stripe_info.row_groups[current_row_group_index - 1] + 1) * stripe_info.row_group_size, stripe_info.num_rows);
 
     const auto & schema = row_reader->getSelectedType();
     Stopwatch stop_watch;
@@ -591,7 +599,9 @@ size_t NativeORCBlockInputFormat::StripeReader::readConstantColumns(ColumnsWithT
 
     prepare();
     size_t num_rows = to_read_rows;
-    current_row += num_rows;
+    /// update current_row for checking if has pending data in this stripe, pay attention to reversed order
+    current_row = stripe_info.first_row_of_stripe + std::min((stripe_info.row_groups[current_row_group_index - 1] + 1) * stripe_info.row_group_size, stripe_info.num_rows);
+
     // add the constant columns into res_columns if exist.
     appendConstantColumns(res_columns, num_rows, add_constant_col_time_cost);
 

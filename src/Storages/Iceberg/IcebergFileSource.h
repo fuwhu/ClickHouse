@@ -218,7 +218,7 @@ public:
         FileCachePtr cache);
 
     static std::vector<IcebergFilePtr>
-    splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_splits, const ContextPtr & local_context);
+    splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_splits, const ContextPtr & local_context, bool is_read_in_order = false);
 
     static Pipe spreadFilesAmongStreams(
         std::unique_ptr<std::vector<IcebergFilePtr>> files,
