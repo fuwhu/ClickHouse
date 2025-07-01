@@ -182,13 +182,21 @@ void FileSegment::write(char * from, size_t size)
         cache_writer = std::make_unique<WriteBufferFromFile>(download_path, 0);
     }
 
+    cache_writer->set(from, size, size);
+    /// lock here for preventing cache writer to be nullptr, for example:
+    ///                      segment{k}
+    /// cache:           [__________________|___________
+    ///                                     ^
+    ///                                     download_offset
+    /// requested_range:    [__________]
+    ///                     ^
+    ///                     file_offset_of_buffer_end
+    /// when one thread reads all data of requested_range, it will complete all file segments, and reset cache writer (but lock in download_mutex)
+    /// while file segment in another thread is still downloading.
+    std::lock_guard download_lock(download_mutex);
     try
     {
-        cache_writer->set(from, size, size);
-
         SCOPE_EXIT({ cache_writer->set(nullptr, 0); });
-
-        std::lock_guard download_lock(download_mutex);
 
         cache_writer->next();
 
