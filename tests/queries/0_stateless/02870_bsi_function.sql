@@ -188,3 +188,39 @@ SELECT bsi_square_sum([bitmapBuild([cast(1, 'UInt64'), cast(2, 'UInt64'), cast(3
 
 DROP TABLE IF EXISTS user_click_detail;
 DROP TABLE IF EXISTS user_click_bsi;
+
+
+SELECT '==========================';
+
+DROP TABLE IF EXISTS test_bsi_agg_empty_result;
+
+CREATE TABLE test_bsi_agg_empty_result
+(
+    `id` UInt32,
+    `key` String,
+    `value` UInt32, 
+    `bsi` BSI
+)
+ENGINE = MergeTree
+ORDER BY tuple();
+
+INSERT INTO TABLE test_bsi_agg_empty_result values (1, 'a', 10, [bitmapBuild([1, 2, 3, 4]), bitmapBuild([1, 2, 3, 4]), bitmapBuild([2, 3]), bitmapBuild([4])]);
+INSERT INTO TABLE test_bsi_agg_empty_result values (2, 'b', 20, [bitmapBuild([3, 5, 7]), bitmapBuild([3]), bitmapBuild([3, 5]), bitmapBuild([7])]);
+INSERT INTO TABLE test_bsi_agg_empty_result values (1, 'c', 30, [bitmapBuild([1, 2, 5]), bitmapBuild([1, 2, 5]), bitmapBuild([1, 2]), bitmapBuild([5])]);
+
+SELECT
+    bsi_sum(bsi_add_aggIf(bsi, id = 1)),
+    bsi_sum(bsi_add_aggIf(bsi, id = 3))
+FROM test_bsi_agg_empty_result;
+
+SELECT
+    bsi_sum(bsi_merge_aggIf(bsi, id = 1)),
+    bsi_sum(bsi_merge_aggIf(bsi, id = 3))
+FROM test_bsi_agg_empty_result;
+
+SELECT
+    bsi_sum(bsi_buildIf(id, value, id = 2)),
+    bsi_sum(bsi_buildIf(id, value, id = 3))
+FROM test_bsi_agg_empty_result;
+
+DROP TABLE IF EXISTS test_bsi_agg_empty_result;

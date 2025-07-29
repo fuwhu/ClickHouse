@@ -77,9 +77,6 @@ public:
     void insertResultInto(AggregateDataPtr place, IColumn & to, Arena *) const override
     {
         const auto & state = this->data(place);
-
-        if (!state.ids_with_bsi[0].rbs.size())
-            return;
         
         int highest_non_empty_index = -1;
 
