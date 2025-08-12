@@ -61,27 +61,34 @@ public:
         size_t pos = 0;
         size_t row = 0;
 
+        const auto & array_ptr = array_data.getData();
+        auto & result_ptr = result_arr_data->getData();
+
         for (const auto *offsets_data = array_offsets.data(), *end = offsets_data + array_offsets.size(); offsets_data < end;
              ++offsets_data)
         {
-            auto offset_data = *offsets_data;
+            const auto offset_data = *offsets_data;
+            const auto * rbm_ptr = reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.size() == 1 ? rbm_col.getData()[0] : rbm_col.getData()[row]);
 
+            bool is_first = true;
+            bool skip = false;
             for (; pos < offset_data; ++pos)
             {
                 result_arr_data->insertDefault();
 
-                AggregateFunctionGroupBitmapData<DB::UInt64> & bitmap_data
-                    = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(array_data.getData()[pos]);
-                AggregateFunctionGroupBitmapData<DB::UInt64> & result_bitmap_data
-                    = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(result_arr_data->getData()[pos]);
+                if (skip)
+                    continue;
+
+                auto &bitmap_data = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(array_ptr[pos]);
+                auto &result_bitmap_data = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(result_ptr[pos]);
 
                 result_bitmap_data.rbs.merge(bitmap_data.rbs);
+                result_bitmap_data.rbs.rb_and(rbm_ptr->rbs);
 
-                const AggregateFunctionGroupBitmapData<UInt64> & rbm_data = rbm_col.size() == 1
-                    ? *reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.getData()[0])
-                    : *reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.getData()[row]);
-
-                result_bitmap_data.rbs.rb_and(rbm_data.rbs);
+                if (is_first) {
+                    skip = result_bitmap_data.rbs.size() == 0;
+                    is_first = false;
+                }
             }
 
             row++;
