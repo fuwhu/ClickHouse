@@ -121,7 +121,7 @@ CREATE TABLE user_click_detail
 ENGINE = MergeTree
 ORDER BY u_id;
 
-INSERT INTO user_click_detail VALUES (1, 'woman', 'sh', 2), (2, 'man', 'sh', 3), (3, 'woman', 'bj', 6), (4, 'man', 'sh', 8), (5, 'woman', 'sh', 8), (6, 'man', 'bj', 5);
+INSERT INTO user_click_detail VALUES (1, 'woman', 'sh', 1048576), (2, 'man', 'sh', 3), (3, 'woman', 'bj', 6), (4, 'man', 'sh', 8), (5, 'woman', 'sh', 8), (6, 'man', 'bj', 5);
 
 SELECT * FROM user_click_detail ORDER BY u_id ASC;
 
