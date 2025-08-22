@@ -104,7 +104,7 @@ private:
     
                         size_t k = current_i_pos - row_start_i - 1;
                         size_t l = current_j_pos - row_start_j - 1;
-                        size_t sum_k_l = tmp_rbm.rbs.size() * (1 << (k + l));
+                        size_t sum_k_l = tmp_rbm.rbs.size() * (1ULL << (k + l));
                         total_sum += sum_k_l;
                     }
                 }
