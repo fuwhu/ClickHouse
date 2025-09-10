@@ -96,6 +96,9 @@ public:
         IColumn::Permutation *& permutation,
         const MergeTreeData::MergingParams & merging_params);
 
+    static void fillMissingImplicitColumnsForSkipIndices(
+        Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices);
+
 private:
     MergeTreeTemporaryPartPtr writeTempPartImpl(
         BlockWithPartition & block_with_partition,

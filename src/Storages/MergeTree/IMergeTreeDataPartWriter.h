@@ -72,6 +72,8 @@ protected:
 
     IDataPartStorage & getDataPartStorage() { return *data_part_storage; }
 
+    static void ensureImplicitColumnsConstructed(const Block & block);
+
     const String data_part_name;
     /// Serializations for every columns and subcolumns by their names.
     const SerializationByName serializations;

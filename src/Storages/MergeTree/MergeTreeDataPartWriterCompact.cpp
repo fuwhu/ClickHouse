@@ -5,6 +5,7 @@
 #include "Formats/MarkInCompressedFile.h"
 #include <Common/logger_useful.h>
 #include <IO/NullWriteBuffer.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
 
 namespace DB
 {
@@ -175,6 +176,9 @@ void writeColumnSingleGranule(
 
 void MergeTreeDataPartWriterCompact::write(const Block & block, const IColumnPermutation * permutation)
 {
+    /// make sure the implicit columns of MapV2 are constructed.
+    ensureImplicitColumnsConstructed(block);
+
     Block result_block = block;
 
     /// During serialization columns with dynamic subcolumns (like JSON/Dynamic) must have the same dynamic structure.
@@ -232,6 +236,14 @@ void MergeTreeDataPartWriterCompact::writeDataBlockPrimaryIndexAndSkipIndices(co
         Block primary_key_block = getIndexBlockAndPermute(block, metadata_snapshot->getPrimaryKeyColumns(), nullptr);
         calculateAndSerializePrimaryIndex(primary_key_block, granules_to_write);
     }
+
+    /// Fill non-existing implicit columns needed for skip indices.
+    auto & mutable_block = const_cast<Block &>(block);
+    IndicesDescription indices_to_fill;
+    for (const auto & skip_idx : skip_indices)
+        indices_to_fill.emplace_back(skip_idx->index);
+
+    MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_block, metadata_snapshot, indices_to_fill);
 
     Block skip_indices_block = getIndexBlockAndPermute(block, getSkipIndicesColumns(), nullptr);
     calculateAndSerializeSkipIndices(skip_indices_block, granules_to_write);

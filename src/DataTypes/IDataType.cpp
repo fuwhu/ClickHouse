@@ -383,6 +383,7 @@ bool isIPv6(TYPE data_type) { return WhichDataType(data_type).isIPv6(); } \
 bool isArray(TYPE data_type) { return WhichDataType(data_type).isArray(); } \
 bool isTuple(TYPE data_type) { return WhichDataType(data_type).isTuple(); } \
 bool isMap(TYPE data_type) {return WhichDataType(data_type).isMap(); } \
+bool isMapV2(TYPE data_type) {return WhichDataType(data_type).isMapV2(); } \
 bool isInterval(TYPE data_type) {return WhichDataType(data_type).isInterval(); } \
 bool isObjectDeprecated(TYPE data_type) { return WhichDataType(data_type).isObjectDeprecated(); } \
 bool isVariant(TYPE data_type) { return WhichDataType(data_type).isVariant(); } \

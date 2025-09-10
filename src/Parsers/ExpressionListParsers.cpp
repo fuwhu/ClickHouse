@@ -493,7 +493,8 @@ enum class OperatorType : uint8_t
     FinishIf,
     Cast,
     Lambda,
-    Not
+    Not,
+    ImplicitColumn
 };
 
 /** Operator struct stores parameters of the operator:
@@ -537,6 +538,20 @@ enum class Checkpoint : uint8_t
     Interval,
     Case
 };
+
+ASTPtr transformImplicitColumn(ASTPtr node)
+{
+    const auto * func = node->as<ASTFunction>();
+    const auto * implicit_col = func->arguments->children[0]->as<ASTIdentifier>();
+    if (!implicit_col)
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "Not a valid identifier for MapV2 column");
+
+    const auto * implicit_col_key = func->arguments->children[1]->as<ASTLiteral>();
+    if (!implicit_col_key)
+        throw Exception(ErrorCodes::SYNTAX_ERROR, "Specified key for MapV2 must be a const String");
+
+    return std::make_shared<ASTIdentifier>(implicit_col->name() + IMPLICIT_DELIMITER + implicit_col_key->value.safeGet<String>());
+}
 
 /** Layer is a class that represents context for parsing certain element,
   *  that consists of other elements e.g. f(x1, x2, x3)
@@ -714,6 +729,9 @@ public:
 
                 if (!popLastNOperands(function->children[0]->children, cur_op.arity))
                     return false;
+
+                if (cur_op.type == OperatorType::ImplicitColumn)
+                    function = transformImplicitColumn(function);
             }
 
             pushOperand(function);
@@ -1277,6 +1295,26 @@ public:
     bool parse(IParser::Pos & pos, Expected & expected, Action & action) override
     {
         return LayerWithSeparator::parse(pos, expected, action);
+    }
+};
+
+class ImplicitColumnLayer : public Layer
+{
+public:
+    bool parse(IParser::Pos & pos, Expected & expected, Action & action) override
+    {
+        if (ParserToken(TokenType::ClosingCurlyBrace).ignore(pos, expected))
+        {
+            action = Action::OPERATOR;
+
+            if (!isCurrentElementEmpty() || !elements.empty())
+                if (!mergeElement())
+                    return false;
+
+            finished = true;
+        }
+
+        return true;
     }
 };
 
@@ -2419,6 +2457,7 @@ const std::vector<std::pair<std::string_view, Operator>> ParserExpressionImpl::o
     {".",             Operator("tupleElement",    14, 2, OperatorType::TupleElement)},
     {"[",             Operator("arrayElement",    14, 2, OperatorType::ArrayElement)},
     {"::",            Operator(toString(toStringView(Keyword::CAST)),            14, 2, OperatorType::Cast)},
+    {"{",             Operator("implicitColumn",  14, 2, OperatorType::ImplicitColumn)}, 
 };
 
 const std::vector<std::pair<std::string_view, Operator>> ParserExpressionImpl::unary_operators_table
@@ -2770,6 +2809,9 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
 
             if (!layers.back()->popLastNOperands(function->children[0]->children, prev_op.arity))
                 return Action::NONE;
+
+            if (prev_op.type == OperatorType::ImplicitColumn)
+                function = transformImplicitColumn(function);
         }
 
         layers.back()->pushOperand(function);
@@ -2843,6 +2885,9 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
 
     if (op.type == OperatorType::StartBetween || op.type == OperatorType::StartNotBetween)
         ++layers.back()->between_counter;
+
+    if (op.type == OperatorType::ImplicitColumn)
+        layers.push_back(std::make_unique<ImplicitColumnLayer>());
 
     return Action::OPERAND;
 }

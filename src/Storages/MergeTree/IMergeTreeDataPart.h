@@ -137,6 +137,22 @@ public:
 
     void setColumnsSubstreams(const ColumnsSubstreams & columns_substreams_) { columns_substreams = columns_substreams_; }
 
+    void setImplicitColumns(const std::map<String, NamesAndTypesList> & implicit_columns_maps_)
+    {
+        implicit_columns_maps = implicit_columns_maps_;
+    }
+
+    const std::map<String, NamesAndTypesList> & getImplicitColumsMap() const { return implicit_columns_maps; }
+
+    NamesAndTypesList getImplicitColumnsForMap(const String & map_v2_name) const
+    {
+        auto it = implicit_columns_maps.find(map_v2_name);
+        if (it == implicit_columns_maps.end())
+            return {};
+        else
+            return it->second;
+    }
+
     /// Version of metadata for part (columns, pk and so on)
     int32_t getMetadataVersion() const { return metadata_version; }
 
@@ -665,6 +681,9 @@ protected:
 
     /// Map for Hash collision of file name conversion
     std::shared_ptr<HashCollisionMap> hash_collision_map;
+
+    /// Map for implicit columns of each MapV2 column.
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
 
     const Type part_type;
 

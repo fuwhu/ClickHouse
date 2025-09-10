@@ -91,6 +91,9 @@ struct PartLogElement
     UInt16 error = 0;
     String exception;
 
+    /// About implicit columns.
+    UInt16 implicit_column_count = 0;
+
     std::shared_ptr<ProfileEvents::Counters::Snapshot> profile_counters;
 
     static std::string name() { return "PartLog"; }

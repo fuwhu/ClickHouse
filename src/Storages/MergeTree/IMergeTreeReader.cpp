@@ -6,7 +6,9 @@
 #include <Storages/MergeTree/LoadedMergeTreeDataPartInfoForReader.h>
 #include <DataTypes/NestedUtils.h>
 #include <DataTypes/DataTypeNested.h>
+#include <Common/checkImplicitColumn.h>
 #include <Common/escapeForFileName.h>
+#include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Compression/CachedCompressedReadBuffer.h>
 #include <Columns/ColumnArray.h>
 #include <Interpreters/inplaceBlockConversions.h>
@@ -57,6 +59,20 @@ IMergeTreeReader::IMergeTreeReader(
         : columns_)
     , virtual_fields(virtual_fields_)
 {
+    const auto & merge_tree_data = dynamic_cast<const MergeTreeData &>(storage_snapshot->storage);
+    if (!merge_tree_data.getSettings()->implicit_map_duplication)
+    {
+        for (const auto & requested_column : requested_columns)
+        {
+            if (isMapV2(requested_column.type) || isMapV2(requested_column.getTypeInStorage()))
+                throw Exception(
+                    ErrorCodes::NOT_IMPLEMENTED,
+                    "Cannot select MapV2 column `{}` without specified key. "
+                    "Set MergeTree setting 'implicit_map_duplication' = 1 to enable it",
+                    requested_column.getNameInStorage());
+        }
+    }
+
     columns_to_read.reserve(requested_columns.size());
     serializations.reserve(requested_columns.size());
 

@@ -111,6 +111,7 @@ bool Field::operator< (const Field & rhs) const
         case Types::Array:   return get<Array>()   < rhs.get<Array>();
         case Types::Tuple:   return get<Tuple>()   < rhs.get<Tuple>();
         case Types::Map:     return get<Map>()     < rhs.get<Map>();
+        case Types::MapV2:   return get<MapV2>()   < rhs.get<MapV2>();
         case Types::Object:  return get<Object>()  < rhs.get<Object>();
         case Types::Decimal32:  return get<DecimalField<Decimal32>>()  < rhs.get<DecimalField<Decimal32>>();
         case Types::Decimal64:  return get<DecimalField<Decimal64>>()  < rhs.get<DecimalField<Decimal64>>();
@@ -155,6 +156,7 @@ bool Field::operator<= (const Field & rhs) const
         case Types::Array:   return get<Array>()   <= rhs.get<Array>();
         case Types::Tuple:   return get<Tuple>()   <= rhs.get<Tuple>();
         case Types::Map:     return get<Map>()     <= rhs.get<Map>();
+        case Types::MapV2:   return get<MapV2>()   <= rhs.get<MapV2>();
         case Types::Object:  return get<Object>()  <= rhs.get<Object>();
         case Types::Decimal32:  return get<DecimalField<Decimal32>>()  <= rhs.get<DecimalField<Decimal32>>();
         case Types::Decimal64:  return get<DecimalField<Decimal64>>()  <= rhs.get<DecimalField<Decimal64>>();
@@ -188,6 +190,7 @@ bool Field::operator== (const Field & rhs) const
         case Types::Array:   return get<Array>()   == rhs.get<Array>();
         case Types::Tuple:   return get<Tuple>()   == rhs.get<Tuple>();
         case Types::Map:     return get<Map>()     == rhs.get<Map>();
+        case Types::MapV2:   return get<MapV2>()   == rhs.get<MapV2>();
         case Types::Object:  return get<Object>()  == rhs.get<Object>();
         case Types::UInt128: return get<UInt128>() == rhs.get<UInt128>();
         case Types::UInt256: return get<UInt256>() == rhs.get<UInt256>();
@@ -296,6 +299,12 @@ Field getBinaryValue(UInt8 type, ReadBuffer & buf)
             readBinary(value, buf);
             return value;
         }
+        case Field::Types::MapV2:
+        {
+            MapV2 value;
+            readBinary(value, buf);
+            return value;
+        }
         case Field::Types::Object:
         {
             Object value;
@@ -391,6 +400,37 @@ void writeBinary(const Map & x, WriteBuffer & buf)
 }
 
 void writeText(const Map & x, WriteBuffer & buf)
+{
+    writeFieldText(Field(x), buf);
+}
+
+void readBinary(MapV2 & x, ReadBuffer & buf)
+{
+    size_t size;
+    readBinary(size, buf);
+
+    for (size_t index = 0; index < size; ++index)
+    {
+        UInt8 type;
+        readBinary(type, buf);
+        x.push_back(getBinaryValue(type, buf));
+    }
+}
+
+void writeBinary(const MapV2 & x, WriteBuffer & buf)
+{
+    const size_t size = x.size();
+    writeBinary(size, buf);
+
+    for (const auto & elem : x)
+    {
+        const UInt8 type = elem.getType();
+        writeBinary(type, buf);
+        Field::dispatch([&buf] (const auto & value) { FieldVisitorWriteBinary()(value, buf); }, elem);
+    }
+}
+
+void writeText(const MapV2 & x, WriteBuffer & buf)
 {
     writeFieldText(Field(x), buf);
 }
@@ -795,6 +835,7 @@ std::string_view fieldTypeToString(Field::Types::Which type)
         case Field::Types::Which::Array: return "Array"sv;
         case Field::Types::Which::Tuple: return "Tuple"sv;
         case Field::Types::Which::Map: return "Map"sv;
+        case Field::Types::Which::MapV2: return "MapV2"sv;
         case Field::Types::Which::Object: return "Object"sv;
         case Field::Types::Which::AggregateFunctionState: return "AggregateFunctionState"sv;
         case Field::Types::Which::Bool: return "Bool"sv;

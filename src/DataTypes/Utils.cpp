@@ -4,6 +4,7 @@
 #include <DataTypes/DataTypeLowCardinality.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeTuple.h>
 
 namespace DB
@@ -186,6 +187,61 @@ bool canBeSafelyCast(const DataTypePtr & from_type, const DataTypePtr & to_type)
                     return false;
 
                 if (!canBeSafelyCast(from_type_map.getValueType(), to_type_tuple_elements[1]))
+                    return false;
+
+                return true;
+            }
+
+            if (to_which_type.isString())
+                return true;
+
+            return false;
+        }
+        case TypeIndex::MapV2:
+        {
+            if (to_which_type.isMapV2())
+            {
+                const auto & from_type_map = assert_cast<const DataTypeMapV2 &>(*from_type);
+                const auto & to_type_map = assert_cast<const DataTypeMapV2 &>(*to_type_unwrapped);
+                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_map.getKeyType()))
+                    return false;
+
+                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_map.getValueType()))
+                    return false;
+
+                return true;
+            }
+
+            if (to_which_type.isMap())
+            {
+                const auto & from_type_map = assert_cast<const DataTypeMapV2 &>(*from_type);
+                const auto & to_type_map = assert_cast<const DataTypeMap &>(*to_type_unwrapped);
+                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_map.getKeyType()))
+                    return false;
+
+                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_map.getValueType()))
+                    return false;
+
+                return true;
+            }
+
+            if (to_which_type.isArray())
+            {
+                // Map nested type is Array(Tuple(key_type, value_type))
+                const auto & from_type_map = assert_cast<const DataTypeMapV2 &>(*from_type);
+                const auto & to_type_array = assert_cast<const DataTypeArray &>(*to_type_unwrapped);
+                const auto * to_type_nested_tuple_type = typeid_cast<const DataTypeTuple *>(to_type_array.getNestedType().get());
+                if (!to_type_nested_tuple_type)
+                    return false;
+
+                const auto & to_type_tuple_elements = to_type_nested_tuple_type->getElements();
+                if (to_type_tuple_elements.size() != 2)
+                    return false;
+
+                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_tuple_elements[0]))
+                    return false;
+
+                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_tuple_elements[1]))
                     return false;
 
                 return true;

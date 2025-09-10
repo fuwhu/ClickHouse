@@ -1838,7 +1838,12 @@ namespace ErrorCodes
     DECLARE(Bool, ignore_check_column_hash, false, R"(
     Ignore checking part column hash, for compatibility.
     )", 0) \
-
+    DECLARE(Bool, implicit_map_duplication, false, R"(
+    Whether to store redundancy map data for selecting whole MapV2 column.
+    )", 0) \
+    DECLARE(UInt64, max_implicit_columns, 300, R"(
+    If more than this number implicit columns in MapV2, throw 'Too many implicit columns ...' exception.
+    )", 0) \
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \
     M(TYPE, NAME, DEFAULT, "Obsolete setting, does nothing.", SettingsTierType::OBSOLETE)
@@ -2406,6 +2411,7 @@ bool MergeTreeSettings::isReadonlySetting(const String & name)
         || name == "add_minmax_index_for_numeric_columns"
         || name == "add_minmax_index_for_string_columns"
         || name == "table_disk"
+        || name == "implicit_map_duplication"
     ;
 }
 

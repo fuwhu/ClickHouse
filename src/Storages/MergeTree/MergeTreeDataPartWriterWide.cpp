@@ -13,6 +13,7 @@
 #include <Common/escapeForFileName.h>
 #include <Common/logger_useful.h>
 #include <Common/quoteString.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
 
 namespace DB
 {
@@ -272,6 +273,9 @@ void MergeTreeDataPartWriterWide::shiftCurrentMark(const Granules & granules_wri
 
 void MergeTreeDataPartWriterWide::write(const Block & block, const IColumnPermutation * permutation)
 {
+    /// make sure the implicit columns of MapV2 are constructed.
+    ensureImplicitColumnsConstructed(block);
+
     Block block_to_write = block;
 
     /// During serialization columns with dynamic subcolumns (like JSON/Dynamic) must have the same dynamic structure.
@@ -317,6 +321,14 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumnPermut
     Block primary_key_block;
     if (settings.rewrite_primary_key)
         primary_key_block = getIndexBlockAndPermute(block, metadata_snapshot->getPrimaryKeyColumns(), permutation);
+
+    /// Fill non-existing implicit columns needed for skip indices.
+    auto & mutable_block = const_cast<Block &>(block);
+    IndicesDescription indices_to_fill;
+    for (const auto & skip_idx : skip_indices)
+        indices_to_fill.emplace_back(skip_idx->index);
+
+    MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(mutable_block, metadata_snapshot, indices_to_fill);
 
     Block skip_indexes_block = getIndexBlockAndPermute(block, getSkipIndicesColumns(), permutation);
 

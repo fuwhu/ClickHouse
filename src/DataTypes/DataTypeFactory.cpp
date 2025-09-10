@@ -278,6 +278,7 @@ DataTypeFactory::DataTypeFactory()
     registerDataTypeDomainSimpleAggregateFunction(*this);
     registerDataTypeDomainGeo(*this);
     registerDataTypeMap(*this);
+    registerDataTypeMapV2(*this);
     registerDataTypeObjectDeprecated(*this);
     registerDataTypeVariant(*this);
     registerDataTypeDynamic(*this);

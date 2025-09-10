@@ -11,6 +11,7 @@
 #include <Parsers/ASTExpressionList.h>
 #include <Parsers/ASTSubquery.h>
 #include <Interpreters/misc.h>
+#include <Common/checkImplicitColumn.h>
 #include <Common/typeid_cast.h>
 #include <DataTypes/NestedUtils.h>
 #include <Interpreters/ActionsDAG.h>
@@ -187,6 +188,9 @@ static void collectColumns(const RPNBuilderTreeNode & node, const NameSet & colu
     if (!node.isFunction())
     {
         auto column_name = node.getColumnName();
+        if (auto implicit_column = extractImplicitColumn(column_name))
+            column_name = implicit_column->first;
+
         if (!columns_names.contains(column_name))
         {
             has_invalid_column = true;

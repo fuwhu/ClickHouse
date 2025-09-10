@@ -47,7 +47,7 @@
 #include <Interpreters/ExpressionActions.h>
 #include <Interpreters/createSubcolumnsExtractionActions.h>
 #include <QueryPipeline/QueryPipelineBuilder.h>
-
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include "config.h"
 
 #ifndef NDEBUG
@@ -60,6 +60,7 @@
     #include <Storages/MergeTree/DataPartStorageOnDiskPacked.h>
     #include <Storages/MergeTree/MergeTreeDataPartCompact.h>
 #endif
+
 
 
 namespace ProfileEvents
@@ -421,6 +422,40 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
     global_ctx->storage_columns = global_ctx->metadata_snapshot->getColumns().getAllPhysical();
 
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
+    if (global_ctx->metadata_snapshot->hasImplicitColumn())
+    {
+        for (const auto & part : global_ctx->future_part->parts)
+        {
+            for (const auto & map_v2_name : global_ctx->metadata_snapshot->getImplicitMapNames())
+            {
+                auto implicit_columns = part->getImplicitColumnsForMap(map_v2_name);
+                auto it = implicit_columns_maps.find(map_v2_name);
+                if (it != implicit_columns_maps.end())
+                {
+                    for (const auto & implicit_column : implicit_columns)
+                    {
+                        if (!it->second.contains(implicit_column.name))
+                            it->second.emplace_back(implicit_column);
+                    }
+                }
+                else
+                    implicit_columns_maps.insert({map_v2_name, std::move(implicit_columns)});
+            }
+        }
+    }
+
+    for (const auto & implicit_columns_map : implicit_columns_maps)
+    {
+        if (!global_ctx->data->getSettings()->implicit_map_duplication)
+            std::erase_if(
+                global_ctx->storage_columns,
+                [&implicit_columns_map](const NameAndTypePair & e) { return implicit_columns_map.first == e.name; });
+
+        for (const auto & implicit_column : implicit_columns_map.second)
+            global_ctx->storage_columns.emplace_back(implicit_column.name, implicit_column.type);
+    }
+
     auto object_columns = MergeTreeData::getConcreteObjectColumns(global_ctx->future_part->parts, global_ctx->metadata_snapshot->getColumns());
     extendObjectColumns(global_ctx->storage_columns, object_columns, false);
     global_ctx->storage_snapshot = std::make_shared<StorageSnapshot>(*global_ctx->data, global_ctx->metadata_snapshot, std::move(object_columns));
@@ -498,6 +533,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
         ctx->need_remove_expired_values = true;
 
     global_ctx->new_data_part->setColumns(global_ctx->storage_columns, infos, global_ctx->metadata_snapshot->getMetadataVersion());
+    global_ctx->new_data_part->setImplicitColumns(implicit_columns_maps);
 
     if (ctx->need_remove_expired_values && global_ctx->ttl_merges_blocker->isCancelled())
     {
@@ -1948,7 +1984,8 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream() const
         indices_expression_dag.addMaterializingOutputActions(/*materialize_sparse=*/ true); /// Const columns cannot be written without materialization.
         auto calculate_indices_expression_step = std::make_unique<ExpressionStep>(
             merge_parts_query_plan.getCurrentHeader(),
-            ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)));
+            ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)),
+            global_ctx->metadata_snapshot);
         merge_parts_query_plan.addStep(std::move(calculate_indices_expression_step));
     }
 

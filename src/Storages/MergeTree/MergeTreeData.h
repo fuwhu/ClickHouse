@@ -641,6 +641,8 @@ public:
 
     size_t getNumberOfOutdatedPartsWithExpiredRemovalTime() const;
 
+    std::map<String, std::set<String>> getImplicitColumnsMap() const;
+
     /// Returns a pair with: max number of parts in partition across partitions; sum size of parts inside that partition.
     /// (if there are multiple partitions with max number of parts, the sum size of parts is returned for arbitrary of them)
     std::pair<size_t, size_t> getMaxPartsCountAndSizeForPartitionWithState(DataPartState state) const;

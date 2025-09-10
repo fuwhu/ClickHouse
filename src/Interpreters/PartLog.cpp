@@ -148,6 +148,9 @@ ColumnsDescription PartLogElement::getColumnsDescription()
         {"error", std::make_shared<DataTypeUInt16>(), "The error code of the occurred exception."},
         {"exception", std::make_shared<DataTypeString>(), "Text message of the occurred error."},
 
+        /// About implicit columns
+        {"implicit_column_count", std::make_shared<DataTypeUInt16>()},
+
         {"ProfileEvents", std::make_shared<DataTypeMap>(low_cardinality_string, std::make_shared<DataTypeUInt64>()), "All the profile events captured during this operation."},
     };
 }
@@ -203,6 +206,8 @@ void PartLogElement::appendToBlock(MutableColumns & columns) const
 
     columns[i++]->insert(error);
     columns[i++]->insert(exception);
+
+    columns[i++]->insert(implicit_column_count);
 
     if (profile_counters)
     {
@@ -266,6 +271,12 @@ bool PartLog::addNewParts(
 
             elem.error = static_cast<UInt16>(execution_status.code);
             elem.exception = execution_status.message;
+
+            UInt16 implicit_column_cnt = 0;
+            for (const auto & [_, implicit_columns] : part->getImplicitColumsMap())
+                implicit_column_cnt += implicit_columns.size();
+
+            elem.implicit_column_count = implicit_column_cnt;
 
             elem.profile_counters = part_log_entry.profile_counters;
 

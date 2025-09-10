@@ -1,0 +1,72 @@
+6
+v1			v1	\N	\N
+	v2		\N	v2	\N
+		v3	\N	\N	\N
+v1			v1	\N	\N
+	v2		\N	v2	\N
+		v3	\N	\N	\N
+12
+12
+v1						v1	\N	\N	\N	\N	\N
+	v2					\N	v2	\N	\N	\N	\N
+		v3				\N	\N	\N	\N	\N	\N
+			v4			\N	\N	\N	\N	\N	\N
+				v5		\N	\N	\N	\N	v5	\N
+					v6	\N	\N	\N	\N	\N	v6
+6
+v1			v1	\N	\N
+	v2		\N	v2	\N
+		v3	\N	\N	\N
+v1			v1	\N	\N
+	v2		\N	v2	\N
+		v3	\N	\N	\N
+12
+12
+v1						v1	\N	\N	\N	\N	\N
+	v2					\N	v2	\N	\N	\N	\N
+		v3				\N	\N	\N	\N	\N	\N
+			v4			\N	\N	\N	\N	\N	\N
+				v5		\N	\N	\N	\N	v5	\N
+					v6	\N	\N	\N	\N	\N	v6
+1	{'k1':'v1'}	{'k1':'v1'}
+2	{'k2':'v2'}	{'k2':'v2'}
+3	{'k3':'v3'}	{'k3':NULL}
+v1			v1	\N	\N
+	v2		\N	v2	\N
+		v3	\N	\N	\N
+1	{'k1':'v1'}	{'k1':'v1'}
+2	{'k2':'v2'}	{'k2':'v2'}
+3	{'k3':'v3'}	{'k3':NULL}
+4	{'k4':'v4'}	{'k4':NULL}
+5	{'k5':'v5'}	{'k5':'v5'}
+6	{'k6':'v6'}	{'k6':'v6'}
+v1						v1	\N	\N	\N	\N	\N
+	v2					\N	v2	\N	\N	\N	\N
+		v3				\N	\N	\N	\N	\N	\N
+			v4			\N	\N	\N	\N	\N	\N
+				v5		\N	\N	\N	\N	v5	\N
+					v6	\N	\N	\N	\N	\N	v6
+1
+0
+0
+1
+1
+0
+0
+1
+v1			
+	v2		
+		v3	
+			v4
+v1			
+	v2		
+		v3	
+			v4
+v1			
+	v2		
+		v3	
+			v4
+v1			
+	v2		
+		v3	
+			v4

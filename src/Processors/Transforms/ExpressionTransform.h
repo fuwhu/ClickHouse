@@ -1,6 +1,7 @@
 #pragma once
 #include <Processors/Transforms/ExceptionKeepingTransform.h>
 #include <Processors/ISimpleTransform.h>
+#include <Storages/StorageInMemoryMetadata.h>
 
 namespace DB
 {
@@ -19,18 +20,20 @@ class ExpressionTransform final : public ISimpleTransform
 {
 public:
     ExpressionTransform(
-            const Block & header_,
-            ExpressionActionsPtr expression_);
+        const Block & header_,
+        ExpressionActionsPtr expression_,
+        StorageMetadataPtr metadata_snapshot_ = nullptr);
 
     String getName() const override { return "ExpressionTransform"; }
 
-    static Block transformHeader(const Block & header, const ActionsDAG & expression);
+    static Block transformHeader(Block header, const ActionsDAG & expression, StorageMetadataPtr metadata_snapshot_ = nullptr);
 
 protected:
     void transform(Chunk & chunk) override;
 
 private:
     ExpressionActionsPtr expression;
+    StorageMetadataPtr metadata_snapshot;
 };
 
 class ConvertingTransform final : public ExceptionKeepingTransform

@@ -367,7 +367,8 @@ getColumnsForNewDataPart(
     NamesAndTypesList storage_columns,
     const SerializationInfoByName & serialization_infos,
     const MutationCommands & commands_for_interpreter,
-    const MutationCommands & commands_for_removes)
+    const MutationCommands & commands_for_removes,
+    const std::map<String, NamesAndTypesList> & implicit_columns_maps)
 {
     MutationCommands all_commands;
     all_commands.insert(all_commands.end(), commands_for_interpreter.begin(), commands_for_interpreter.end());
@@ -387,6 +388,15 @@ getColumnsForNewDataPart(
     NameSet storage_columns_set;
     for (const auto & [name, _] : storage_columns)
         storage_columns_set.insert(name);
+
+    for (const auto & implicit_columns_map : implicit_columns_maps)
+    {
+        for (const auto & implicit_column : implicit_columns_map.second)
+        {
+            storage_columns_set.insert(implicit_column.name);
+            storage_columns.emplace_back(implicit_column.name, implicit_column.type);
+        }
+    }
 
     for (const auto & command : all_commands)
     {
@@ -1625,7 +1635,7 @@ private:
                 indices_expression_dag = ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag));
 
             builder->addTransform(std::make_shared<ExpressionTransform>(
-                builder->getHeader(), std::make_shared<ExpressionActions>(std::move(indices_expression_dag))));
+                builder->getHeader(), std::make_shared<ExpressionActions>(std::move(indices_expression_dag)), ctx->metadata_snapshot));
 
             builder->addTransform(std::make_shared<MaterializingTransform>(builder->getHeader()));
         }
@@ -2418,11 +2428,35 @@ bool MutateTask::prepare()
     /// It shouldn't be changed by mutation.
     ctx->new_data_part->index_granularity_info = ctx->source_part->index_granularity_info;
 
+    std::map<String, NamesAndTypesList> implicit_columns_maps;
+    if (ctx->metadata_snapshot->hasImplicitColumn())
+    {
+        for (const auto & part : ctx->future_part->parts)
+        {
+            for (const auto & implicit_map_name : ctx->metadata_snapshot->getImplicitMapNames())
+            {
+                auto implicit_columns = part->getImplicitColumnsForMap(implicit_map_name);
+                auto it = implicit_columns_maps.find(implicit_map_name);
+                if (it != implicit_columns_maps.end())
+                {
+                    for (const auto & implicit_column : implicit_columns)
+                    {
+                        if (!it->second.contains(implicit_column.name))
+                            it->second.emplace_back(implicit_column);
+                    }
+                }
+                else
+                    implicit_columns_maps.insert({implicit_map_name, std::move(implicit_columns)});
+            }
+        }
+    }
+
     auto [new_columns, new_infos] = MutationHelpers::getColumnsForNewDataPart(
         ctx->source_part, ctx->updated_header, ctx->storage_columns,
-        ctx->source_part->getSerializationInfos(), ctx->for_interpreter, ctx->for_file_renames);
+        ctx->source_part->getSerializationInfos(), ctx->for_interpreter, ctx->for_file_renames, implicit_columns_maps);
 
     ctx->new_data_part->setColumns(new_columns, new_infos, ctx->metadata_snapshot->getMetadataVersion());
+    ctx->new_data_part->setImplicitColumns(implicit_columns_maps);
     ctx->new_data_part->partition.assign(ctx->source_part->partition);
 
     /// Don't change granularity type while mutating subset of columns

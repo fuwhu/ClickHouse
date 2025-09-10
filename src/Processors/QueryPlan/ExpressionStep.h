@@ -12,7 +12,7 @@ class JoiningTransform;
 class ExpressionStep : public ITransformingStep
 {
 public:
-    explicit ExpressionStep(const Header & input_header_, ActionsDAG actions_dag_);
+    explicit ExpressionStep(const Header & input_header_, ActionsDAG actions_dag_, StorageMetadataPtr metadata_snapshot_ = nullptr);
 
     ExpressionStep(const ExpressionStep & other)
         : ITransformingStep(other)
@@ -44,6 +44,7 @@ private:
     void updateOutputHeader() override;
 
     ActionsDAG actions_dag;
+    StorageMetadataPtr metadata_snapshot;
 };
 
 }

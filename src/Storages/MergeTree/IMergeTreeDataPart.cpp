@@ -784,7 +784,19 @@ String IMergeTreeDataPart::getColumnNameWithMinimumCompressedSize(const NamesAnd
     std::optional<std::string> minimum_size_column;
     UInt64 minimum_size = std::numeric_limits<UInt64>::max();
 
-    for (const auto & column : available_columns)
+    /// put in all implicit columns
+    auto all_available_columns = available_columns;
+    const auto & implicit_columns = getImplicitColumsMap();
+
+    for (const auto & [implicit_map_name, implicit_map_col_list] : implicit_columns)
+    {
+        for (const auto & [col_name, col_type] : implicit_map_col_list)
+        {
+            all_available_columns.emplace_back(col_name, col_type);
+        }
+    }
+
+    for (const auto & column : all_available_columns)
     {
         if (!hasColumnFiles(column))
             continue;
@@ -1650,6 +1662,27 @@ void IMergeTreeDataPart::loadColumns(bool require)
 
         if (!is_readonly_storage)
             writeColumns(loaded_columns, {});
+    }
+
+    if (metadata_snapshot->hasImplicitColumn())
+    {
+        std::map<String, NamesAndTypesList> implicit_columns_map;
+
+        for (const auto & map_v2_name : metadata_snapshot->getImplicitMapNames())
+        {
+            NamesAndTypesList implicit_columns;
+
+            for (const auto & column : loaded_columns)
+            {
+                String column_name = column.name;
+                if (column_name.starts_with(map_v2_name + IMPLICIT_DELIMITER))
+                    implicit_columns.emplace_back(column);
+            }
+
+            implicit_columns_map.insert(std::make_pair(map_v2_name, implicit_columns));
+        }
+
+        setImplicitColumns(implicit_columns_map);
     }
 
     SerializationInfo::Settings settings =

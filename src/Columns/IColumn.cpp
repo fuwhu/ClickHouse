@@ -11,6 +11,7 @@
 #include <Columns/ColumnLazy.h>
 #include <Columns/ColumnLowCardinality.h>
 #include <Columns/ColumnMap.h>
+#include <Columns/ColumnMapV2.h>
 #include <Columns/ColumnNullable.h>
 #include <Columns/ColumnObject.h>
 #include <Columns/ColumnObjectDeprecated.h>
@@ -658,6 +659,7 @@ template class IColumnHelper<ColumnConst, IColumn>;
 template class IColumnHelper<ColumnArray, IColumn>;
 template class IColumnHelper<ColumnTuple, IColumn>;
 template class IColumnHelper<ColumnMap, IColumn>;
+template class IColumnHelper<ColumnMapV2, IColumn>;
 template class IColumnHelper<ColumnSparse, IColumn>;
 template class IColumnHelper<ColumnObjectDeprecated, IColumn>;
 template class IColumnHelper<ColumnAggregateFunction, IColumn>;

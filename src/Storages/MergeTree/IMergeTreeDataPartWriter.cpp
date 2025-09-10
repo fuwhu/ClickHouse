@@ -5,6 +5,7 @@
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Common/MemoryTrackerBlockerInThread.h>
+#include <Columns/ColumnMapV2.h>
 
 namespace DB
 {
@@ -139,6 +140,18 @@ ASTPtr IMergeTreeDataPartWriter::getCodecDescOrDefault(const String & column_nam
     throw Exception(ErrorCodes::LOGICAL_ERROR, "Unexpected column name: {}", column_name);
 }
 
+void IMergeTreeDataPartWriter::ensureImplicitColumnsConstructed(const Block & block)
+{
+    for (const auto & column : block.getColumns())
+    {
+        if (isMapV2(column->getDataType()))
+        {
+            const auto * col_map_v2 = dynamic_cast<const ColumnMapV2 *>(column.get());
+            if (col_map_v2->getColumns().empty())
+                col_map_v2->constructImplicitColumns();
+        }
+    }
+}
 
 IMergeTreeDataPartWriter::~IMergeTreeDataPartWriter() = default;
 

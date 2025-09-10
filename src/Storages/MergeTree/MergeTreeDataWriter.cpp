@@ -19,11 +19,14 @@
 #include <Storages/MergeTree/RowOrderOptimizer.h>
 #include <Storages/MergeTree/MergeTreeMarksLoader.h>
 #include <Common/ColumnsHashing.h>
+#include <Common/checkImplicitColumn.h>
 #include <Common/ElapsedTimeProfileEventIncrement.h>
 #include <Common/Exception.h>
 #include <Common/HashTable/HashMap.h>
 #include <Common/OpenTelemetryTraceContext.h>
 #include <Common/typeid_cast.h>
+#include <DataTypes/DataTypeMapV2.h>
+#include <Columns/ColumnMapV2.h>
 #include <Core/Settings.h>
 
 #include <Processors/Merges/Algorithms/ReplacingSortedAlgorithm.h>
@@ -85,6 +88,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
     extern const int TOO_MANY_PARTS;
     extern const int NOT_ENOUGH_SPACE;
+    extern const int TOO_MANY_IMPLICIT_COLUMNS;
 }
 
 namespace
@@ -506,6 +510,65 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
         if (column.type->hasDynamicSubcolumnsDeprecated())
             column.type = block.getByName(column.name).type;
 
+    const auto & data_settings = data.getSettings();
+    NamesAndTypesList new_columns;
+    std::map<String, NamesAndTypesList> implicit_columns_map;
+    const std::map<String, std::set<String>> current_implicit_columns_map = data.getImplicitColumnsMap();
+
+    /// Insert implicit columns to block
+    for (auto & column : columns)
+    {
+        if (isMapV2(column.type))
+        {
+            if (data_settings->implicit_map_duplication)
+                new_columns.emplace_back(column);
+
+            NamesAndTypesList implicit_columns;
+
+            auto * column_with_type_and_name = block.findByName(column.name);
+            auto & column_map_v2 = typeid_cast<ColumnMapV2 &>(*column_with_type_and_name->column->assumeMutable());
+
+            String map_v2_name = column.name;
+            if (column_map_v2.getColumns().empty())
+                column_map_v2.constructImplicitColumns();
+
+            std::set<String> past_implicit_cols;
+            if (auto it = current_implicit_columns_map.find(map_v2_name); it != current_implicit_columns_map.end())
+                past_implicit_cols = it->second;
+
+            size_t new_count = 0;
+
+            for (const auto & implicit_column : column_map_v2.getColumns())
+            {
+                const auto & implicit_column_name = map_v2_name + IMPLICIT_DELIMITER + implicit_column.name;
+
+                if ((past_implicit_cols.empty()) || (!past_implicit_cols.empty() && !past_implicit_cols.contains(implicit_column_name)))
+                    new_count++;
+
+                implicit_columns.emplace_back(implicit_column_name, implicit_column.type);
+                new_columns.emplace_back(implicit_column_name, implicit_column.type);
+                const ColumnWithTypeAndName & new_col = {implicit_column.column, implicit_column.type, implicit_column_name};
+                block.insert(new_col);
+            }
+
+            if (past_implicit_cols.size() + new_count > data_settings->max_implicit_columns)
+            {
+                ProfileEvents::increment(ProfileEvents::RejectedInserts);
+                throw Exception(
+                    ErrorCodes::TOO_MANY_IMPLICIT_COLUMNS,
+                    "Too many implicit columns ({}) in one MapV2 column {}, maximum: ({}). The threshold can be modified with mergetree "
+                    "setting 'max_implicit_columns'",
+                    toString(past_implicit_cols.size() + new_count),
+                    map_v2_name,
+                    data_settings->max_implicit_columns.toString());
+            }
+
+            implicit_columns_map.insert(std::make_pair(map_v2_name, implicit_columns));
+        }
+        else
+            new_columns.emplace_back(column);
+    }
+
     auto minmax_idx = std::make_shared<IMergeTreeDataPart::MinMaxIndex>();
     minmax_idx->update(block, MergeTreeData::getMinMaxColumnsNames(metadata_snapshot->getPartitionKey()));
 
@@ -540,6 +603,9 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
 
     std::string part_dir = temp_prefix + part_name;
     temp_part->temporary_directory_lock = data.getTemporaryPartDirectoryHolder(part_dir);
+
+    /// Fill non-existing implicit columns needed for skip indices.
+    fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot, metadata_snapshot->getSecondaryIndices());
 
     MergeTreeIndices indices;
     if (context->getSettingsRef()[Setting::materialize_skip_indexes_on_insert])
@@ -667,17 +733,18 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
         new_data_part->uuid = UUIDHelpers::generateV4();
 
     SerializationInfo::Settings settings{(*data_settings)[MergeTreeSetting::ratio_of_defaults_for_sparse_serialization], true};
-    SerializationInfoByName infos(columns, settings);
+    SerializationInfoByName infos(new_columns, settings);
     infos.add(block);
 
-    for (const auto & [column_name, _] : columns)
+    for (const auto & [column_name, _] : new_columns)
     {
         auto & column = block.getByName(column_name);
         if (infos.getKind(column_name) != ISerialization::Kind::SPARSE)
             column.column = recursiveRemoveSparse(column.column);
     }
 
-    new_data_part->setColumns(columns, infos, metadata_snapshot->getMetadataVersion());
+    new_data_part->setColumns(new_columns, infos, metadata_snapshot->getMetadataVersion());
+    new_data_part->setImplicitColumns(implicit_columns_map);
     new_data_part->rows_count = block.rows();
     new_data_part->existing_rows_count = block.rows();
     new_data_part->partition = std::move(partition);
@@ -739,7 +806,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     auto out = std::make_unique<MergedBlockOutputStream>(
         new_data_part,
         metadata_snapshot,
-        columns,
+        new_columns,
         indices,
         statistics,
         compression_codec,
@@ -951,4 +1018,62 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempProjectionPart(
     return new_part;
 }
 
+void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(
+    Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices)
+{
+    if (!metadata_snapshot->hasImplicitColumn() || skip_indices.empty())
+        return;
+
+    std::unordered_set<String> skip_indexes_column_names_set;
+    for (const auto & index : skip_indices)
+    {
+        if (index.expression)
+        {
+            const auto col_names = index.expression->getRequiredColumns();
+            std::copy(
+                col_names.cbegin(), col_names.cend(), std::inserter(skip_indexes_column_names_set, skip_indexes_column_names_set.end()));
+        }
+        else
+            std::copy(
+                index.column_names.cbegin(),
+                index.column_names.cend(),
+                std::inserter(skip_indexes_column_names_set, skip_indexes_column_names_set.end()));
+    }
+
+    auto skip_index_columns = Names(skip_indexes_column_names_set.begin(), skip_indexes_column_names_set.end());
+
+    NamesAndTypes non_existing_skip_indices_columns;
+
+    /// Check if the col_name exist in block, if not and it's implicit column, fill it with default value.
+    for (auto col_name : skip_index_columns)
+    {
+        if (block.has(col_name))
+            continue;
+
+        if (auto implicit_column = extractImplicitColumn(col_name))
+        {
+            const auto * map_v2_type
+                = dynamic_cast<const DataTypeMapV2 *>(metadata_snapshot->getColumns().get(implicit_column->first).type.get());
+            if (map_v2_type)
+                non_existing_skip_indices_columns.emplace_back(col_name, map_v2_type->getValueType());
+            else
+                throw Exception(
+                    ErrorCodes::LOGICAL_ERROR, "The parent column of {} is not of MapV2 type, which is illegal here.", col_name);
+        }
+        else
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "The skip index column {} is not found in block.", col_name);
+    }
+
+    if (!non_existing_skip_indices_columns.empty())
+    {
+        size_t row_size = block.rows();
+        for (const auto & name_type : non_existing_skip_indices_columns)
+        {
+            auto column = name_type.type->createColumn();
+            column->insertManyDefaults(row_size);
+            ColumnWithTypeAndName skip_index_column{column->getPtr(), name_type.type, name_type.name};
+            block.insert(skip_index_column);
+        }
+    }
+}
 }

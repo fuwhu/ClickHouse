@@ -9,6 +9,7 @@
 #include <DataTypes/DataTypeFunction.h>
 #include <DataTypes/DataTypeLowCardinality.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeObject.h>
 #include <DataTypes/DataTypeVariant.h>
 #include <DataTypes/DataTypeString.h>
@@ -101,6 +102,7 @@ enum class BinaryTypeIndex : uint8_t
     Nested = 0x2F,
     JSON = 0x30,
     BFloat16 = 0x31,
+    MapV2 = 0x32
 };
 
 /// In future we can introduce more arguments in the JSON data type definition.
@@ -215,6 +217,8 @@ BinaryTypeIndex getBinaryTypeIndex(const DataTypePtr & type)
             return BinaryTypeIndex::LowCardinality;
         case TypeIndex::Map:
             return BinaryTypeIndex::Map;
+        case TypeIndex::MapV2:
+            return BinaryTypeIndex::MapV2;
         case TypeIndex::ObjectDeprecated:
             /// Object type will be deprecated and replaced by new implementation. No need to support it here.
             throw Exception(ErrorCodes::UNSUPPORTED_METHOD, "Binary encoding of type Object is not supported");
@@ -701,6 +705,12 @@ DataTypePtr decodeDataType(ReadBuffer & buf)
             auto key_type = decodeDataType(buf);
             auto value_type = decodeDataType(buf);
             return std::make_shared<DataTypeMap>(key_type, value_type);
+        }
+        case BinaryTypeIndex::MapV2:
+        {
+            auto key_type = decodeDataType(buf);
+            auto value_type = decodeDataType(buf);
+            return std::make_shared<DataTypeMapV2>(key_type, value_type);
         }
         case BinaryTypeIndex::IPv4:
             return std::make_shared<DataTypeIPv4>();

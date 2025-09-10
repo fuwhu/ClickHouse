@@ -1,19 +1,24 @@
 #include <Processors/Transforms/ExpressionTransform.h>
 #include <Interpreters/ExpressionActions.h>
+#include <Storages/MergeTree/MergeTreeDataWriter.h>
 
 
 namespace DB
 {
 
-Block ExpressionTransform::transformHeader(const Block & header, const ActionsDAG & expression)
+Block ExpressionTransform::transformHeader(Block header, const ActionsDAG & expression, StorageMetadataPtr metadata_snapshot_)
 {
+    if (metadata_snapshot_ && metadata_snapshot_->hasImplicitColumn())
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(header, metadata_snapshot_, metadata_snapshot_->secondary_indices);
+
     return expression.updateHeader(header);
 }
 
 
-ExpressionTransform::ExpressionTransform(const Block & header_, ExpressionActionsPtr expression_)
-    : ISimpleTransform(header_, transformHeader(header_, expression_->getActionsDAG()), false)
+ExpressionTransform::ExpressionTransform(const Block & header_, ExpressionActionsPtr expression_, StorageMetadataPtr metadata_snapshot_)
+    : ISimpleTransform(header_, transformHeader(header_, expression_->getActionsDAG(), metadata_snapshot_), false)
     , expression(std::move(expression_))
+    , metadata_snapshot(metadata_snapshot_)
 {
 }
 
@@ -21,6 +26,9 @@ void ExpressionTransform::transform(Chunk & chunk)
 {
     size_t num_rows = chunk.getNumRows();
     auto block = getInputPort().getHeader().cloneWithColumns(chunk.detachColumns());
+
+    if (metadata_snapshot && metadata_snapshot->hasImplicitColumn())
+        MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(block, metadata_snapshot, metadata_snapshot->secondary_indices);
 
     expression->execute(block, num_rows);
 

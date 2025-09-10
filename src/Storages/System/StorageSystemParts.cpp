@@ -127,6 +127,7 @@ Name of the data part. The part naming structure can be used to determine many a
         {"rows_where_ttl_info.max",                     std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime>()), "The maximum value of the calculated TTL expression within this part. Used to understand whether we have all rows with expired TTL."},
 
         {"projections",                                 std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()), "The list of projection names calculated for this part."},
+        {"implicit_columns",                            std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>()), "The implicit column names for MapV2"},
 
         {"visible",                                     std::make_shared<DataTypeUInt8>(), "Flag which indicated whether this part is visible for SELECT queries."},
         {"creation_tid",                                getTransactionIDDataType(), "ID of transaction that has created/is trying to create this object."},
@@ -340,6 +341,18 @@ void StorageSystemParts::processNextStorage(
 
         if (columns_mask[src_index++])
             columns[res_index++]->insert(projections);
+
+        if (columns_mask[src_index++])
+        {
+            Array implicit_column_names;
+            implicit_column_names.reserve(part->getImplicitColumsMap().size());
+
+            for (const auto & [map_v2_name, implicit_columns] : part->getImplicitColumsMap())
+                for (const auto & implicit_column : implicit_columns)
+                    implicit_column_names.emplace_back(implicit_column.name);
+
+            columns[res_index++]->insert(implicit_column_names);
+        }
 
         if (columns_mask[src_index++])
         {

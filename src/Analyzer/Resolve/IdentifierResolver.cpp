@@ -31,6 +31,8 @@
 
 #include <Core/Settings.h>
 #include <iostream>
+#include <Common/checkImplicitColumn.h>
+#include <DataTypes/DataTypeMapV2.h>
 
 namespace DB
 {
@@ -724,6 +726,23 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
         auto lookup_result = tryResolveIdentifierFromStorage(identifier, table_expression_node, table_expression_data, scope, 0 /*identifier_column_qualifier_parts*/, true /*can_be_not_found*/);
         if (lookup_result.resolved_identifier)
             return lookup_result;
+    }
+
+    /// For implicit columns
+    if (auto implicit_column = extractImplicitColumn(identifier.getFullName()))
+    {
+        Identifier map_v2_identifier(implicit_column->first);
+        auto resolved_map_v2_identifier
+            = tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 0);
+
+        const auto & map_v2_column_node = resolved_map_v2_identifier->as<ColumnNode &>();
+        const auto & map_v2_column = map_v2_column_node.getColumn();
+        if (isMapV2(map_v2_column.type))
+        {
+            const auto * map_v2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_column.type.get());
+            return std::make_shared<ColumnNode>(
+                NameAndTypePair{identifier.getFullName(), map_v2_type->getValueType()}, map_v2_column_node.getColumnSource());
+        }
     }
 
     if (identifier.getPartsSize() == 1)

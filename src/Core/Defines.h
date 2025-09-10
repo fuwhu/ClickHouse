@@ -120,6 +120,8 @@ static constexpr auto DEFAULT_PAGE_CACHE_MIN_SIZE = 100_MiB;
 /// It's ok that max < min. Max takes precedence, i.e. max = 0 disables the cache even if min > 0.
 static constexpr auto DEFAULT_PAGE_CACHE_MAX_SIZE = 0_MiB;
 
+static constexpr auto IMPLICIT_DELIMITER = "_ICDS_";
+
 /// Query profiler cannot work with sanitizers.
 /// Sanitizers are using quick "frame walking" stack unwinding (this implies -fno-omit-frame-pointer)
 /// And they do unwinding frequently (on every malloc/free, thread/mutex operations, etc).

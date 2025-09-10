@@ -32,12 +32,13 @@ static ITransformingStep::Traits getTraits(const ActionsDAG & actions)
     };
 }
 
-ExpressionStep::ExpressionStep(const Header & input_header_, ActionsDAG actions_dag_)
+ExpressionStep::ExpressionStep(const Header & input_header_, ActionsDAG actions_dag_, StorageMetadataPtr metadata_snapshot_)
     : ITransformingStep(
         input_header_,
-        ExpressionTransform::transformHeader(input_header_, actions_dag_),
+        ExpressionTransform::transformHeader(input_header_, actions_dag_, metadata_snapshot_),
         getTraits(actions_dag_))
     , actions_dag(std::move(actions_dag_))
+    , metadata_snapshot(metadata_snapshot_)
 {
 }
 
@@ -47,7 +48,7 @@ void ExpressionStep::transformPipeline(QueryPipelineBuilder & pipeline, const Bu
 
     pipeline.addSimpleTransform([&](const Block & header)
     {
-        return std::make_shared<ExpressionTransform>(header, expression);
+        return std::make_shared<ExpressionTransform>(header, expression, metadata_snapshot);
     });
 
     if (!blocksHaveEqualStructure(pipeline.getHeader(), *output_header))
@@ -60,7 +61,7 @@ void ExpressionStep::transformPipeline(QueryPipelineBuilder & pipeline, const Bu
 
         pipeline.addSimpleTransform([&](const Block & header)
         {
-            return std::make_shared<ExpressionTransform>(header, convert_actions);
+            return std::make_shared<ExpressionTransform>(header, convert_actions, metadata_snapshot);
         });
     }
 }
@@ -80,12 +81,14 @@ void ExpressionStep::describeActions(JSONBuilder::JSONMap & map) const
 
 void ExpressionStep::updateOutputHeader()
 {
-    output_header = ExpressionTransform::transformHeader(input_headers.front(), actions_dag);
+    output_header = ExpressionTransform::transformHeader(input_headers.front(), actions_dag, metadata_snapshot);
 }
 
 void ExpressionStep::serialize(Serialization & ctx) const
 {
     actions_dag.serialize(ctx.out, ctx.registry);
+
+    /// TODO : to serialize `metadata_snapshot` as well if it is not null.
 }
 
 std::unique_ptr<IQueryPlanStep> ExpressionStep::deserialize(Deserialization & ctx)
@@ -93,6 +96,8 @@ std::unique_ptr<IQueryPlanStep> ExpressionStep::deserialize(Deserialization & ct
     ActionsDAG actions_dag = ActionsDAG::deserialize(ctx.in, ctx.registry, ctx.context);
     if (ctx.input_headers.size() != 1)
         throw Exception(ErrorCodes::INCORRECT_DATA, "ExpressionStep must have one input stream");
+
+    /// TODO : to deserialize `metadata_snapshot` as well if it is not null.
 
     return std::make_unique<ExpressionStep>(ctx.input_headers.front(), std::move(actions_dag));
 }

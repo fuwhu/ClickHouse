@@ -39,6 +39,7 @@ enum class FieldBinaryTypeIndex: uint8_t
     Bool = 0x13,
     Object = 0x14,
     AggregateFunctionState = 0x15,
+    MapV2 = 0x16,
 
     NegativeInfinity = 0xFE,
     PositiveInfinity = 0xFF,
@@ -62,6 +63,7 @@ public:
     void operator() (const Array & x, WriteBuffer & buf) const;
     void operator() (const Tuple & x, WriteBuffer & buf) const;
     void operator() (const Map & x, WriteBuffer & buf) const;
+    void operator() (const MapV2 & x, WriteBuffer & buf) const;
     void operator() (const Object & x, WriteBuffer & buf) const;
     void operator() (const DecimalField<Decimal32> & x, WriteBuffer & buf) const;
     void operator() (const DecimalField<Decimal64> & x, WriteBuffer & buf) const;
@@ -214,6 +216,19 @@ void FieldVisitorEncodeBinary::operator() (const Map & x, WriteBuffer & buf) con
     }
 }
 
+void FieldVisitorEncodeBinary::operator() (const MapV2 & x, WriteBuffer & buf) const
+{
+    writeBinary(UInt8(FieldBinaryTypeIndex::MapV2), buf);
+    size_t size = x.size();
+    writeVarUInt(size, buf);
+    for (size_t i = 0; i < size; ++i)
+    {
+        const Tuple & key_and_value = x[i].safeGet<Tuple>();
+        Field::dispatch([&buf] (const auto & value) { FieldVisitorEncodeBinary()(value, buf); }, key_and_value[0]);
+        Field::dispatch([&buf] (const auto & value) { FieldVisitorEncodeBinary()(value, buf); }, key_and_value[1]);
+    }
+}
+
 void FieldVisitorEncodeBinary::operator() (const Object & x, WriteBuffer & buf) const
 {
     writeBinary(UInt8(FieldBinaryTypeIndex::Object), buf);
@@ -351,6 +366,20 @@ Field decodeField(ReadBuffer & buf)
             size_t size;
             readVarUInt(size, buf);
             Map map;
+            for (size_t i = 0; i != size; ++i)
+            {
+                Tuple key_and_value;
+                key_and_value.push_back(decodeField(buf));
+                key_and_value.push_back(decodeField(buf));
+                map.push_back(key_and_value);
+            }
+            return map;
+        }
+        case FieldBinaryTypeIndex::MapV2:
+        {
+            size_t size;
+            readVarUInt(size, buf);
+            MapV2 map;
             for (size_t i = 0; i != size; ++i)
             {
                 Tuple key_and_value;

@@ -6,6 +6,8 @@
 #include <Common/quoteString.h>
 
 #include <sparsehash/dense_hash_set>
+#include <Common/checkImplicitColumn.h>
+#include <DataTypes/DataTypeMapV2.h>
 
 namespace DB
 {
@@ -133,6 +135,20 @@ std::optional<NameAndTypePair> StorageSnapshot::tryGetColumn(const GetColumnsOpt
             return NameAndTypePair{virtual_column->name, virtual_column->type};
     }
 
+    if (metadata->hasImplicitColumn())
+    {
+        auto implicit_column = extractImplicitColumn(column_name);
+        if (implicit_column)
+        {
+            auto map_v2_col = columns.tryGetColumn(options, implicit_column->first);
+            if (map_v2_col)
+            {
+                const auto * map_v2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_col->type.get());
+                return NameAndTypePair(column_name, map_v2_type->getValueType());
+            }
+        }
+    }
+
     return {};
 }
 
@@ -171,8 +187,27 @@ Block StorageSnapshot::getSampleBlockForColumns(const Names & column_names) cons
         }
         else
         {
-            throw Exception(ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
-                "Column {} not found in table {}", backQuote(column_name), storage.getStorageID().getNameForLogs());
+            auto implicit_column = extractImplicitColumn(column_name);
+            if (!implicit_column)
+                throw Exception(
+                    ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                    "Column {} not found in table {}",
+                    backQuote(column_name),
+                    storage.getStorageID().getNameForLogs());
+
+            auto map_v2_col = columns.tryGetColumnOrSubcolumn(GetColumnsOptions::All, implicit_column->first);
+            if (!map_v2_col)
+                throw Exception(
+                    ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                    "Implicit column {} found for non-exist mapV2 column {}",
+                    backQuote(column_name),
+                    backQuote(implicit_column->first));
+
+            if (const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_col->type.get()))
+            {
+                const auto & implicit_col_type = mapv2_type->getValueType();
+                res.insert({implicit_col_type->createColumn(), implicit_col_type, column_name});
+            }
         }
     }
     return res;

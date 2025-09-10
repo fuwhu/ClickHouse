@@ -5051,6 +5051,36 @@ size_t MergeTreeData::getNumberOfOutdatedPartsWithExpiredRemovalTime() const
     return res;
 }
 
+std::map<String, std::set<String>> MergeTreeData::getImplicitColumnsMap() const
+{
+    std::map<String, std::set<String>> implicit_columns_map;
+
+    for (const auto & data_part : getDataPartsForInternalUsage())
+    {
+        std::set<String> distinct_implicit_names;
+        for (const auto & map_columns : data_part->getImplicitColumsMap())
+        {
+            if (implicit_columns_map.find(map_columns.first) == implicit_columns_map.end())
+            {
+                std::set<String> distinct_column_names;
+                for (const auto & type_name : map_columns.second)
+                    distinct_column_names.insert(type_name.name);
+
+                implicit_columns_map.insert({map_columns.first, std::move(distinct_column_names)});
+            }
+            else
+            {
+                auto & distinct_column_names = implicit_columns_map[map_columns.first];
+
+                for (const auto & type_name : map_columns.second)
+                    distinct_column_names.insert(type_name.name);
+            }
+        }
+    }
+
+    return implicit_columns_map;
+}
+
 std::pair<size_t, size_t> MergeTreeData::getMaxPartsCountAndSizeForPartitionWithState(DataPartState state) const
 {
     auto lock = lockParts();
@@ -8484,6 +8514,11 @@ try
         part_log_elem.bytes_uncompressed = result_part->getBytesUncompressedOnDisk();
         part_log_elem.rows = result_part->rows_count;
         part_log_elem.part_type = result_part->getType();
+
+        UInt16 implicit_column_count = 0;
+        for (const auto & p : result_part->getImplicitColumsMap())
+            implicit_column_count += p.second.size();
+        part_log_elem.implicit_column_count = implicit_column_count;
     }
 
     part_log_elem.source_part_names.reserve(source_parts.size());

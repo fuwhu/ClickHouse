@@ -31,6 +31,7 @@ bool FieldVisitorSum::operator() (String &) const { throw Exception(ErrorCodes::
 bool FieldVisitorSum::operator() (Array &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum Arrays"); }
 bool FieldVisitorSum::operator() (Tuple &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum Tuples"); }
 bool FieldVisitorSum::operator() (Map &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum Maps"); }
+bool FieldVisitorSum::operator() (MapV2 &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum MapV2s"); }
 bool FieldVisitorSum::operator() (Object &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum Objects"); }
 bool FieldVisitorSum::operator() (UUID &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum UUIDs"); }
 bool FieldVisitorSum::operator() (IPv4 &) const { throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot sum IPv4s"); }

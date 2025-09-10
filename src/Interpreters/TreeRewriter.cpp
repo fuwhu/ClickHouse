@@ -48,12 +48,14 @@
 
 #include <DataTypes/DataTypeLowCardinality.h>
 #include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <DataTypes/DataTypeObjectDeprecated.h>
 #include <DataTypes/NestedUtils.h>
 
 #include <IO/WriteHelpers.h>
 #include <Storages/IStorage.h>
 #include <Storages/StorageJoin.h>
+#include <Common/checkImplicitColumn.h>
 #include <Common/checkStackSize.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/StorageView.h>
@@ -1051,6 +1053,40 @@ bool TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         source_column_names.insert(column.name);
 
     NameSet required = columns_context.requiredColumns();
+
+    for (const auto & column_name : required)
+    {
+        if (source_column_names.find(column_name) != source_column_names.end())
+            continue;
+
+        auto implicit_column = extractImplicitColumn(column_name);
+        if (implicit_column)
+        {
+            std::string col_map_v2_name = implicit_column->first;
+
+            const auto & map_col_list = source_columns.filter(NameSet{col_map_v2_name});
+            if (!map_col_list.empty())
+            {
+                const auto * map_v2_col = typeid_cast<const DataTypeMapV2 *>(map_col_list.front().type.get());
+                if (map_v2_col)
+                {
+                    NameAndTypePair implicit_col = {column_name, map_v2_col->getValueType()};
+                    source_columns.push_back(implicit_col);
+                    source_column_names.insert(implicit_col.name);
+                    source_columns_set.insert(implicit_col.name);
+                }
+                else
+                {
+                    throw Exception(
+                        ErrorCodes::LOGICAL_ERROR,
+                        "Column name {} contains delimiter of MapV2, but column {} is not of MapV2 type",
+                        column_name,
+                        col_map_v2_name);
+                }
+            }
+        }
+    }
+
     if (columns_context.has_table_join)
     {
         NameSet available_columns;
@@ -1246,12 +1282,24 @@ bool TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         WriteBufferFromOwnString ss;
         ss << "Missing columns:";
         for (const auto & name : unknown_required_source_columns)
-            ss << " '" << name << "'";
+        {
+            auto implicit_column = extractImplicitColumn(name);
+            if (implicit_column)
+                ss << " '" << implicit_column->first << "'";
+            else
+                ss << " '" << name << "'";
+        }
         ss << " while processing: '" << query->formatWithSecretsOneLine() << "'";
 
         ss << ", required columns:";
         for (const auto & name : columns_context.requiredColumns())
-            ss << " '" << name << "'";
+        {
+            auto implicit_column = extractImplicitColumn(name);
+            if (implicit_column)
+                ss << " '" << implicit_column->first << "'";
+            else
+                ss << " '" << name << "'";
+        }
 
         if (storage)
         {
@@ -1259,7 +1307,10 @@ bool TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
             std::set<String> used_hints;
             for (const auto & col : columns_context.requiredColumns())
             {
-                for (const auto & hint : storage->getHints(col))
+                std::vector<String> hints_from_storage;
+                auto implicit_column = extractImplicitColumn(col);
+                hints_from_storage = implicit_column ? storage->getHints(implicit_column->first) : storage->getHints(col);
+                for (const auto & hint : hints_from_storage)
                 {
                     // We want to preserve the ordering of the hints
                     // (as they are ordered by Levenshtein distance)
