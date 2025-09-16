@@ -4,9 +4,10 @@
 #include <Storages/IStorage.h>
 #include <DataTypes/ObjectUtils.h>
 #include <Common/quoteString.h>
-
 #include <sparsehash/dense_hash_set>
 #include <Common/checkImplicitColumn.h>
+#include "DataTypes/IDataType.h"
+#include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeMapV2.h>
 
 namespace DB
@@ -140,12 +141,35 @@ std::optional<NameAndTypePair> StorageSnapshot::tryGetColumn(const GetColumnsOpt
         auto implicit_column = extractImplicitColumn(column_name);
         if (implicit_column)
         {
-            auto map_v2_col = columns.tryGetColumn(options, implicit_column->first);
-            if (map_v2_col)
+            auto mapv2_col = columns.tryGetColumn(options, implicit_column->first);
+            if (mapv2_col)
             {
-                const auto * map_v2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_col->type.get());
-                return NameAndTypePair(column_name, map_v2_type->getValueType());
-            }
+                const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(mapv2_col->type.get());
+                if (!mapv2_type)
+                    throw Exception(
+                            ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                            "Implicit column {} found for column {} which is not MapV2.",
+                            backQuote(column_name),
+                            backQuote(implicit_column->first));
+                NameAndTypePair col_with_type;
+                if (isImplicitSubColumn(column_name))
+                {
+                    WhichDataType which(mapv2_type->getValueType());
+                    if (isImplicitNullMapSubColumn(column_name) && which.isNullable())
+                        col_with_type = NameAndTypePair{column_name, std::make_shared<DataTypeUInt8>()};
+                    else if (isImplicitSizeSubColumn(column_name) && which.isArray())
+                        col_with_type = NameAndTypePair{column_name, std::make_shared<DataTypeUInt64>()};
+                    else
+                        throw Exception(ErrorCodes::LOGICAL_ERROR, "invalid implicit sub-column {}.", column_name);
+                } else
+                    col_with_type = NameAndTypePair{column_name, mapv2_type->getValueType()};
+                return col_with_type;
+            } else
+                throw Exception(
+                        ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                        "Implicit column {} found for non-exist mapV2 column {}",
+                        backQuote(column_name),
+                        backQuote(implicit_column->first));
         }
     }
 
@@ -195,19 +219,38 @@ Block StorageSnapshot::getSampleBlockForColumns(const Names & column_names) cons
                     backQuote(column_name),
                     storage.getStorageID().getNameForLogs());
 
-            auto map_v2_col = columns.tryGetColumnOrSubcolumn(GetColumnsOptions::All, implicit_column->first);
-            if (!map_v2_col)
+            auto mapv2_col = columns.tryGetColumnOrSubcolumn(GetColumnsOptions::All, implicit_column->first);
+            if (!mapv2_col)
                 throw Exception(
                     ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
                     "Implicit column {} found for non-exist mapV2 column {}",
                     backQuote(column_name),
                     backQuote(implicit_column->first));
 
-            if (const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_col->type.get()))
+            if (const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(mapv2_col->type.get()))
             {
-                const auto & implicit_col_type = mapv2_type->getValueType();
-                res.insert({implicit_col_type->createColumn(), implicit_col_type, column_name});
-            }
+                if (isImplicitSubColumn(column_name))
+                {
+                    WhichDataType which(mapv2_type->getValueType());
+                    if (isImplicitNullMapSubColumn(column_name) && which.isNullable())
+                    {
+                        auto col_type = std::make_shared<DataTypeUInt8>();
+                        res.insert({col_type->createColumn(), col_type, column_name});
+                    } else if (isImplicitSizeSubColumn(column_name) && which.isArray())
+                    {
+                        auto col_type = std::make_shared<DataTypeUInt64>();
+                        res.insert({col_type->createColumn(), col_type, column_name});
+                    }
+                } else
+                {
+                    res.insert({mapv2_type->getValueType()->createColumn(), mapv2_type->getValueType(), column_name});
+                }
+            } else
+                throw Exception(
+                    ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                    "Implicit column {} found for column {} which is not MapV2.",
+                    backQuote(column_name),
+                    backQuote(implicit_column->first));
         }
     }
     return res;

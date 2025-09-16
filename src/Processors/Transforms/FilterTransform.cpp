@@ -49,7 +49,6 @@ Block FilterTransform::transformHeader(
     const Block & header, const ActionsDAG * expression, const String & filter_column_name, bool remove_filter_column)
 {
     Block result = expression ? expression->updateHeader(header) : header;
-
     auto filter_type = result.getByName(filter_column_name).type;
     if (!canUseType(filter_type))
         throw Exception(ErrorCodes::ILLEGAL_TYPE_OF_COLUMN_FOR_FILTER,
@@ -152,7 +151,6 @@ void FilterTransform::doTransform(Chunk & chunk)
     size_t num_rows_before_filtration = chunk.getNumRows();
     auto columns = chunk.detachColumns();
     DataTypes types;
-
     {
         Block block = getInputPort().getHeader().cloneWithColumns(columns);
         columns.clear();

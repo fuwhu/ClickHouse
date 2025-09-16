@@ -14,10 +14,14 @@
 #include <DataTypes/ObjectUtils.h>
 #include <Interpreters/RequiredSourceColumnsVisitor.h>
 #include <Common/checkStackSize.h>
+#include <Common/checkImplicitColumn.h>
+#include "DataTypes/IDataType.h"
 #include <Storages/ColumnsDescription.h>
 #include <DataTypes/NestedUtils.h>
+#include <DataTypes/DataTypeMapV2.h>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnConst.h>
+#include <Columns/ColumnsNumber.h>
 #include <DataTypes/DataTypeArray.h>
 #include <Storages/StorageInMemoryMetadata.h>
 
@@ -25,9 +29,10 @@
 namespace DB
 {
 
-namespace ErrorCode
+namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
+    extern const int NOT_FOUND_COLUMN_IN_BLOCK;
 }
 
 namespace
@@ -281,6 +286,15 @@ static ColumnPtr createColumnWithDefaultValue(const IDataType & data_type, const
     return ColumnConst::create(std::move(column), num_rows)->convertToFullColumnIfConst();
 }
 
+static ColumnPtr createNullMap(size_t num_rows, bool is_null)
+{
+    int value = is_null ? 1 : 0;
+    auto single_value_column = ColumnUInt8::create();
+    single_value_column->insert(value);
+
+    return ColumnConst::create(std::move(single_value_column),num_rows)->convertToFullColumnIfConst();
+}
+
 static bool hasDefault(const StorageMetadataPtr & metadata_snapshot, const NameAndTypePair & column)
 {
     if (!metadata_snapshot)
@@ -405,10 +419,32 @@ void fillMissingColumns(
 
             for (auto it = current_offsets.rbegin(); it != current_offsets.rend(); ++it)
                 res_columns[i] = ColumnArray::create(res_columns[i], *it);
-        }
-        else
+        } else
         {
-            res_columns[i] = createColumnWithDefaultValue(*requested_column->getTypeInStorage(), requested_column->getSubcolumnName(), num_rows);
+            const auto & column_name = requested_column->name;
+            if (auto implicit_column = extractImplicitColumn(column_name))
+            {
+                auto map_v2_col = metadata_snapshot->getColumns().tryGetColumnOrSubcolumn(GetColumnsOptions::All, implicit_column->first);
+                if (!map_v2_col)
+                    throw Exception(
+                        ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                        "Implicit column {} found for non-exist mapV2 column {}",
+                        backQuote(column_name),
+                        backQuote(implicit_column->first));
+                const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_col->type.get());
+                if (!mapv2_type)
+                    throw Exception(
+                            ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                            "Implicit column {} found for column {} which is not MapV2.",
+                            backQuote(column_name),
+                            backQuote(implicit_column->first));
+                if (isImplicitNullMapSubColumn(column_name) && mapv2_type->getValueType()->isNullable())
+                {
+                    res_columns[i] = createNullMap(num_rows, true);
+                } else
+                    res_columns[i] = createColumnWithDefaultValue(*requested_column->getTypeInStorage(), requested_column->getSubcolumnName(), num_rows);
+            } else
+                res_columns[i] = createColumnWithDefaultValue(*requested_column->getTypeInStorage(), requested_column->getSubcolumnName(), num_rows);
         }
     }
 }

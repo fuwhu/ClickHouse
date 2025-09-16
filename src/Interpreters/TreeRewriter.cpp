@@ -57,6 +57,7 @@
 #include <Storages/StorageJoin.h>
 #include <Common/checkImplicitColumn.h>
 #include <Common/checkStackSize.h>
+#include "DataTypes/IDataType.h"
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/StorageView.h>
 
@@ -99,6 +100,7 @@ namespace ErrorCodes
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
     extern const int UNKNOWN_IDENTIFIER;
     extern const int UNEXPECTED_EXPRESSION;
+    extern const int NOT_FOUND_COLUMN_IN_BLOCK;
 }
 
 namespace
@@ -1063,27 +1065,39 @@ bool TreeRewriterResult::collectUsedColumns(const ASTPtr & query, bool is_select
         if (implicit_column)
         {
             std::string col_map_v2_name = implicit_column->first;
-
-            const auto & map_col_list = source_columns.filter(NameSet{col_map_v2_name});
-            if (!map_col_list.empty())
+            const auto & mapv2_col_list = source_columns.filter(NameSet{col_map_v2_name});
+            if (!mapv2_col_list.empty())
             {
-                const auto * map_v2_col = typeid_cast<const DataTypeMapV2 *>(map_col_list.front().type.get());
-                if (map_v2_col)
+                const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(mapv2_col_list.front().type.get());
+                if (mapv2_type)
                 {
-                    NameAndTypePair implicit_col = {column_name, map_v2_col->getValueType()};
-                    source_columns.push_back(implicit_col);
-                    source_column_names.insert(implicit_col.name);
-                    source_columns_set.insert(implicit_col.name);
-                }
-                else
-                {
+                    NameAndTypePair col_with_type;
+                    if (isImplicitSubColumn(column_name))
+                    {
+                        WhichDataType which(mapv2_type->getValueType());
+                        if (isImplicitNullMapSubColumn(column_name) && which.isNullable())
+                            col_with_type = NameAndTypePair{column_name, std::make_shared<DataTypeUInt8>()};
+                        else if (isImplicitSizeSubColumn(column_name) && which.isArray())
+                            col_with_type = NameAndTypePair{column_name, std::make_shared<DataTypeUInt64>()};
+                        else
+                            throw Exception(ErrorCodes::LOGICAL_ERROR, "invalid implicit sub-column {}.", column_name);
+                    } else
+                        col_with_type = NameAndTypePair{column_name, mapv2_type->getValueType()};
+                    source_columns.push_back(col_with_type);
+                    source_column_names.insert(col_with_type.name);
+                    source_columns_set.insert(col_with_type.name);
+                } else
                     throw Exception(
                         ErrorCodes::LOGICAL_ERROR,
                         "Column name {} contains delimiter of MapV2, but column {} is not of MapV2 type",
                         column_name,
                         col_map_v2_name);
-                }
-            }
+            } else
+                throw Exception(
+                    ErrorCodes::NOT_FOUND_COLUMN_IN_BLOCK,
+                    "Implicit column {} found for non-exist column {} in source columns.",
+                    backQuote(column_name),
+                    backQuote(col_map_v2_name));
         }
     }
 

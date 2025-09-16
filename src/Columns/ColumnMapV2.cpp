@@ -10,9 +10,11 @@
 #include <IO/Operators.h>
 #include <IO/WriteBufferFromString.h>
 #include <boost/algorithm/string/predicate.hpp>
+#include "Common/checkImplicitColumn.h"
 #include <Common/WeakHash.h>
 #include <Common/assert_cast.h>
 #include <Common/typeid_cast.h>
+#include "DataTypes/IDataType.h"
 
 
 namespace DB
@@ -447,8 +449,12 @@ void ColumnMapV2::constructImplicitColumns() const
             const auto & v = column_value[element_num + ps];
             const auto & key = k.toString();
 
-            if (boost::algorithm::contains(key, IMPLICIT_DELIMITER) || boost::algorithm::contains(key, "/")
-                || boost::algorithm::contains(key, "\\"))
+            WhichDataType which(value_type);
+            if (boost::algorithm::contains(key, IMPLICIT_DELIMITER)
+                || boost::algorithm::contains(key, "/")
+                || boost::algorithm::contains(key, "\\")
+                || (which.isNullable() && isImplicitNullMapSubColumn(key))
+                || (which.isArray() && isImplicitSizeSubColumn(key)))
                 throw Exception(ErrorCodes::INCORRECT_DATA, "Invalid key name `{}` for MapV2", key);
 
             auto it = names_and_columns.find(key);

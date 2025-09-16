@@ -32,7 +32,9 @@
 #include <Core/Settings.h>
 #include <iostream>
 #include <Common/checkImplicitColumn.h>
+#include "DataTypes/IDataType.h"
 #include <DataTypes/DataTypeMapV2.h>
+#include <DataTypes/DataTypesNumber.h>
 
 namespace DB
 {
@@ -49,6 +51,7 @@ namespace ErrorCodes
     extern const int INVALID_IDENTIFIER;
     extern const int UNSUPPORTED_METHOD;
     extern const int LOGICAL_ERROR;
+    extern const int ILLEGAL_COLUMN;
 }
 
 QueryTreeNodePtr IdentifierResolver::convertJoinedColumnTypeToNullIfNeeded(
@@ -729,7 +732,8 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
     }
 
     /// For implicit columns
-    if (auto implicit_column = extractImplicitColumn(identifier.getFullName()))
+    auto col_name = identifier.getFullName();
+    if (auto implicit_column = extractImplicitColumn(col_name))
     {
         Identifier map_v2_identifier(implicit_column->first);
         auto resolved_map_v2_identifier
@@ -739,10 +743,26 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
         const auto & map_v2_column = map_v2_column_node.getColumn();
         if (isMapV2(map_v2_column.type))
         {
-            const auto * map_v2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_column.type.get());
-            return std::make_shared<ColumnNode>(
-                NameAndTypePair{identifier.getFullName(), map_v2_type->getValueType()}, map_v2_column_node.getColumnSource());
-        }
+            const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_column.type.get());
+            NameAndTypePair col_with_type;
+            if (isImplicitSubColumn(col_name))
+            {
+                WhichDataType which(mapv2_type->getValueType());
+                if (isImplicitNullMapSubColumn(col_name) && which.isNullable())
+                    col_with_type = NameAndTypePair{col_name, std::make_shared<DataTypeUInt8>()};
+                else if (isImplicitSizeSubColumn(col_name) && which.isArray())
+                    col_with_type = NameAndTypePair{col_name, std::make_shared<DataTypeUInt64>()};
+                else
+                    throw Exception(ErrorCodes::LOGICAL_ERROR, "invalid implicit sub-column {}.", col_name);
+            } else
+                col_with_type = NameAndTypePair{col_name, mapv2_type->getValueType()};
+            return std::make_shared<ColumnNode>(col_with_type, map_v2_column_node.getColumnSource());
+        } else
+            throw Exception(
+                    ErrorCodes::ILLEGAL_COLUMN,
+                    "Column name {} contains delimiter of MapV2, but column {} is not of MapV2 type",
+                    backQuote(col_name),
+                    backQuote(implicit_column->first));
     }
 
     if (identifier.getPartsSize() == 1)

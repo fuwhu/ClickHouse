@@ -25,6 +25,7 @@
 #include <Common/HashTable/HashMap.h>
 #include <Common/OpenTelemetryTraceContext.h>
 #include <Common/typeid_cast.h>
+#include "DataTypes/IDataType.h"
 #include <DataTypes/DataTypeMapV2.h>
 #include <Columns/ColumnMapV2.h>
 #include <Core/Settings.h>
@@ -1052,10 +1053,21 @@ void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(
 
         if (auto implicit_column = extractImplicitColumn(col_name))
         {
-            const auto * map_v2_type
-                = dynamic_cast<const DataTypeMapV2 *>(metadata_snapshot->getColumns().get(implicit_column->first).type.get());
-            if (map_v2_type)
-                non_existing_skip_indices_columns.emplace_back(col_name, map_v2_type->getValueType());
+            const auto * mapv2_type = dynamic_cast<const DataTypeMapV2 *>(metadata_snapshot->getColumns().get(implicit_column->first).type.get());
+            if (mapv2_type)
+            {
+                if (isImplicitSubColumn(col_name))
+                {
+                    WhichDataType which(mapv2_type->getValueType());
+                    if (isImplicitNullMapSubColumn(col_name) && which.isNullable())
+                        non_existing_skip_indices_columns.emplace_back(col_name, std::make_shared<DataTypeUInt8>());
+                    else if (isImplicitSizeSubColumn(col_name) && which.isArray())
+                        non_existing_skip_indices_columns.emplace_back(col_name, std::make_shared<DataTypeUInt64>());
+                    else
+                        throw Exception(ErrorCodes::LOGICAL_ERROR, "invalid implicit sub-column {}.", col_name);
+                } else
+                    non_existing_skip_indices_columns.emplace_back(col_name, mapv2_type->getValueType());
+            }
             else
                 throw Exception(
                     ErrorCodes::LOGICAL_ERROR, "The parent column of {} is not of MapV2 type, which is illegal here.", col_name);
