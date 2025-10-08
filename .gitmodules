@@ -3,7 +3,7 @@
 # more confusing than useful.
 [submodule "contrib/jwt-cpp"]
 	path = contrib/jwt-cpp
-	url = https://github.com/Thalhammer/jwt-cpp
+    url = git@git.bilibili.co:public-group/github.com/thalhammer/jwt-cpp.git
 [submodule "contrib/zstd"]
 	path = contrib/zstd
 	url = git@git.bilibili.co:public-group/github.com/facebook/zstd.git
@@ -105,10 +105,10 @@
 	url = git@git.bilibili.co:public-group/github.com/ClickHouse/icudata.git
 [submodule "contrib/icu"]
 	path = contrib/icu
-	url = git@git.bilibili.co:public-group/github.com/unicode-org/icu.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/icu.git
 [submodule "contrib/flatbuffers"]
 	path = contrib/flatbuffers
-	url = git@git.bilibili.co:public-group/github.com/ClickHouse/flatbuffers.git
+    url = git@git.bilibili.co:public-group/github.com/unicode-org/icu.git
 [submodule "contrib/replxx"]
 	path = contrib/replxx
 	url = git@git.bilibili.co:public-group/github.com/ClickHouse/replxx.git
@@ -329,7 +329,7 @@
 	url = git@git.bilibili.co:public-group/github.com/ClickHouse/usearch.git
 [submodule "contrib/SimSIMD"]
 	path = contrib/SimSIMD
-	url = git@git.bilibili.co:public-group/github.com/ashvardanian/simsimd.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/simsimd.git
 [submodule "contrib/FP16"]
 	path = contrib/FP16
 	url = git@git.bilibili.co:public-group/github.com/maratyszcza/fp16.git
@@ -347,7 +347,7 @@
 	url = git@git.bilibili.co:public-group/github.com/ada-url/idna.git
 [submodule "contrib/google-cloud-cpp"]
 	path = contrib/google-cloud-cpp
-	url = https://github.com/ClickHouse/google-cloud-cpp.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/google-cloud-cpp.git
 [submodule "contrib/rust_vendor"]
 	path = contrib/rust_vendor
 	url = git@git.bilibili.co:public-group/github.com/ClickHouse/rust_vendor.git
@@ -359,19 +359,19 @@
 	url = git@git.bilibili.co:public-group/github.com/google/double-conversion.git
 [submodule "contrib/mongo-cxx-driver"]
 	path = contrib/mongo-cxx-driver
-	url = https://github.com/ClickHouse/mongo-cxx-driver.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/mongo-cxx-driver.git
 [submodule "contrib/mongo-c-driver"]
 	path = contrib/mongo-c-driver
-	url = https://github.com/ClickHouse/mongo-c-driver.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/mongo-c-driver.git
 [submodule "contrib/numactl"]
 	path = contrib/numactl
 	url = git@git.bilibili.co:public-group/github.com/ClickHouse/numactl.git
 [submodule "contrib/postgres"]
 	path = contrib/postgres
-	url = https://github.com/ClickHouse/postgres.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/postgres.git
 [submodule "contrib/delta-kernel-rs"]
 	path = contrib/delta-kernel-rs
-	url = https://github.com/ClickHouse/delta-kernel-rs.git
+    url = git@git.bilibili.co:public-group/github.com/ClickHouse/delta-kernel-rs.git
 [submodule "contrib/SHA3IUF"]
 	path = contrib/SHA3IUF
-	url = https://github.com/brainhub/SHA3IUF.git
+    url = git@git.bilibili.co:public-group/github.com/brainhub/sha3iuf.git
