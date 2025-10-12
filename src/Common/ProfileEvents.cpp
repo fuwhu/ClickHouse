@@ -1027,11 +1027,11 @@ The server successfully detected this situation and will download merged part fr
     M(FilterTransformPassedBytes, "Number of bytes that passed the filter in the query", ValueType::Bytes) \
     M(QueryPreempted, "How many times tasks are paused and waiting due to 'priority' setting", ValueType::Number) \
     \
-    M(RemoteQueryTimeoutCount, "Number of timeout childern queries in distributed query") \
-    M(RemoteTotalLeafQueryCount, "Number of total childern queries in distributed query") \
+    M(RemoteQueryTimeoutCount, "Number of timeout childern queries in distributed query", ValueType::Number) \
+    M(RemoteTotalLeafQueryCount, "Number of total childern queries in distributed query", ValueType::Number) \
     \
-    M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache") \
-    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely") \
+    M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache", ValueType::Number) \
+    M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely", ValueType::Number) \
 
 
 #ifdef APPLY_FOR_EXTERNAL_EVENTS

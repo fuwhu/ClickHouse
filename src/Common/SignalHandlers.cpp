@@ -389,7 +389,7 @@ void SignalListener::onTerminate(std::string_view message, UInt32 thread_num) co
 {
     size_t pos = message.find('\n');
     LOG_FATAL(log, "(version {} ({}), build id: {}, git hash: {}) (from thread {}) {}",
-              VERSION_STRING, BILI_VERSION_STRING, daemon ? daemon->build_id : "", daemon ? daemon->git_hash : "", thread_num, message.substr(0, pos));
+              VERSION_STRING, BILI_VERSION_STRING, build_id(), GIT_HASH, thread_num, message.substr(0, pos));
 
     /// Print trace from std::terminate exception line-by-line to make it easy for grep.
     while (pos != std::string_view::npos)
@@ -423,7 +423,7 @@ try
 
     LOG_FATAL(log, "########## Short fault info ############");
     LOG_FATAL(log, "(version {} ({}), build id: {}, git hash: {}, architecture: {}) (from thread {}) Received signal {}",
-              VERSION_STRING, BILI_VERSION_STRING, daemon ? daemon->build_id : "", daemon ? daemon->git_hash : "",
+              VERSION_STRING, BILI_VERSION_STRING, build_id(), GIT_HASH,
               Poco::Environment::osArchitecture(), thread_num, sig);
 
     std::string signal_description = "Unknown signal";
@@ -489,13 +489,13 @@ try
     if (query_id.empty())
     {
         LOG_FATAL(log, "(version {} ({}), build id: {}, git hash: {}) (from thread {}) (no query) Received signal {} ({})",
-                  VERSION_STRING, BILI_VERSION_STRING, daemon ? daemon->build_id : "", daemon ? daemon->git_hash : "",
+                  VERSION_STRING, BILI_VERSION_STRING, build_id(), GIT_HASH,
                   thread_num, signal_description, sig);
     }
     else
     {
         LOG_FATAL(log, "(version {} ({}), build id: {}, git hash: {}) (from thread {}) (query_id: {}) (query: {}) Received signal {} ({})",
-                  VERSION_STRING, BILI_VERSION_STRING, daemon ? daemon->build_id : "", daemon ? daemon->git_hash : "",
+                  VERSION_STRING, BILI_VERSION_STRING, build_id(), GIT_HASH,
                   thread_num, query_id, query, signal_description, sig);
     }
 

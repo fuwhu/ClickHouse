@@ -82,6 +82,8 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsFloat min_free_disk_ratio_to_perform_insert;
     extern const MergeTreeSettingsBool optimize_row_order;
     extern const MergeTreeSettingsFloat ratio_of_defaults_for_sparse_serialization;
+    extern const MergeTreeSettingsBool implicit_map_duplication;
+    extern const MergeTreeSettingsUInt64 max_implicit_columns;
 }
 
 namespace ErrorCodes
@@ -522,7 +524,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     {
         if (isMapV2(column.type))
         {
-            if (data_settings->implicit_map_duplication)
+            if ((*data_settings)[MergeTreeSetting::implicit_map_duplication])
                 new_columns.emplace_back(column);
 
             NamesAndTypesList implicit_columns;
@@ -553,7 +555,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
                 block.insert(new_col);
             }
 
-            if (past_implicit_cols.size() + new_count > data_settings->max_implicit_columns)
+            if (past_implicit_cols.size() + new_count > (*data_settings)[MergeTreeSetting::max_implicit_columns])
             {
                 ProfileEvents::increment(ProfileEvents::RejectedInserts);
                 throw Exception(
@@ -562,7 +564,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
                     "setting 'max_implicit_columns'",
                     toString(past_implicit_cols.size() + new_count),
                     map_v2_name,
-                    data_settings->max_implicit_columns.toString());
+                    (*data_settings)[MergeTreeSetting::max_implicit_columns].toString());
             }
 
             implicit_columns_map.insert(std::make_pair(map_v2_name, implicit_columns));
@@ -693,7 +695,6 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     VolumePtr data_part_volume = createVolumeFromReservation(reservation, volume);
 
     const auto & global_settings = context->getSettingsRef();
-    const auto & data_settings = data.getSettings();
 
     const UInt64 & min_bytes_to_perform_insert =
             (*data_settings)[MergeTreeSetting::min_free_disk_bytes_to_perform_insert].changed

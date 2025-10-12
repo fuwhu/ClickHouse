@@ -316,7 +316,7 @@ bool NoOpTokenExtractor::nextInString(const char * /*data*/, size_t length, size
     return false;
 }
 
-bool NoOpTokenExtractor::nextInStringLike(const char * /*data*/, size_t /*length*/, size_t * __restrict /*token_start*/, String & /*token_length*/) const
+bool NoOpTokenExtractor::nextInStringLike(const char * /*data*/, size_t /*length*/, size_t * __restrict /*pos*/, String & /*token*/, bool /*set_percent_separator*/) const
 {
     return false;
 }

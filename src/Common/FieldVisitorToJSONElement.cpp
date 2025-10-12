@@ -105,6 +105,24 @@ String FieldVisitorToJSONElement::operator() (const Map & x) const
     return wb.str();
 }
 
+String FieldVisitorToJSONElement::operator() (const MapV2 & x) const
+{
+    WriteBufferFromOwnString wb;
+
+    wb << '{';
+    for (auto it = x.begin(); it != x.end(); ++it)
+    {
+        if (it != x.begin())
+            wb << ", ";
+        auto pair = it->safeGet<Tuple>();
+        wb << formatString(toString(pair[0]));
+        wb << ": " << applyVisitor(*this, pair[1]);
+    }
+    wb << '}';
+
+    return wb.str();
+}
+
 String FieldVisitorToJSONElement::operator() (const Object & x) const
 {
     WriteBufferFromOwnString wb;

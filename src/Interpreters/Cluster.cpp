@@ -530,7 +530,7 @@ Cluster::Cluster(const Poco::Util::AbstractConfiguration & config,
 
                 if (startsWith(replica_key, "replica"))
                 {
-                    bool is_enable = config.getBool(partial_prefix + replica_key + ".is_enable", true);
+                    bool is_enable = config.getBool(prefix + replica_key + ".is_enable", true);
                     if(is_enable)
                     {
                         replica_addresses.emplace_back(config,

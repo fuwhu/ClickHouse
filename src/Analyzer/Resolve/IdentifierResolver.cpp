@@ -30,7 +30,7 @@
 #include <Analyzer/Resolve/TypoCorrection.h>
 
 #include <Core/Settings.h>
-#include <iostream>
+#include <Common/quoteString.h>
 #include <Common/checkImplicitColumn.h>
 #include "DataTypes/IDataType.h"
 #include <DataTypes/DataTypeMapV2.h>
@@ -736,10 +736,10 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
     if (auto implicit_column = extractImplicitColumn(col_name))
     {
         Identifier map_v2_identifier(implicit_column->first);
-        auto resolved_map_v2_identifier
+        auto map_v2_identifier_resolve_result
             = tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 0);
 
-        const auto & map_v2_column_node = resolved_map_v2_identifier->as<ColumnNode &>();
+        const auto & map_v2_column_node = map_v2_identifier_resolve_result.resolved_identifier->as<ColumnNode &>();
         const auto & map_v2_column = map_v2_column_node.getColumn();
         if (isMapV2(map_v2_column.type))
         {
@@ -756,7 +756,9 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
                     throw Exception(ErrorCodes::LOGICAL_ERROR, "invalid implicit sub-column {}.", col_name);
             } else
                 col_with_type = NameAndTypePair{col_name, mapv2_type->getValueType()};
-            return std::make_shared<ColumnNode>(col_with_type, map_v2_column_node.getColumnSource());
+            auto resolved_identifier =  std::make_shared<ColumnNode>(col_with_type, map_v2_column_node.getColumnSource());
+            IdentifierResolveResult result{resolved_identifier, map_v2_identifier_resolve_result.resolve_place};
+            return result;
         } else
             throw Exception(
                     ErrorCodes::ILLEGAL_COLUMN,

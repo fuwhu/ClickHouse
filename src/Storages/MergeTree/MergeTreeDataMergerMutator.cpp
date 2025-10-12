@@ -508,8 +508,16 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
 
         if (!final && selected_parts.size() == 1)
         {
+            auto part = data.getPartIfExists(selected_parts[0].info, {MergeTreeDataPartState::Active});
+            if (!part)
+            {
+                return std::unexpected(SelectMergeFailure{
+                    .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
+                    .explanation = PreformattedMessage::create("Some part does not exist"),
+                });
+            }
             /// rollback merge_update_status of part
-            data.changePartMergeUpdateStatus(selected_parts[0], IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
+            data.changePartMergeUpdateStatus(part, IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
 
             return std::unexpected(SelectMergeFailure{
                 .reason = SelectMergeFailure::Reason::CANNOT_SELECT,
@@ -518,7 +526,7 @@ std::expected<MergeSelectorChoice, SelectMergeFailure> MergeTreeDataMergerMutato
         }
     } else
     {
-        selected_parts = parts;
+        selected_parts = std::move(parts);
     }
 
 

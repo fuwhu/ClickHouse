@@ -388,8 +388,6 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
         new_part->setColumnsSubstreams(columns_substreams);
     }
 
-    write_plain_file(IMergeTreeDataPart::METADATA_VERSION_FILE_NAME, [&](auto & buffer)
-
     if (auto hash_collision_map = writer->getHashCollisionMap())
     {
         new_part->setHashCollisionMap(*hash_collision_map);
@@ -403,6 +401,7 @@ MergedBlockOutputStream::WrittenFiles MergedBlockOutputStream::finalizePartOnDis
         written_files.emplace_back(std::move(out));
     }
 
+    write_plain_file(IMergeTreeDataPart::METADATA_VERSION_FILE_NAME, [&](auto & buffer)
     {
         writeIntText(new_part->getMetadataVersion(), buffer);
     });

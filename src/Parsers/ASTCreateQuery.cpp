@@ -96,8 +96,8 @@ void ASTStorage::formatImpl(WriteBuffer & ostr, const FormatSettings & s, Format
     }
     if (unique_key)
     {
-        s.ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << "UNIQUE KEY " << (s.hilite ? hilite_none : "");
-        unique_key->formatImpl(s, state, frame);
+        ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << "UNIQUE KEY " << (s.hilite ? hilite_none : "");
+        unique_key->format(ostr, s, state, modified_frame);
     }
     if (sample_by)
     {

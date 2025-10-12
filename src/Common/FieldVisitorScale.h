@@ -24,6 +24,7 @@ public:
     [[noreturn]] void operator() (Array &) const;
     [[noreturn]] void operator() (Tuple &) const;
     [[noreturn]] void operator() (Map &) const;
+    [[noreturn]] void operator() (MapV2 &) const;
     [[noreturn]] void operator() (Object &) const;
     [[noreturn]] void operator() (UUID &) const;
     [[noreturn]] void operator() (IPv4 &) const;

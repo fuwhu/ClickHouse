@@ -225,7 +225,7 @@ void MergeTreeDataPartWide::loadMarksToCache(const Names & column_names, MarkCac
 
         serialization->enumerateStreams([&](const auto & subpath)
         {
-            auto stream_name = getStreamNameForColumn(column_name, subpath, checksums);
+            auto stream_name = getStreamNameForColumn(column_name, subpath, checksums, getHashCollisionMap());
             if (!stream_name)
                 return;
 
@@ -258,7 +258,7 @@ void MergeTreeDataPartWide::removeMarksFromCache(MarkCache * mark_cache) const
     {
         serialization->enumerateStreams([&](const auto & subpath)
         {
-            auto stream_name = getStreamNameForColumn(column_name, subpath, checksums);
+            auto stream_name = getStreamNameForColumn(column_name, subpath, checksums, getHashCollisionMap());
             if (!stream_name)
                 return;
 

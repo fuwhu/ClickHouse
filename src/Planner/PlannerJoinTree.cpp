@@ -335,7 +335,7 @@ bool applyTrivialCountIfPossible(
     select_query_info.optimize_trivial_count = true;
 
     /// Get number of rows
-    std::optional<UInt64> num_rows = storage->totalEffectiveRows(settings);
+    std::optional<UInt64> num_rows = storage->totalEffectiveRows(query_context);
     if (!num_rows)
         return false;
 

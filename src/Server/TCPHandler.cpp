@@ -119,6 +119,7 @@ namespace Setting
     extern const SettingsSeconds wait_for_async_insert_timeout;
     extern const SettingsBool use_concurrency_control;
     extern const SettingsBool apply_settings_from_server;
+    extern const SettingsRemoteQueryTimeOutMode remote_query_timeout_mode;
 }
 
 namespace ServerSetting
@@ -1321,7 +1322,7 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
         sendLogs(state);
         sendSelectProfileEvents(state);
 
-        if (query_context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+        if (state.query_context->getSettingsRef()[Setting::remote_query_timeout_mode] == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
         {
             auto profile_events_snapshot = CurrentThread::getProfileEvents().getPartiallyAtomicSnapshot();
             auto remote_query_timeout_count = profile_events_snapshot[ProfileEvents::RemoteQueryTimeoutCount];

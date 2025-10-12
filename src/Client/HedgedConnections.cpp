@@ -27,6 +27,7 @@ namespace Setting
     extern const SettingsUInt64 parallel_replicas_count;
     extern const SettingsUInt64 parallel_replica_offset;
     extern const SettingsBool skip_unavailable_shards;
+    extern const SettingsSeconds remote_query_timeout;
 }
 
 namespace ErrorCodes
@@ -86,7 +87,7 @@ HedgedConnections::HedgedConnections(
     active_connection_count = connections.size();
     pipeline_for_new_replicas.add([throttler_](ReplicaState & replica_) { replica_.connection->setThrottler(throttler_); });
 
-    remote_query_timeout.setRelative(settings.remote_query_timeout);
+    remote_query_timeout.setRelative(settings[Setting::remote_query_timeout]);
     epoll.add(remote_query_timeout.getDescriptor());
 }
 

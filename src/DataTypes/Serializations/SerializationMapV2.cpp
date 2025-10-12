@@ -40,11 +40,11 @@ static IColumn & extractNestedColumn(IColumn & column)
 
 void SerializationMapV2::serializeBinary(const Field & field, WriteBuffer & ostr, const FormatSettings & settings) const
 {
-    const auto & map = field.safeGet<const MapV2 &>();
+    const auto & map = field.safeGet<MapV2>();
     writeVarUInt(map.size(), ostr);
     for (const auto & elem : map)
     {
-        const auto & tuple = elem.safeGet<const Tuple>();
+        const auto & tuple = elem.safeGet<Tuple>();
         assert(tuple.size() == 2);
         key->serializeBinary(tuple[0], ostr, settings);
         value->serializeBinary(tuple[1], ostr, settings);
@@ -63,7 +63,7 @@ void SerializationMapV2::deserializeBinary(Field & field, ReadBuffer & istr, con
             size,
             settings.binary.max_binary_string_size);
     field = MapV2();
-    MapV2 & map = field.safeGet<MapV2 &>();
+    MapV2 & map = field.safeGet<MapV2>();
     map.reserve(size);
     for (size_t i = 0; i < size; ++i)
     {
@@ -429,13 +429,14 @@ void SerializationMapV2::serializeBinaryBulkWithMultipleStreams(
 
 void SerializationMapV2::deserializeBinaryBulkWithMultipleStreams(
     ColumnPtr & column,
+    size_t rows_offset,
     size_t limit,
     DeserializeBinaryBulkSettings & settings,
     DeserializeBinaryBulkStatePtr & state,
     SubstreamsCache * cache) const
 {
     auto & column_map = assert_cast<ColumnMapV2 &>(*column->assumeMutable());
-    nested->deserializeBinaryBulkWithMultipleStreams(column_map.getNestedColumnPtr(), limit, settings, state, cache);
+    nested->deserializeBinaryBulkWithMultipleStreams(column_map.getNestedColumnPtr(), rows_offset, limit, settings, state, cache);
 }
 
 }

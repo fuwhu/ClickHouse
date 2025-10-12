@@ -3,6 +3,7 @@
 #include <utility>
 #include <vector>
 #include <Core/Settings.h>
+// #include <Common/ErrorCodes.h>
 #include <Storages/MergeTree/DataPartStorageOnDiskFull.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
@@ -21,6 +22,29 @@ extern const Metric UniqueKeyBucketLoadThreadsScheduled;
 
 namespace DB
 {
+
+namespace Setting
+{
+    extern const SettingsUInt64 background_unique_engine_update_pool_size;
+    extern const SettingsUInt64 background_unique_engine_update_schedule_timeout;
+}
+namespace MergeTreeSetting
+{
+    extern const MergeTreeSettingsUInt64 unique_key_index_type;
+    extern const MergeTreeSettingsUInt64 unique_key_update_parallelism;
+    extern const MergeTreeSettingsUInt64 enable_unique_key_bucket;
+    extern const MergeTreeSettingsUInt64 unique_key_bucket_load_parallelism;
+    extern const MergeTreeSettingsBool unique_key_index_resident_in_memory;
+    extern const MergeTreeSettingsUInt64 unique_delete_bitmap_type;
+    extern const MergeTreeSettingsUInt64 unique_key_deduplicate_level;
+    extern const MergeTreeSettingsUInt64 unique_key_update_parallel_type;
+}
+
+namespace ErrorCodes
+{
+    extern const int INCORRECT_DATA;
+}
+
 UniqueEngineDataWriter::UniqueEngineDataWriter(const MutableDataPartPtr & data_part_)
     : part_to_write(data_part_)
     , storage(data_part_->storage)
@@ -28,7 +52,7 @@ UniqueEngineDataWriter::UniqueEngineDataWriter(const MutableDataPartPtr & data_p
     , settings(storage.getContext()->getSettingsRef())
     , log(getLogger(storage.getLogName()))
 {
-    const auto & unique_key_index_type = storage_settings->unique_key_index_type;
+    const auto & unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
 
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
@@ -36,14 +60,14 @@ UniqueEngineDataWriter::UniqueEngineDataWriter(const MutableDataPartPtr & data_p
             CurrentMetrics::UniqueKeyUpdateThreads,
             CurrentMetrics::UniqueKeyUpdateThreadsActive,
             CurrentMetrics::UniqueKeyUpdateThreadsScheduled,
-            storage_settings->unique_key_update_parallelism);
+            (*storage_settings)[MergeTreeSetting::unique_key_update_parallelism]);
 
-        if (storage_settings->enable_unique_key_bucket && data_part_->commit_type != IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
+        if ((*storage_settings)[MergeTreeSetting::enable_unique_key_bucket] && data_part_->commit_type != IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
             loading_bucket_pool = std::make_shared<ThreadPool>(
                 CurrentMetrics::UniqueKeyBucketLoadThreads,
                 CurrentMetrics::UniqueKeyBucketLoadThreadsActive,
                 CurrentMetrics::UniqueKeyBucketLoadThreadsScheduled,
-                storage_settings->unique_key_bucket_load_parallelism);
+                (*storage_settings)[MergeTreeSetting::unique_key_bucket_load_parallelism]);
     }
 }
 
@@ -70,7 +94,7 @@ void UniqueEngineDataWriter::prepare(DataPartsLock * lock)
     part_to_write->merge_source_parts.clear();
     part_to_write->move_source_part = nullptr;
 
-    if (!storage_settings->unique_key_index_resident_in_memory)
+    if (!(*storage_settings)[MergeTreeSetting::unique_key_index_resident_in_memory])
         part_to_write->clearUniqueKeyIndex();
 }
 
@@ -112,7 +136,7 @@ void UniqueEngineDataWriter::dedupFunctionByPart(
 
         /// pre confirm loading bucket range.
         BucketIndexRangePtr bucket_range;
-        if (!storage_settings->unique_key_index_resident_in_memory && storage_settings->enable_unique_key_bucket)
+        if (!(*storage_settings)[MergeTreeSetting::unique_key_index_resident_in_memory] && (*storage_settings)[MergeTreeSetting::enable_unique_key_bucket])
         {
             const auto & bucket_index = active_part->getUniqueKeyBucketIndex();
             if (bucket_index->getBucketNum() > 1)
@@ -164,7 +188,7 @@ void UniqueEngineDataWriter::dedupFunctionByPart(
                 }
             });
 
-        if (!storage_settings->unique_key_index_resident_in_memory)
+        if (!(*storage_settings)[MergeTreeSetting::unique_key_index_resident_in_memory])
             active_part->clearUniqueKeyIndex();
     }
 
@@ -206,8 +230,8 @@ void UniqueEngineDataWriter::scheduleDedupTask(
     size_t begin,
     size_t end)
 {
-    auto max_running_update_task = uniq_engine_writer->settings.background_unique_engine_update_pool_size;
-    size_t timeout_in_sec = uniq_engine_writer->settings.background_unique_engine_update_schedule_timeout;
+    auto max_running_update_task = uniq_engine_writer->settings[Setting::background_unique_engine_update_pool_size];
+    size_t timeout_in_sec = uniq_engine_writer->settings[Setting::background_unique_engine_update_schedule_timeout];
     size_t waited_secs = 0;
     while (waited_secs <= timeout_in_sec)
     {
@@ -248,14 +272,14 @@ void UniqueEngineDataWriter::scheduleDedupTask(
 void UniqueEngineDataWriter::executeParallelDedupByPart(
     const ActiveDataPartPtrs & data_parts, const UniqueKeyIndexPtr & current_key_index, const UniqueDeleteBitmapPtr & current_delete_bitmap)
 {
-    size_t bucket_size = static_cast<size_t>(std::ceil(data_parts.size() * 1.0 / storage_settings->unique_key_update_parallelism));
+    size_t bucket_size = static_cast<size_t>(std::ceil(data_parts.size() * 1.0 / (*storage_settings)[MergeTreeSetting::unique_key_update_parallelism]));
 
     LOG_DEBUG(
         log,
         "totally {} data parts,"
         "the parallelism for updating unique key is {}, and the bucket size is {}.",
         data_parts.size(),
-        storage_settings->unique_key_update_parallelism,
+        (*storage_settings)[MergeTreeSetting::unique_key_update_parallelism].toString(),
         bucket_size);
 
     if (!bucket_size)
@@ -331,7 +355,7 @@ void UniqueEngineDataWriter::executeDedupByIterator(
     std::map<MutableDataPartPtr, std::vector<size_t>> to_update_normal;
     std::map<MutableDataPartPtr, DeletedKeysPtr> to_update_merging_moving;
 
-    bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+    bool rowid_is_uinit32 = (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type] == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
 
     while (current_iterator->Valid())
     {
@@ -491,16 +515,16 @@ void UniqueEngineDataWriter::compareWithActivePart(
 void UniqueEngineDataWriter::prepareForNewPart(DataPartsLock * lock, bool is_merge_by_fetch)
 {
     DataPartsVector active_parts_range;
-    if (storage_settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::TABLE)
+    if ((*storage_settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::TABLE)
         active_parts_range = storage.getDataPartsVectorForInternalUsage({MergeTreeDataPartState::Active}, *lock);
-    else if (storage_settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::PARTITION)
+    else if ((*storage_settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::PARTITION)
         active_parts_range
-            = storage.getDataPartsVectorInPartitionForInternalUsage(MergeTreeDataPartState::Active, part_to_write->info.partition_id, lock);
+            = storage.getDataPartsVectorInPartitionForInternalUsage(MergeTreeDataPartState::Active, part_to_write->info.getPartitionId(), lock);
     else
         throw Exception(
             ErrorCodes::BAD_ARGUMENTS,
             "Invalid level {} for setting unique_key_deduplicate_level.",
-            storage_settings->unique_key_deduplicate_level);
+            (*storage_settings)[MergeTreeSetting::unique_key_deduplicate_level].toString());
 
     if (active_parts_range.empty())
         return;
@@ -508,7 +532,7 @@ void UniqueEngineDataWriter::prepareForNewPart(DataPartsLock * lock, bool is_mer
     ActiveDataPartPtrs parts_to_dedup;
     for (const auto & item : active_parts_range)
     {
-        if (is_merge_by_fetch && item->info.partition_id == part_to_write->info.partition_id
+        if (is_merge_by_fetch && item->info.getPartitionId() == part_to_write->info.getPartitionId()
             && item->info.min_block >= part_to_write->info.min_block && item->info.max_block <= part_to_write->info.max_block)
             continue;
 
@@ -530,23 +554,23 @@ void UniqueEngineDataWriter::prepareForNewPart(DataPartsLock * lock, bool is_mer
 
     Stopwatch total_stopwatch{CLOCK_MONOTONIC_COARSE};
 
-    const auto & unique_key_index_type = storage_settings->unique_key_index_type;
+    const auto & unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
-        if (storage_settings->unique_key_update_parallel_type == UniqueEngineDataWriter::ParallelType::DATA_PART)
+        if ((*storage_settings)[MergeTreeSetting::unique_key_update_parallel_type] == UniqueEngineDataWriter::ParallelType::DATA_PART)
             executeParallelDedupByPart(parts_to_dedup, current_unique_key_index, current_unique_delete_bitmap);
-        else if (storage_settings->unique_key_update_parallel_type == UniqueEngineDataWriter::ParallelType::DATA_KEY)
+        else if ((*storage_settings)[MergeTreeSetting::unique_key_update_parallel_type] == UniqueEngineDataWriter::ParallelType::DATA_KEY)
             throw Exception(ErrorCodes::NOT_IMPLEMENTED, "The parallel preparation by key for unique engine is not implemented yet.");
         else
             throw Exception(
                 ErrorCodes::BAD_ARGUMENTS,
                 "Invalid value {} for setting unique_key_update_parallel_type.",
-                storage_settings->unique_key_update_parallel_type);
+                (*storage_settings)[MergeTreeSetting::unique_key_update_parallel_type].toString());
     }
     else if (IUniqueKeyIndex::isLevelDBUniqueKeyIndex(unique_key_index_type))
         executeDedupByIterator(parts_to_dedup, current_unique_key_index, current_unique_delete_bitmap);
     else
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 
     double ms = total_stopwatch.elapsedMilliseconds();
     LOG_DEBUG(
@@ -561,12 +585,12 @@ void UniqueEngineDataWriter::prepareForMergeOrMoveResultPart(DataPartsLock * loc
 {
     std::map<String, VersionAndRow> to_update_current;
 
-    const auto & unique_key_index_type = storage_settings->unique_key_index_type;
+    const auto & unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
 
     /// map unique indexes use readVarUInt, but only 2^ 63-1 is supported at most. leveldb unique indexes use readBinary directly.
     bool is_read_binary = unique_key_index_type == IUniqueKeyIndex::Type::LEVEL_DB;
 
-    bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+    bool rowid_is_uinit32 = (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type] == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
 
     if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
     {
@@ -604,7 +628,7 @@ void UniqueEngineDataWriter::prepareForDeleteKeys(
     const auto deleted_keys_dir_path = fs::path(data_part_storage.getFullPathWithoutLastSlash() + MERGING_MOVING_DIR_SUFFIX);
     const auto deleted_keys_file_path = deleted_keys_dir_path / DELETED_KEYS_FILE_NAME;
 
-    if (disk->exists(deleted_keys_file_path))
+    if (disk->existsFile(deleted_keys_file_path))
     {
         UniqueKeyIndexPtr unique_key_index;
         if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
@@ -614,7 +638,7 @@ void UniqueEngineDataWriter::prepareForDeleteKeys(
 
         const auto & unique_key_delete_bitmap = part_to_write->getUniqueDeleteBitmap();
 
-        auto in = disk->readFile(deleted_keys_file_path);
+        auto in = disk->readFile(deleted_keys_file_path, getReadSettings());
         while (!in->eof())
         {
             DeletedKeys deleted_keys;
@@ -676,16 +700,16 @@ void UniqueEngineDataWriter::commit()
         auto tmp_merging_moving_deleted_keys_file
             = fs::path(data_part_storage.getFullPathWithoutLastSlash() + TEMP_MERGING_MOVING_DIR_SUFFIX) / DELETED_KEYS_FILE_NAME;
 
-        if (disk->exists(tmp_delete_bitmap_file))
+        if (disk->existsFile(tmp_delete_bitmap_file))
         {
             auto delete_bitmap_file = fs::path(data_part_storage.getFullPathWithoutLastSlash()) / UNIQUE_ENGINE_DELETE_BITMAP;
             disk->replaceFile(tmp_delete_bitmap_file, delete_bitmap_file);
         }
-        if (disk->exists(tmp_merging_moving_deleted_keys_file))
+        if (disk->existsFile(tmp_merging_moving_deleted_keys_file))
         {
             auto merging_moving_deleted_keys_dir = fs::path(data_part_storage.getFullPathWithoutLastSlash() + MERGING_MOVING_DIR_SUFFIX);
             auto merging_moving_deleted_keys_file = fs::path(merging_moving_deleted_keys_dir) / DELETED_KEYS_FILE_NAME;
-            if (!disk->exists(merging_moving_deleted_keys_dir))
+            if (!disk->existsDirectory(merging_moving_deleted_keys_dir))
             {
                 disk->createDirectory(merging_moving_deleted_keys_dir);
                 disk->moveFile(tmp_merging_moving_deleted_keys_file, merging_moving_deleted_keys_file);
@@ -712,7 +736,7 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
 
     LOG_INFO(log, "temp part dir for flushing unique data is {}", tmp_dir_to_write);
 
-    if (!disk->exists(tmp_dir_to_write))
+    if (!disk->existsDirectory(tmp_dir_to_write))
     {
         disk->createDirectory(tmp_dir_to_write);
         has_temp_dir = true;
@@ -736,13 +760,13 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
 
     LOG_INFO(log, "temp part dir for flushing deleted keys of merging parts is {}", temp_dir_to_write);
 
-    if (!disk->exists(temp_dir_to_write))
+    if (!disk->existsDirectory(temp_dir_to_write))
     {
         disk->createDirectory(temp_dir_to_write);
         has_temp_dir = true;
     }
 
-    if (disk->exists(deleted_keys_path))
+    if (disk->existsFile(deleted_keys_path))
     {
         disk->createHardLink(deleted_keys_path, temp_dir_to_write);
     }
@@ -750,7 +774,7 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
     auto out = disk->writeFile(temp_dir_to_write / DELETED_KEYS_FILE_NAME, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Append);
 
     /// map unique indexes use writeVarUInt, but only 2^ 63-1 is supported at most. leveldb unique indexes use writeBinary directly.
-    bool is_write_binary = storage_settings->unique_key_index_type == IUniqueKeyIndex::Type::LEVEL_DB;
+    bool is_write_binary = (*storage_settings)[MergeTreeSetting::unique_key_index_type] == IUniqueKeyIndex::Type::LEVEL_DB;
 
     deleted_keys->serializeBinary(*out, is_write_binary);
 }
@@ -763,11 +787,11 @@ void UniqueEngineDataWriter::clearTempDirs()
         auto disk = data_part_storage.volume->getDisk();
 
         auto tmp_dir = fs::path(data_part_storage.getFullPathWithoutLastSlash() + TEMP_DIR_SUFFIX);
-        if (disk->exists(tmp_dir))
+        if (disk->existsDirectory(tmp_dir))
             disk->removeRecursive(tmp_dir);
 
         auto tmp_merging_dir = fs::path(data_part_storage.getFullPathWithoutLastSlash() + TEMP_MERGING_MOVING_DIR_SUFFIX);
-        if (disk->exists(tmp_merging_dir))
+        if (disk->existsDirectory(tmp_merging_dir))
             disk->removeRecursive(tmp_merging_dir);
     }
 
@@ -798,7 +822,7 @@ void UniqueEngineDataWriter::addDeleteBitmap(const MutableDataPartPtr & part_)
 
     if (current_unique_delete_bitmap)
     {
-        switch (storage_settings->unique_delete_bitmap_type)
+        switch ((*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type])
         {
             case IUniqueDeleteBitmap::Type::ROARING_64_BITMAP: {
                 unique_delete_bitmap_map[part_] = std::make_shared<Roaring64UniqueDeleteBitmap>(
@@ -812,13 +836,13 @@ void UniqueEngineDataWriter::addDeleteBitmap(const MutableDataPartPtr & part_)
             }
             default: {
                 throw Exception(
-                    ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique delete bitmap.", storage_settings->unique_delete_bitmap_type);
+                    ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique delete bitmap.", (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type].toString());
             }
         }
     }
     else
     {
-        switch (storage_settings->unique_delete_bitmap_type)
+        switch ((*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type])
         {
             case IUniqueDeleteBitmap::Type::ROARING_64_BITMAP: {
                 unique_delete_bitmap_map[part_] = std::make_shared<Roaring64UniqueDeleteBitmap>();
@@ -830,7 +854,7 @@ void UniqueEngineDataWriter::addDeleteBitmap(const MutableDataPartPtr & part_)
             }
             default: {
                 throw Exception(
-                    ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique delete bitmap.", storage_settings->unique_delete_bitmap_type);
+                    ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique delete bitmap.", (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type].toString());
             }
         }
     }
@@ -865,7 +889,7 @@ UniqueEngineDataWriter::getUniqueKeyIterator(const UniqueKeyIndexPtr & key_index
 
     if (delete_bitmap->deleteRowsSize())
     {
-        bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+        bool rowid_is_uinit32 = (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type] == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
 
         opts.select_predicate = [rowid_is_uinit32, delete_bitmap](const Slice &, const Slice & val)
         {

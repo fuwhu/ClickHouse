@@ -76,6 +76,12 @@ namespace ProfileEvents
 namespace DB
 {
 
+namespace Setting
+{
+    extern const SettingsUInt64 background_unique_engine_load_pool_size;
+    extern const SettingsUInt64 background_unique_engine_load_schedule_timeout;
+}
+
 namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
@@ -86,6 +92,9 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsFloat primary_key_ratio_of_unique_prefix_values_to_skip_suffix_columns;
     extern const MergeTreeSettingsFloat ratio_of_defaults_for_sparse_serialization;
     extern const MergeTreeSettingsBool columns_and_secondary_indices_sizes_lazy_calculation;
+    extern const MergeTreeSettingsUInt64 unique_key_index_type;
+    extern const MergeTreeSettingsUInt64 enable_unique_key_bucket;
+    extern const MergeTreeSettingsUInt64 unique_delete_bitmap_type;
 }
 
 namespace ErrorCodes
@@ -1663,6 +1672,7 @@ void IMergeTreeDataPart::loadColumns(bool require)
 
     NamesAndTypesList loaded_columns;
     bool is_readonly_storage = getDataPartStorage().isReadonly();
+    auto metadata_snapshot = getMetadataSnapshot();
 
     if (auto in = readFileIfExists("columns.txt"))
     {
@@ -1678,7 +1688,6 @@ void IMergeTreeDataPart::loadColumns(bool require)
             throw Exception(ErrorCodes::NO_FILE_IN_DATA_PART, "No columns.txt in part {}, expected path {} on disk {}",
                 name, path, getDataPartStorage().getDiskName());
 
-        auto metadata_snapshot = getMetadataSnapshot();
         /// If there is no file with a list of columns, write it down.
         for (const auto & column : metadata_snapshot->getColumns().getAllPhysical())
             if (getFileNameForColumn(column))
@@ -1754,7 +1763,7 @@ void IMergeTreeDataPart::loadColumnsSubstreams()
 
 void IMergeTreeDataPart::loadHashCollisionMap()
 {
-    if (getDataPartStorage().exists(HASH_COLLISION_MAP))
+    if (getDataPartStorage().existsFile(HASH_COLLISION_MAP))
     {
         size_t file_size = getDataPartStorage().getFileSize(HASH_COLLISION_MAP);
         auto buf = getDataPartStorage().readFile(HASH_COLLISION_MAP, ReadSettings().adjustBufferSize(file_size), file_size, std::nullopt);
@@ -1816,13 +1825,13 @@ UniqueDeleteBitmapPtr IMergeTreeDataPart::createUniqueDeleteBitmap(size_t unique
 
 UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range)
 {
-    auto unique_key_index_type = storage.getSettings()->unique_key_index_type;
+    auto unique_key_index_type = (*storage.getSettings())[MergeTreeSetting::unique_key_index_type];
 
     UniqueKeyIndexPtr unique_key_index_load = createUniqueIndex(unique_key_index_type);
 
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
-        if (storage.getSettings()->enable_unique_key_bucket)
+        if ((*storage.getSettings())[MergeTreeSetting::enable_unique_key_bucket])
         {
             if (!loading_bucket_pool)
                 throw Exception(
@@ -1838,8 +1847,8 @@ UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loadi
                 bucket_index,
                 loading_bucket_pool,
                 bucket_range,
-                storage.getContext()->getSettingsRef().background_unique_engine_load_pool_size,
-                storage.getContext()->getSettingsRef().background_unique_engine_load_schedule_timeout);
+                storage.getContext()->getSettingsRef()[Setting::background_unique_engine_load_pool_size],
+                storage.getContext()->getSettingsRef()[Setting::background_unique_engine_load_schedule_timeout]);
         }
         else
         {
@@ -1852,14 +1861,14 @@ UniqueKeyIndexPtr IMergeTreeDataPart::loadUniqueIndex(LoadingBucketPoolPtr loadi
             fs::path(getDataPartStorage().getFullPath()) / UNIQUE_ENGINE_KEY_INDEX, storage.getContext()->getUniqueKeyIndexBlockCache());
     }
     else
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 
     return unique_key_index_load;
 }
 
 void IMergeTreeDataPart::loadUniqueKeyBucketIndex()
 {
-    if (getDataPartStorage().exists(UNIQUE_ENGINE_KEY_BUCKET_INDEX))
+    if (getDataPartStorage().existsFile(UNIQUE_ENGINE_KEY_BUCKET_INDEX))
     {
         size_t file_size = getDataPartStorage().getFileSize(UNIQUE_ENGINE_KEY_BUCKET_INDEX);
         auto buf = getDataPartStorage().readFile(
@@ -1878,7 +1887,7 @@ void IMergeTreeDataPart::loadUniqueDeleteBitmap()
     auto buf
         = getDataPartStorage().readFile(UNIQUE_ENGINE_DELETE_BITMAP, ReadSettings().adjustBufferSize(file_size), file_size, std::nullopt);
 
-    UniqueDeleteBitmapPtr unique_delete_bitmap_load = createUniqueDeleteBitmap(storage.getSettings()->unique_delete_bitmap_type);
+    UniqueDeleteBitmapPtr unique_delete_bitmap_load = createUniqueDeleteBitmap((*storage.getSettings())[MergeTreeSetting::unique_delete_bitmap_type]);
     unique_delete_bitmap_load->deserializeBinary(*buf);
 
     setUniqueDeleteBitmap(unique_delete_bitmap_load);
@@ -1886,7 +1895,7 @@ void IMergeTreeDataPart::loadUniqueDeleteBitmap()
 
 void IMergeTreeDataPart::loadUniqueKeyMinMaxIndex()
 {
-    if (getDataPartStorage().exists(UNIQUE_ENGINE_KEY_MINMAX_INDEX))
+    if (getDataPartStorage().existsFile(UNIQUE_ENGINE_KEY_MINMAX_INDEX))
     {
         size_t file_size = getDataPartStorage().getFileSize(UNIQUE_ENGINE_KEY_MINMAX_INDEX);
         auto buf = getDataPartStorage().readFile(
@@ -1902,7 +1911,7 @@ void IMergeTreeDataPart::loadUniqueKeyMinMaxIndex()
 UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
     bool keep_loaded_in_memory, LoadingBucketPoolPtr loading_bucket_pool, BucketIndexRangePtr bucket_range, bool use_meta_cache)
 {
-    const auto & unique_key_index_type = storage.getSettings()->unique_key_index_type;
+    const auto & unique_key_index_type = (*storage.getSettings())[MergeTreeSetting::unique_key_index_type];
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
         if (unique_key_index)
@@ -1930,7 +1939,7 @@ UniqueKeyIndexPtr IMergeTreeDataPart::getUniqueKeyIndex(
             return loadUniqueIndex();
     }
     else
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 }
 
 bool IMergeTreeDataPart::supportLightweightDeleteMutate() const
@@ -2193,11 +2202,11 @@ void IMergeTreeDataPart::renameUniqueTempDir(const String & new_relative_path, b
         = fs::path(storage.relative_data_path) / (parent_part ? parent_part->getDataPartStorage().getRelativePath() : "");
     String uniq_tmp_from = fs::path(uniq_tmp_prefix) / (data_part_storage.getRelativePath() + UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
 
-    if (disk->exists(uniq_tmp_from))
+    if (disk->existsDirectory(uniq_tmp_from))
     {
         String uniq_tmp_to = fs::path(uniq_tmp_prefix) / (new_relative_path + UniqueEngineDataWriter::TEMP_DIR_SUFFIX);
 
-        if (disk->exists(uniq_tmp_to))
+        if (disk->existsDirectory(uniq_tmp_to))
         {
             if (remove_new_dir_if_exists)
             {
@@ -2302,7 +2311,7 @@ void IMergeTreeDataPart::remove()
               UniqueEngineDataWriter::MERGING_MOVING_DIR_SUFFIX})
         {
             fs::path uk_tmp_path = fs::path(storage.relative_data_path) / (data_part_storage.getRelativePath() + uk_tmp);
-            if (disk->exists(uk_tmp_path))
+            if (disk->existsDirectory(uk_tmp_path))
             {
                 LOG_WARNING(storage.log, "unique engine clean tmp file {}", fullPath(disk, uk_tmp_path));
                 disk->removeRecursive(uk_tmp_path);

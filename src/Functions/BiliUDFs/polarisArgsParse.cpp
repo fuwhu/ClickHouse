@@ -510,7 +510,7 @@ public:
                 auto col_left = DataTypeString().createColumnConst(1, left);
                 args[1] = ColumnWithTypeAndName{col_left, std::make_shared<DataTypeString>(), ""};
 
-                ColumnPtr cond_keys = func_index_of->build(args)->execute(args, std::make_shared<DataTypeUInt64>(), input_rows_count);
+                ColumnPtr cond_keys = func_index_of->build(args)->execute(args, std::make_shared<DataTypeUInt64>(), input_rows_count, /* dry_run = */ false);
 
                 chain->addCondition(cond_keys, op, right);
             }

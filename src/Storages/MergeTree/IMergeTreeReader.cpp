@@ -20,6 +20,11 @@
 namespace DB
 {
 
+namespace MergeTreeSetting
+{
+    extern const MergeTreeSettingsBool implicit_map_duplication;
+}
+
 namespace
 {
     using OffsetColumns = std::map<std::string, ColumnPtr>;
@@ -60,7 +65,7 @@ IMergeTreeReader::IMergeTreeReader(
     , virtual_fields(virtual_fields_)
 {
     const auto & merge_tree_data = dynamic_cast<const MergeTreeData &>(storage_snapshot->storage);
-    if (!merge_tree_data.getSettings()->implicit_map_duplication)
+    if (!(*merge_tree_data.getSettings())[MergeTreeSetting::implicit_map_duplication])
     {
         for (const auto & requested_column : requested_columns)
         {

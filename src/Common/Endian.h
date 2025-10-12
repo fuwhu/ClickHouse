@@ -17,6 +17,7 @@
 
 #include <type_traits>
 #include <stdint.h>
+#include <base/BFloat16.h>
 
 /// define macros: __BYTE_ORDER, __LITTLE_ENDIAN, __BIG_ENDIAN
 #if defined(__linux__) || defined(__CYGWIN__)
@@ -83,12 +84,19 @@ public:
     {
         return DB::detail::EndianInt<T>::big(x);
     }
+
+    static BFloat16 big(const BFloat16& value) {
+        uint16_t raw = value.raw();
+        return BFloat16::fromBits(Endian::big(raw));
+    }
+
     /// host2little or little2host
     template <class T>
     static T little(T x)
     {
         return DB::detail::EndianInt<T>::little(x);
     }
+
 };
 
 } /// namespace DB

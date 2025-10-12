@@ -116,6 +116,7 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsBool prewarm_mark_cache;
     extern const MergeTreeSettingsBool use_const_adaptive_granularity;
     extern const MergeTreeSettingsUInt64 max_merge_delayed_streams_for_parallel_write;
+    extern const MergeTreeSettingsBool implicit_map_duplication;
 }
 
 namespace ErrorCodes
@@ -284,12 +285,12 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::extractMergingAndGatheringColu
         key_columns.emplace(global_ctx->merging_params.sign_column);
 
     /// Force unique key and version column for Unique mode
-    if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+    if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
         const auto & unique_key_expr = global_ctx->metadata_snapshot->getUniqueKey().expression;
         Names unique_key_columns_vec = unique_key_expr->getRequiredColumns();
         std::copy(unique_key_columns_vec.cbegin(), unique_key_columns_vec.cend(), std::inserter(key_columns, key_columns.end()));
-        key_columns.emplace(ctx->merging_params.version_column);
+        key_columns.emplace(global_ctx->merging_params.version_column);
     }
 
     /// Force to merge at least one column in case of empty key
@@ -456,7 +457,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
     for (const auto & implicit_columns_map : implicit_columns_maps)
     {
-        if (!global_ctx->data->getSettings()->implicit_map_duplication)
+        if (!(*global_ctx->data->getSettings())[MergeTreeSetting::implicit_map_duplication])
             std::erase_if(
                 global_ctx->storage_columns,
                 [&implicit_columns_map](const NameAndTypePair & e) { return implicit_columns_map.first == e.name; });
@@ -513,7 +514,7 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
     size_t total_effective_rows_count = 0;
     for (const auto & part : global_ctx->future_part->parts)
     {
-        if (ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+        if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
         {
             total_effective_rows_count += part->effective_rows_count;
             global_ctx->new_data_part->merge_source_parts.emplace_back(part);
@@ -732,8 +733,6 @@ MergeTask::StageRuntimeContextPtr MergeTask::ExecuteAndFinalizeHorizontalPart::g
     }
 
     auto new_ctx = std::make_shared<VerticalMergeRuntimeContext>();
-
-    new_ctx->merging_params = std::move(ctx->merging_params);
     new_ctx->rows_sources_temporary_file = std::move(ctx->rows_sources_temporary_file);
     new_ctx->column_sizes = std::move(ctx->column_sizes);
     new_ctx->compression_codec = std::move(ctx->compression_codec);
@@ -2010,10 +2009,18 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream() const
         merge_parts_query_plan.addStep(std::move(calculate_indices_expression_step));
     }
 
+    /// Unique Key expression
     if (global_ctx->metadata_snapshot->hasUniqueKey())
     {
-        builder->addTransform(std::make_shared<ExpressionTransform>(
-            builder->getHeader(), global_ctx->data->getUniqueKeyExpression(global_ctx->metadata_snapshot)));
+        auto uniqu_key_expression = global_ctx->data->getUniqueKeyExpression(global_ctx->metadata_snapshot);
+        auto unique_key_expression_dag = uniqu_key_expression->getActionsDAG().clone();
+        auto extracting_subcolumns_dag = createSubcolumnsExtractionActions(merge_parts_query_plan.getCurrentHeader(), unique_key_expression_dag.getRequiredColumnsNames(), global_ctx->data->getContext());
+        unique_key_expression_dag.addMaterializingOutputActions(/*materialize_sparse=*/ true);
+        auto unique_key_expression_step = std::make_unique<ExpressionStep>(
+            merge_parts_query_plan.getCurrentHeader(),
+            ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(unique_key_expression_dag)),
+            global_ctx->metadata_snapshot);
+        merge_parts_query_plan.addStep(std::move(unique_key_expression_step));
     }
 
     if (!subqueries.empty())

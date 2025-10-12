@@ -203,10 +203,10 @@ bool canBeSafelyCast(const DataTypePtr & from_type, const DataTypePtr & to_type)
             {
                 const auto & from_type_map = assert_cast<const DataTypeMapV2 &>(*from_type);
                 const auto & to_type_map = assert_cast<const DataTypeMapV2 &>(*to_type_unwrapped);
-                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_map.getKeyType()))
+                if (!canBeSafelyCast(from_type_map.getKeyType(), to_type_map.getKeyType()))
                     return false;
 
-                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_map.getValueType()))
+                if (!canBeSafelyCast(from_type_map.getValueType(), to_type_map.getValueType()))
                     return false;
 
                 return true;
@@ -216,10 +216,10 @@ bool canBeSafelyCast(const DataTypePtr & from_type, const DataTypePtr & to_type)
             {
                 const auto & from_type_map = assert_cast<const DataTypeMapV2 &>(*from_type);
                 const auto & to_type_map = assert_cast<const DataTypeMap &>(*to_type_unwrapped);
-                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_map.getKeyType()))
+                if (!canBeSafelyCast(from_type_map.getKeyType(), to_type_map.getKeyType()))
                     return false;
 
-                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_map.getValueType()))
+                if (!canBeSafelyCast(from_type_map.getValueType(), to_type_map.getValueType()))
                     return false;
 
                 return true;
@@ -238,10 +238,10 @@ bool canBeSafelyCast(const DataTypePtr & from_type, const DataTypePtr & to_type)
                 if (to_type_tuple_elements.size() != 2)
                     return false;
 
-                if (!canBeSafelyCasted(from_type_map.getKeyType(), to_type_tuple_elements[0]))
+                if (!canBeSafelyCast(from_type_map.getKeyType(), to_type_tuple_elements[0]))
                     return false;
 
-                if (!canBeSafelyCasted(from_type_map.getValueType(), to_type_tuple_elements[1]))
+                if (!canBeSafelyCast(from_type_map.getValueType(), to_type_tuple_elements[1]))
                     return false;
 
                 return true;

@@ -22,6 +22,7 @@ namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsSeconds lock_acquire_timeout_for_background_operations;
     extern const MergeTreeSettingsSeconds old_parts_lifetime;
+    extern const MergeTreeSettingsBool ignore_check_column_hash;
 }
 
 namespace ErrorCodes
@@ -350,7 +351,7 @@ ReplicatedCheckResult ReplicatedMergeTreePartCheckThread::checkPartImpl(const St
         String part_path = storage.replica_path + "/parts/" + part_name;
         String part_znode = zookeeper->get(part_path);
         bool is_broken_projection = false;
-        bool ignore_check_column_hash = storage.getSettings()->ignore_check_column_hash;
+        bool ignore_check_column_hash = (*storage.getSettings())[MergeTreeSetting::ignore_check_column_hash];
 
         try
         {

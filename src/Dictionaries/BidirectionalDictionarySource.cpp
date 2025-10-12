@@ -116,7 +116,8 @@ void BidirectionalDictionarySource::clean()
 #if USE_GRPC
 void registerDictionarySourceBidirectional(DictionarySourceFactory & factory)
 {
-    auto create_dict_source = [=](const DictionaryStructure & dict_struct,
+    auto create_dict_source = [=](const String & /* name */,
+                                  const DictionaryStructure & dict_struct,
                                   const Poco::Util::AbstractConfiguration & config,
                                   const String & config_prefix,
                                   Block & sample_block,

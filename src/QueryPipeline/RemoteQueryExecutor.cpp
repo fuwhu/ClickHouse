@@ -50,6 +50,7 @@ namespace Setting
     extern const SettingsOverflowMode timeout_overflow_mode;
     extern const SettingsBool use_hedged_requests;
     extern const SettingsBool push_external_roles_in_interserver_queries;
+    extern const SettingsRemoteQueryTimeOutMode remote_query_timeout_mode;
 }
 
 namespace ErrorCodes
@@ -722,7 +723,7 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::processPacket(Packet packet
 
         case Protocol::Server::RemoteQueryTimeout:
             ProfileEvents::increment(ProfileEvents::RemoteQueryTimeoutCount);
-            if (context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
+            if (context->getSettingsRef()[Setting::remote_query_timeout_mode] == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
                 throw Exception(ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED, "Remote query timeout exceeded.");
             return ReadResult(Block{});
         default:

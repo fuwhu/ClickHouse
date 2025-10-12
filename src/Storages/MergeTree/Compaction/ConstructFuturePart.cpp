@@ -19,7 +19,7 @@ static std::optional<MergeTreeDataPartsVector> findPartsInMemory(
     {
         for (const auto & properties : range)
         {
-            auto part = data.getPartIfExists(properties.info, lookup_statuses)
+            auto part = data.getPartIfExists(properties.info, lookup_statuses);
             if (!part)
                 return std::nullopt;
 
@@ -77,7 +77,7 @@ static std::optional<MergeTreeDataPartsVector> findPartsInMemory(
 
 FutureMergedMutatedPartPtr constructFuturePart(const MergeTreeData & data, const MergeSelectorChoice & choice, MergeTreeData::DataPartStates lookup_statuses)
 {
-    auto data_parts = findPartsInMemory(data, choice.range, std::move(lookup_statuses));
+    auto data_parts = findPartsInMemory(data, choice.range, std::move(lookup_statuses), choice.merge_type);
     if (!data_parts.has_value())
         return nullptr;
 

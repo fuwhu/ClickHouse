@@ -131,7 +131,7 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
                 data_part->name,
                 data_part->rows_count,
                 data_part->effective_rows_count,
-                columns_to_read.front());
+                columns_to_read.front().name);
         else
             LOG_DEBUG(
                 log,
@@ -139,7 +139,7 @@ MergeTreeSequentialSource::MergeTreeSequentialSource(
                 data_part->getMarksCount(),
                 data_part->name,
                 data_part->rows_count,
-                columns_to_read.front());
+                columns_to_read.front().name);
     }
     else
     {
@@ -503,7 +503,8 @@ public:
             data_part,
             alter_conversions,
             merged_part_offsets,
-            data_part->getDataPartUniqueDeleteBitmap(),
+            data_part.getDataPartUniqueDeleteBitmap(),
+            // storage.getPartIfExists(data_part.data_part, {MergeTreeDataPartState::Active}),
             columns_to_read,
             std::move(mark_ranges),
             filtered_rows_count,

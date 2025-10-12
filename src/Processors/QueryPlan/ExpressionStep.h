@@ -1,9 +1,12 @@
 #pragma once
 #include <Processors/QueryPlan/ITransformingStep.h>
 #include <Interpreters/ActionsDAG.h>
+#include <Storages/StorageInMemoryMetadata.h>
 
 namespace DB
 {
+
+using StorageMetadataPtr = std::shared_ptr<const StorageInMemoryMetadata>;
 
 class ExpressionTransform;
 class JoiningTransform;

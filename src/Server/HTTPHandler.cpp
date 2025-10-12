@@ -70,6 +70,7 @@ namespace Setting
     extern const SettingsUInt64 readonly;
     extern const SettingsBool send_progress_in_http_headers;
     extern const SettingsInt64 zstd_window_log_max;
+    extern const SettingsRemoteQueryTimeOutMode remote_query_timeout_mode;
 }
 
 namespace ErrorCodes
@@ -624,7 +625,7 @@ void HTTPHandler::processQuery(
         handle_exception_in_output_format,
         query_finish_callback);
 
-    if (context->getSettingsRef().remote_query_timeout_mode == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
+    if (context->getSettingsRef()[Setting::remote_query_timeout_mode] == RemoteQueryTimeOutMode::AFTERWARDS_THROW)
     {
         auto profile_events_snapshot = CurrentThread::getProfileEvents().getPartiallyAtomicSnapshot();
         auto remote_query_timeout_count = profile_events_snapshot[ProfileEvents::RemoteQueryTimeoutCount];

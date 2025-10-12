@@ -2,12 +2,14 @@
 
 #include <filesystem>
 #include <IO/ReadWriteBufferFromHTTP.h>
+#include <IO/copyData.h>
 #include <Server/HTTP/HTMLForm.h>
 #include <Server/HTTP/HTTPServerResponse.h>
 #include <Storages/MergeTree/DataPartStorageOnDiskFull.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Common/ProfileEventsScope.h>
+#include <Disks/SingleDiskVolume.h>
 
 namespace fs = std::filesystem;
 
@@ -18,6 +20,14 @@ extern const Metric PartReceive;
 
 namespace DB
 {
+
+namespace MergeTreeSetting
+{
+    extern const MergeTreeSettingsUInt64 max_parallel_receives;
+    extern const MergeTreeSettingsUInt64 max_parallel_receives_for_table;
+    extern const MergeTreeSettingsBool fsync_part_directory;
+}
+
 namespace ErrorCodes
 {
 extern const int ABORTED;
@@ -60,9 +70,9 @@ void Service::processQuery(const HTMLForm & params, ReadBuffer & body, WriteBuff
     static std::atomic_uint total_receives{0};
 
     const auto data_settings = data.getSettings();
-    if ((data_settings->max_parallel_receives && total_receives >= data_settings->max_parallel_receives)
-        || (data_settings->max_parallel_receives_for_table
-            && data.current_table_receives >= data_settings->max_parallel_receives_for_table)) [[unlikely]]
+    if (((*data_settings)[MergeTreeSetting::max_parallel_receives] && total_receives >= (*data_settings)[MergeTreeSetting::max_parallel_receives])
+        || ((*data_settings)[MergeTreeSetting::max_parallel_receives_for_table]
+            && data.current_table_receives >= (*data_settings)[MergeTreeSetting::max_parallel_receives_for_table])) [[unlikely]]
         throw Exception(ErrorCodes::TOO_MANY_SIMULTANEOUS_QUERIES, "Too many concurrent requests, try again later");
 
     ++total_receives;
@@ -134,7 +144,7 @@ receivePart(MergeTreeData & data, LoggerPtr log, const String & part_name, ReadB
     String part_relative_path = fs::path(data.getRelativeDataPath()) / MergeTreeData::DETACHED_DIR_NAME;
 
     String maybe_exists_part = fs::path(part_relative_path) / part_name;
-    if (disk->exists(maybe_exists_part)) [[unlikely]]
+    if (disk->existsFileOrDirectory(maybe_exists_part)) [[unlikely]]
     {
         LOG_WARNING(
             log,
@@ -162,7 +172,7 @@ receivePart(MergeTreeData & data, LoggerPtr log, const String & part_name, ReadB
     part_storage_for_loading->createDirectories();
 
     SyncGuardPtr sync_guard;
-    if (data.getSettings()->fsync_part_directory)
+    if ((*data.getSettings())[MergeTreeSetting::fsync_part_directory])
         sync_guard = part_storage_for_loading->getDirectorySyncGuard();
 
     try
@@ -195,7 +205,8 @@ receivePart(MergeTreeData & data, LoggerPtr log, const String & part_name, ReadB
     {
         part_storage_for_loading->commitTransaction();
 
-        MergeTreeDataPartBuilder builder(data, part_name, volume, part_relative_path, tmp_part_dir);
+        MergeTreeDataPartBuilder builder(data, part_name, volume, part_relative_path, tmp_part_dir, getReadSettings());
+
         new_data_part = builder.withPartFormatFromDisk().build();
 
         new_data_part->version.setCreationTID(Tx::PrehistoricTID, nullptr);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <shared_mutex>
 #include <unordered_map>
 #include <IO/WriteSettings.h>
 #include <base/types.h>
@@ -25,9 +26,8 @@
 #include <Storages/ColumnsDescription.h>
 #include <Interpreters/TransactionVersionMetadata.h>
 #include <DataTypes/Serializations/SerializationInfo.h>
-#include <Storages/MergeTree/IPartMetadataManager.h>
-#include <Storages/MergeTree/MergeTreeRowMapping.h>
 #include <Storages/MergeTree/UniqueMergeTreeIndexCommon.h>
+#include <Storages/MergeTree/UniqueMergeTreeIndex.h>
 
 namespace zkutil
 {

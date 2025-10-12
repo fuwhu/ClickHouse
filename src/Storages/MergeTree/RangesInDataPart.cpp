@@ -122,7 +122,7 @@ size_t RangesInDataPart::getRowsCount() const
     return data_part->index_granularity->getRowsCountInRanges(ranges);
 }
 
-UniqueDeleteBitmapPtr getDataPartUniqueDeleteBitmap() const
+UniqueDeleteBitmapPtr RangesInDataPart::getDataPartUniqueDeleteBitmap() const
 {
     return data_part->getUniqueDeleteBitmap();
 }

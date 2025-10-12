@@ -672,7 +672,7 @@ public:
 
     /// If engine = UniqueMergeTree or ReplicatedUniqueMergeTree totalEffectiveRows = totalRows - deleteRows,
     /// otherwise totalEffectiveRows = totalRows.
-    virtual std::optional<UInt64> totalEffectiveRows(const Settings & settings) const { return totalRows(settings); }
+    virtual std::optional<UInt64> totalEffectiveRows(ContextPtr query_context) const { return totalRows(query_context); }
 
     /// If it is possible to quickly determine exact number of bytes for the table on storage:
     /// - memory (approximated, resident)

@@ -176,6 +176,7 @@ namespace Setting
     extern const SettingsSeconds receive_timeout;
     extern const SettingsInt64 replication_wait_for_inactive_replica_timeout;
     extern const SettingsUInt64 select_sequential_consistency;
+    extern const SettingsBool enable_data_parts_receive_service;
 }
 
 namespace MergeTreeSetting
@@ -218,6 +219,8 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsBool use_minimalistic_checksums_in_zookeeper;
     extern const MergeTreeSettingsBool use_minimalistic_part_header_in_zookeeper;
     extern const MergeTreeSettingsMilliseconds wait_for_unique_parts_send_before_shutdown_ms;
+    extern const MergeTreeSettingsBool enable_data_parts_receive_service;
+    extern const MergeTreeSettingsBool ignore_check_column_hash;
 }
 
 namespace FailPoints
@@ -2024,7 +2027,7 @@ bool StorageReplicatedMergeTree::checkPartChecksumsAndAddCommitOps(
     std::shuffle(replicas.begin(), replicas.end(), thread_local_rng);
     bool part_found = false;
     bool part_exists_on_our_replica = false;
-    bool ignore_check_column_hash = getSettings()->ignore_check_column_hash;
+    bool ignore_check_column_hash = (*getSettings())[MergeTreeSetting::ignore_check_column_hash];
 
     for (const String & replica : replicas)
     {
@@ -5192,7 +5195,7 @@ bool StorageReplicatedMergeTree::fetchPart(
             /// with same checksums but different columns. And we attaching it exception will
             /// be thrown.
             if (desired_part_header
-                && (source_part_header.getColumnsHash() == desired_part_header->getColumnsHash() || settings_ptr->ignore_check_column_hash)
+                && (source_part_header.getColumnsHash() == desired_part_header->getColumnsHash() || (*settings_ptr)[MergeTreeSetting::ignore_check_column_hash])
                 && source_part_header.getChecksums() == desired_part_header->getChecksums())
             {
                 LOG_TRACE(log, "Found local part {} with the same checksums and columns hash as {}", source_part->name, part_name);
@@ -5565,7 +5568,7 @@ void StorageReplicatedMergeTree::startupImpl(bool from_attach_thread, const ZooK
         part_moves_between_shards_orchestrator.start();
 
         /// Both server setting and MergeTree setting can enable DataPartsReceive, for backward compatibility
-        if ((getContext()->getSettingsRef().enable_data_parts_receive_service || getSettings()->enable_data_parts_receive_service)
+        if ((getContext()->getSettingsRef()[Setting::enable_data_parts_receive_service] || (*getSettings())[MergeTreeSetting::enable_data_parts_receive_service])
             && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
         {
             InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive::Service>(*this);

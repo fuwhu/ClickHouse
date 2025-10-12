@@ -1,6 +1,8 @@
 #include "UniqueMergeTreeIndexCommon.h"
-
+#include <Common/logger_useful.h>
+#include <Core/Block.h>
 #include <Storages/MergeTree/IDataPartStorage.h>
+#include <Common/scope_guard_safe.h>
 
 namespace DB
 {

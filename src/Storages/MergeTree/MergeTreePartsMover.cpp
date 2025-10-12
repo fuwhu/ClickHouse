@@ -16,6 +16,7 @@ namespace DB
 namespace MergeTreeSetting
 {
     extern const MergeTreeSettingsBool allow_remote_fs_zero_copy_replication;
+    extern const MergeTreeSettingsBool select_data_parts_for_move_by_ttl;
 }
 
 namespace ErrorCodes
@@ -190,7 +191,7 @@ bool MergeTreePartsMover::selectPartsForMove(
 
     if (!volumes.empty())
     {
-        bool move_by_ttl = data->getSettings()->select_data_parts_for_move_by_ttl && data->getInMemoryMetadataPtr()->hasAnyTableTTL();
+        bool move_by_ttl = (*data->getSettings())[MergeTreeSetting::select_data_parts_for_move_by_ttl] && data->getInMemoryMetadataPtr()->hasAnyTableTTL();
         /// Do not check last volume
         for (size_t i = 0; i != volumes.size() - 1; ++i)
         {

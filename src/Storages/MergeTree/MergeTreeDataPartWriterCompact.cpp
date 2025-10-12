@@ -261,7 +261,7 @@ void MergeTreeDataPartWriterCompact::writeDataBlockPrimaryIndexAndSkipIndices(co
         const auto & version_name = merging_params.version_column;
         unique_key_version_names.emplace_back(version_name);
 
-        Block unique_key_version_block = getBlockAndPermute(block, unique_key_version_names, nullptr);
+        Block unique_key_version_block = getIndexBlockAndPermute(block, unique_key_version_names, nullptr);
         calculateAndSerializeUniqueData(unique_key_version_block, granules_to_write);
     }
 }

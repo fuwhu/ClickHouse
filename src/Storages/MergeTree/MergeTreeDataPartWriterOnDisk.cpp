@@ -1,3 +1,4 @@
+#include <Interpreters/AggregationCommon.h>
 #include <Storages/MergeTree/MergeTreeDataPartWriterOnDisk.h>
 
 #include <Storages/MergeTree/MergeTreeData.h>
@@ -23,6 +24,10 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsUInt64 index_granularity;
     extern const MergeTreeSettingsUInt64 index_granularity_bytes;
     extern const MergeTreeSettingsUInt64 max_digestion_size_per_segment;
+    extern const MergeTreeSettingsUInt64 enable_unique_key_bucket;
+    extern const MergeTreeSettingsUInt64 unique_key_bucket_size;
+    extern const MergeTreeSettingsUInt64 unique_key_index_type;
+    extern const MergeTreeSettingsUInt64 unique_delete_bitmap_type;
 }
 
 namespace ErrorCodes
@@ -579,7 +584,7 @@ void MergeTreeDataPartWriterOnDisk::calculateAndSerializeUniqueData(const Block 
 
     size_t last_row_count = 0;
 
-    auto unique_key_index_type = storage_settings->unique_key_index_type;
+    auto unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
         ColumnRawPtrs unique_key_columns;
@@ -619,9 +624,9 @@ void MergeTreeDataPartWriterOnDisk::calculateAndSerializeUniqueData(const Block 
             if (unique_key_minmax_index)
                 unique_key_minmax_index->setMinMax(unique_key_min_value, unique_key_max_value);
 
-            if (storage_settings->enable_unique_key_bucket)
+            if ((*storage_settings)[MergeTreeSetting::enable_unique_key_bucket])
             {
-                unique_key_bucket_index->init(storage_settings->unique_key_bucket_size, index_granularity.getTotalRows());
+                unique_key_bucket_index->init((*storage_settings)[MergeTreeSetting::unique_key_bucket_size], index_granularity->getTotalRows());
                 unique_key_index->initBucket(unique_key_bucket_index->getBucketNum());
             }
         }
@@ -745,7 +750,7 @@ void MergeTreeDataPartWriterOnDisk::calculateAndSerializeUniqueData(const Block 
             writeToUniqueKeyIndex(tmp_unique_key_version_block);
     }
     else
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 
     rows_count += uk_rows;
 
@@ -758,7 +763,7 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
     {
         Stopwatch stopwatch;
 
-        auto unique_key_index_type = storage_settings->unique_key_index_type;
+        auto unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
         if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
         {
             if (!unique_key_bucket_index_hashing_stream)
@@ -791,7 +796,7 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
 
             if (!tmp_rocksdb_index_writer && !leveldb_index_writer)
             {
-                bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+                bool rowid_is_uinit32 = (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type] == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
                 unique_key_index->serializeBinary(
                     fs::path(data_part_storage->getFullPath()) / UNIQUE_ENGINE_KEY_INDEX,
                     buffered_unique_block,
@@ -812,7 +817,7 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
 
                     const auto & data_part_storage = dynamic_cast<const DataPartStorageOnDiskFull &>(getDataPartStorage());
                     auto disk = data_part_storage.volume->getDisk();
-                    if (disk->exists(tmp_rocksdb_index_dir))
+                    if (disk->existsDirectory(tmp_rocksdb_index_dir))
                         disk->removeRecursive(tmp_rocksdb_index_dir);
                 }
                 else
@@ -828,7 +833,7 @@ void MergeTreeDataPartWriterOnDisk::fillUniqueDataChecksums(MergeTreeData::DataP
             checksums.files[UNIQUE_ENGINE_KEY_INDEX].file_hash = file_info.file_hash;
         }
         else
-            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type);
+            throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 
         unique_delete_bitmap->serializeBinary(*unique_delete_bitmap_file_stream);
         unique_delete_bitmap_file_stream->preFinalize();
@@ -846,7 +851,7 @@ void MergeTreeDataPartWriterOnDisk::finishUniqueDataSerialization(bool sync)
     if (merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
         Stopwatch stopwatch;
-        if (IUniqueKeyIndex::isMapUniqueKeyIndex(storage_settings->unique_key_index_type))
+        if (IUniqueKeyIndex::isMapUniqueKeyIndex((*storage_settings)[MergeTreeSetting::unique_key_index_type]))
         {
             if (unique_key_index_hashing_stream)
             {
@@ -894,7 +899,7 @@ void MergeTreeDataPartWriterOnDisk::writeToUniqueKeyIndex(Block & block)
     if (rows == 0)
         return;
 
-    bool rowid_is_uinit32 = storage_settings->unique_delete_bitmap_type == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
+    bool rowid_is_uinit32 = (*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type] == IUniqueDeleteBitmap::Type::ROARING_32_BITMAP;
 
     const auto & unique_key_col = block.getByName(UNIQUE_VIRTUAL_KEY_COLUMN_NAME);
     const auto & unique_version_col = block.getByName(UNIQUE_VIRTUAL_VERSION_COLUMN_NAME);
@@ -948,13 +953,13 @@ std::optional<UniqueEngineData> MergeTreeDataPartWriterOnDisk::getUniqueEngineDa
     /// the effective_rows of merge part may be equal to zero.
     /// if effective_rows = 0, set the empty unique key index, unique_delete_bitmap and unique_key_bucket_index to avoid null pointer.
     unique_data.unique_delete_bitmap = unique_delete_bitmap;
-    auto unique_key_index_type = storage_settings->unique_key_index_type;
+    auto unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
         unique_data.unique_key_index = unique_key_index;
         unique_data.unique_key_minmax_index = unique_key_minmax_index;
 
-        if (storage_settings->enable_unique_key_bucket)
+        if ((*storage_settings)[MergeTreeSetting::enable_unique_key_bucket])
             unique_data.unique_key_bucket_index = unique_key_bucket_index;
     }
 
@@ -965,10 +970,10 @@ void MergeTreeDataPartWriterOnDisk::initUniqueIndex()
 {
     if (metadata_snapshot->hasUniqueKey())
     {
-        auto unique_key_index_type = storage_settings->unique_key_index_type;
+        auto unique_key_index_type = (*storage_settings)[MergeTreeSetting::unique_key_index_type];
 
         unique_key_index = IMergeTreeDataPart::createUniqueIndex(unique_key_index_type);
-        unique_delete_bitmap = IMergeTreeDataPart::createUniqueDeleteBitmap(storage_settings->unique_delete_bitmap_type);
+        unique_delete_bitmap = IMergeTreeDataPart::createUniqueDeleteBitmap((*storage_settings)[MergeTreeSetting::unique_delete_bitmap_type]);
 
         if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
         {
@@ -976,7 +981,7 @@ void MergeTreeDataPartWriterOnDisk::initUniqueIndex()
             unique_key_index_file_stream = getDataPartStorage().writeFile(UNIQUE_ENGINE_KEY_INDEX, DBMS_DEFAULT_BUFFER_SIZE, {});
             unique_key_index_hashing_stream = std::make_unique<HashingWriteBuffer>(*unique_key_index_file_stream);
 
-            if (storage_settings->enable_unique_key_bucket)
+            if ((*storage_settings)[MergeTreeSetting::enable_unique_key_bucket])
             {
                 unique_key_bucket_index = std::make_shared<UniqueKeyBucketIndex>();
                 unique_key_bucket_index_file_stream

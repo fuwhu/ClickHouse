@@ -635,7 +635,7 @@ REGISTER_FUNCTION(MapMiscellaneous)
     FunctionDocumentation{
         .description="Returns a map with elements which key matches the specified regex pattern array.",
         .examples{{"mapExtractKeyMultiLike", "SELECT mapExtractKeyMultiLike(map('k1-1', 1, 'k2-1', 2), ['k1.*', 'k2.*'])", ""}},
-        .categories{"Map"},
+        .category = category_map,
     });
 }
 

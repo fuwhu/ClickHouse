@@ -415,12 +415,12 @@ protected:
                             {
                                 try
                                 {
-                                    if (auto total_effective_rows = table.second->totalEffectiveRows(settings))
+                                    if (auto total_effective_rows = table.second->totalEffectiveRows(context))
                                         res_columns[res_index]->insert(*total_effective_rows);
                                     else
                                         res_columns[res_index]->insertDefault();
                                 }
-                                catch(const std::exception& e)
+                                catch(const std::exception& /* e */)
                                 {
                                     /// Even if the method throws, it should not prevent querying system.tables.
                                     tryLogCurrentException("StorageSystemTables");
@@ -691,7 +691,7 @@ protected:
                 {
                     try
                     {
-                        auto total_effective_rows = table ? table->totalEffectiveRows(settings) : std::nullopt;
+                        auto total_effective_rows = table ? table->totalEffectiveRows(context) : std::nullopt;
                         if (total_effective_rows)
                             res_columns[res_index]->insert(*total_effective_rows);
                         else

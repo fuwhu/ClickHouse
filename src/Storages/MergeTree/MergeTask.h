@@ -339,7 +339,6 @@ private:
     {
         /// Begin dependencies from previous stage
         std::shared_ptr<RowsSourcesTemporaryFile> rows_sources_temporary_file;
-        MergeTreeData::MergingParams merging_params{};
         std::optional<ColumnSizeEstimator> column_sizes;
         CompressionCodecPtr compression_codec;
         std::list<DB::NameAndTypePair>::const_iterator it_name_and_type;

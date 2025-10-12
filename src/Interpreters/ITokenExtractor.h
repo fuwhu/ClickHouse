@@ -201,7 +201,7 @@ struct NoOpTokenExtractor final : public ITokenExtractorHelper<NoOpTokenExtracto
 
     bool nextInString(const char * data, size_t length, size_t * __restrict pos, size_t * __restrict token_start, size_t * __restrict token_length) const override;
 
-    bool nextInStringLike(const char * data, size_t length, size_t * __restrict pos, String & token) const override;
+    bool nextInStringLike(const char * data, size_t length, size_t * __restrict pos, String & token, bool set_percent_separator) const override;
 };
 
 }

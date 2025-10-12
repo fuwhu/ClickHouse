@@ -57,6 +57,7 @@
 #include <Storages/StorageJoin.h>
 #include <Common/checkImplicitColumn.h>
 #include <Common/checkStackSize.h>
+#include <Common/quoteString.h>
 #include "DataTypes/IDataType.h"
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/StorageView.h>

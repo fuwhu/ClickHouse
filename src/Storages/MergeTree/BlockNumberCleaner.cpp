@@ -28,6 +28,14 @@ namespace ErrorCodes
 extern const int LOGICAL_ERROR;
 }
 
+namespace Setting
+{
+    extern const SettingsSeconds block_number_cleanup_batch_interval;
+    extern const SettingsUInt64 block_number_cleanup_batch_size;
+    extern const SettingsSeconds block_number_cleanup_execution_interval;
+    extern const SettingsUInt64 block_number_cleanup_timediff_hours;
+}
+
 std::unique_ptr<BlockNumberCleaner> BlockNumberCleaner::block_number_cleaner;
 
 void BlockNumberCleaner::init(ContextPtr context_)
@@ -48,10 +56,10 @@ BlockNumberCleaner & BlockNumberCleaner::instance()
 
 BlockNumberCleaner::BlockNumberCleaner(ContextPtr context_) : WithContext(context_), log(getLogger("BlockNumberCleaner"))
 {
-    cleanup_batch_interval = context_->getSettingsRef().block_number_cleanup_batch_interval;
-    cleanup_batch_size = context_->getSettingsRef().block_number_cleanup_batch_size;
-    cleanup_execution_interval = context_->getSettingsRef().block_number_cleanup_execution_interval;
-    cleanup_timediff_hours = context_->getSettingsRef().block_number_cleanup_timediff_hours;
+    cleanup_batch_interval = context_->getSettingsRef()[Setting::block_number_cleanup_batch_interval];
+    cleanup_batch_size = context_->getSettingsRef()[Setting::block_number_cleanup_batch_size];
+    cleanup_execution_interval = context_->getSettingsRef()[Setting::block_number_cleanup_execution_interval];
+    cleanup_timediff_hours = context_->getSettingsRef()[Setting::block_number_cleanup_timediff_hours];
 }
 
 BlockNumberCleaner::~BlockNumberCleaner()

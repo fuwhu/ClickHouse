@@ -249,6 +249,12 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsUInt64 min_bytes_to_prewarm_caches;
     extern const MergeTreeSettingsBool columns_and_secondary_indices_sizes_lazy_calculation;
     extern const MergeTreeSettingsSeconds refresh_parts_interval;
+    extern const MergeTreeSettingsUInt64 unique_key_update_parallel_type;
+    extern const MergeTreeSettingsUInt64 unique_key_deduplicate_level;
+    extern const MergeTreeSettingsUInt64 unique_delete_bitmap_type;
+    extern const MergeTreeSettingsUInt64 unique_key_index_type;
+    extern const MergeTreeSettingsUInt64 unique_key_partition_lock_lru_size;
+    extern const MergeTreeSettingsBool eanble_unique_key_partition_lock;
 }
 
 namespace ServerSetting
@@ -595,15 +601,15 @@ MergeTreeData::MergeTreeData(
         checkUniqueEngineSettings(*settings);
 
         /// init unique engine locks
-        if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::PARTITION)
+        if ((*settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::PARTITION)
         {
-            if (settings->eanble_unique_key_partition_lock)
+            if ((*settings)[MergeTreeSetting::eanble_unique_key_partition_lock])
                 unique_engine_partition_mutexes
-                    = std::make_shared<UniqueEnginePartitionMutexes>(settings->unique_key_partition_lock_lru_size);
+                    = std::make_shared<UniqueEnginePartitionMutexes>((*settings)[MergeTreeSetting::unique_key_partition_lock_lru_size]);
             else
                 unique_engine_table_mutex = std::make_shared<std::mutex>();
         }
-        else if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::TABLE)
+        else if ((*settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::TABLE)
             unique_engine_table_mutex = std::make_shared<std::mutex>();
     }
 }
@@ -1103,7 +1109,7 @@ void MergeTreeData::checkPartitionKeyAndInitMinMax(const KeyDescription & new_pa
 
 void MergeTreeData::checkUniqueEngineSettings(const MergeTreeSettings & settings) const
 {
-    const auto & unique_key_index_type = settings.unique_key_index_type;
+    const auto & unique_key_index_type = settings[MergeTreeSetting::unique_key_index_type];
     if (unique_key_index_type != IUniqueKeyIndex::Type::STANDARD_MAP
         && unique_key_index_type != IUniqueKeyIndex::Type::STANDARD_UNORDERED_MAP
         && unique_key_index_type != IUniqueKeyIndex::Type::STRING_HASH_MAP && unique_key_index_type != IUniqueKeyIndex::Type::LEVEL_DB)
@@ -1115,10 +1121,10 @@ void MergeTreeData::checkUniqueEngineSettings(const MergeTreeSettings & settings
             "1 - StandardUnOrderedMapUniqueKeyIndex; "
             "2 - StringHashMapUniqueKeyIndex; "
             "3 - LevelDB.",
-            unique_key_index_type);
+            unique_key_index_type.toString());
 
 
-    const auto & unique_delete_bitmap_type = settings.unique_delete_bitmap_type;
+    const auto & unique_delete_bitmap_type = settings[MergeTreeSetting::unique_delete_bitmap_type];
     if (unique_delete_bitmap_type != IUniqueDeleteBitmap::Type::ROARING_64_BITMAP
         && unique_delete_bitmap_type != IUniqueDeleteBitmap::Type::ROARING_32_BITMAP)
         throw Exception(
@@ -1127,10 +1133,10 @@ void MergeTreeData::checkUniqueEngineSettings(const MergeTreeSettings & settings
             "Valid values are: "
             "64 - Roaring64Bitmap; "
             "32 - Roaring32Bitmap.",
-            unique_delete_bitmap_type);
+            unique_delete_bitmap_type.toString());
 
 
-    const auto & unique_key_deduplicate_level = settings.unique_key_deduplicate_level;
+    const auto & unique_key_deduplicate_level = settings[MergeTreeSetting::unique_key_deduplicate_level];
     if (unique_key_deduplicate_level != UniqueEngineDataWriter::DedupType::PARTITION
         && unique_key_deduplicate_level != UniqueEngineDataWriter::DedupType::TABLE)
         throw Exception(
@@ -1139,19 +1145,19 @@ void MergeTreeData::checkUniqueEngineSettings(const MergeTreeSettings & settings
             "Valid values are: "
             "0 - table level; "
             "1 - partition level.",
-            unique_key_deduplicate_level);
+            unique_key_deduplicate_level.toString());
 
 
     if (IUniqueKeyIndex::isMapUniqueKeyIndex(unique_key_index_type))
     {
-        const auto & unique_key_update_parallel_type = settings.unique_key_update_parallel_type;
+        const auto & unique_key_update_parallel_type = settings[MergeTreeSetting::unique_key_update_parallel_type];
         if (unique_key_update_parallel_type != UniqueEngineDataWriter::ParallelType::DATA_PART)
             throw Exception(
                 ErrorCodes::BAD_ARGUMENTS,
                 "Invalid value {} for setting unique_key_update_parallel_type. "
                 "Valid values are: "
                 "0 - parallelize by data part.",
-                unique_key_update_parallel_type);
+                unique_key_update_parallel_type.toString());
     }
 }
 
@@ -5453,7 +5459,7 @@ void MergeTreeData::swapActivePart(MergeTreeData::DataPartPtr part_copy, DataPar
     {
         MutableDataPartPtr mu_part_copy = const_pointer_cast<DataPart>(part_copy);
         mu_part_copy->commit_type = IMergeTreeDataPart::CommitType::EXECUTE_MOVE;
-        uniq_engine_write_lock = lockUniqueEngineForWrite(mu_part_copy->info.partition_id);
+        uniq_engine_write_lock = lockUniqueEngineForWrite(mu_part_copy->info.getPartitionId());
 
         uniq_engine_data_writer = std::make_shared<UniqueEngineDataWriter>(mu_part_copy);
         uniq_engine_data_writer->prepare();
@@ -7618,7 +7624,7 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
         {
             /// TODO :: make sure the `MergeTreeData::unique_engine_write_mutex` can block drop_part/drop_partition operators as well.
             for (const auto & part : precommitted_parts)
-                uniq_engine_write_locks.emplace_back(data.lockUniqueEngineForWrite(part->info.partition_id));
+                uniq_engine_write_locks.emplace_back(data.lockUniqueEngineForWrite(part->info.getPartitionId()));
 
             prepareForUniqueEngineWrite(acquired_parts_lock);
         }

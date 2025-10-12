@@ -222,6 +222,7 @@ MergeTreeTemporaryPartPtr MergeTreeSink::writeNewTempPart(BlockWithPartition & b
 bool MergeTreeSink::commitPart(MergeTreeMutableDataPartPtr & part, const String & deduplication_token)
 {
     bool added = false;
+    const Settings & settings = context->getSettingsRef();
 
     /// It's important to create it outside of lock scope because
     /// otherwise it can lock parts in destructor and deadlock is possible.
@@ -237,19 +238,19 @@ bool MergeTreeSink::commitPart(MergeTreeMutableDataPartPtr & part, const String 
 
                 auto * deduplication_log = storage.getDeduplicationLog();
 
-                if (settings.insert_deduplicate && deduplication_log)
+                if (settings[Setting::insert_deduplicate] && deduplication_log)
                 {
-                    const String block_id = part->getZeroLevelPartBlockID(partition.block_dedup_token);
+                    const String block_id = part->getNewPartBlockID(deduplication_token);
                     auto res = deduplication_log->addPart(block_id, part->info);
                     if (!res.second)
                     {
                         ProfileEvents::increment(ProfileEvents::DuplicatedInsertedBlocks);
                         LOG_INFO(storage.log, "Block with ID {} already exists as part {}; ignoring it", block_id, res.first.getPartNameForLogs());
-                        continue;
+                        return false;
                     }
                 }
 
-                added = storage.renameTempPartAndAdd(part, transaction, lock);
+                added = storage.renameTempPartAndAdd(part, transaction, lock, /*rename_in_transaction=*/ false);
             }
 
             transaction.commit();

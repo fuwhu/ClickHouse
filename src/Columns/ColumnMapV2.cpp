@@ -1,5 +1,4 @@
 #include <Columns/ColumnMapV2.h>
-
 #include <Columns/ColumnCompressed.h>
 #include <Columns/ColumnNullable.h>
 #include <Core/Field.h>
@@ -7,6 +6,7 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <DataTypes/getLeastSupertype.h>
 #include <IO/Operators.h>
 #include <IO/WriteBufferFromString.h>
 #include <boost/algorithm/string/predicate.hpp>
@@ -79,11 +79,34 @@ void ColumnMapV2::get(size_t n, Field & res) const
     size_t size = offsets[n] - offsets[n - 1];
 
     res = MapV2();
-    auto & map = res.safeGet<MapV2 &>();
+    auto & map = res.safeGet<MapV2>();
     map.reserve(size);
 
     for (size_t i = 0; i < size; ++i)
         map.push_back(getNestedData()[offset + i]);
+}
+
+std::pair<String, DataTypePtr> ColumnMapV2::getValueNameAndType(size_t n) const
+{
+    const auto & offsets = getNestedColumn().getOffsets();
+    size_t offset = offsets[n - 1];
+    size_t size = offsets[n] - offsets[n - 1];
+
+    String value_name {"["};
+    DataTypes element_types;
+    element_types.reserve(size);
+
+    for (size_t i = 0; i < size; ++i)
+    {
+        const auto & [value, type] = getNestedData().getValueNameAndType(offset + i);
+        element_types.push_back(type);
+        if (i > 0)
+            value_name += ", ";
+        value_name += value;
+    }
+    value_name += "]";
+
+    return {value_name, std::make_shared<DataTypeArray>(getLeastSupertype<LeastSupertypeOnError::Variant>(element_types))};
 }
 
 bool ColumnMapV2::isDefaultAt(size_t n) const
@@ -103,7 +126,7 @@ void ColumnMapV2::insertData(const char *, size_t)
 
 void ColumnMapV2::insert(const Field & x)
 {
-    const auto & map_v2 = x.safeGet<const MapV2 &>();
+    const auto & map_v2 = x.safeGet<MapV2>();
     nested->insert(Array(map_v2.begin(), map_v2.end()));
 }
 
@@ -112,7 +135,7 @@ bool ColumnMapV2::tryInsert(const Field & x)
     if (x.getType() != Field::Types::Which::MapV2)
         return false;
 
-    const auto & map_v2 = x.safeGet<const MapV2 &>();
+    const auto & map_v2 = x.safeGet<MapV2>();
     return nested->tryInsert(Array(map_v2.begin(), map_v2.end()));
 }
 
@@ -268,13 +291,13 @@ size_t ColumnMapV2::capacity() const
     return nested->capacity();
 }
 
-void ColumnMapV2::prepareForSquashing(const Columns & source_columns)
+void ColumnMapV2::prepareForSquashing(const Columns & source_columns, size_t factor)
 {
     Columns nested_source_columns;
     nested_source_columns.reserve(source_columns.size());
     for (const auto & source_column : source_columns)
         nested_source_columns.push_back(assert_cast<const ColumnMapV2 &>(*source_column).getNestedColumnPtr());
-    nested->prepareForSquashing(nested_source_columns);
+    nested->prepareForSquashing(nested_source_columns, factor);
 }
 
 void ColumnMapV2::shrinkToFit()
@@ -324,12 +347,12 @@ void ColumnMapV2::getExtremes(Field & min, Field & max) const
     max = std::move(map_max_value);
 }
 
-void ColumnMapV2::forEachSubcolumn(MutableColumnCallback callback)
+void ColumnMapV2::forEachSubcolumn(ColumnCallback callback) const
 {
     callback(nested);
 }
 
-void ColumnMapV2::forEachSubcolumnRecursively(RecursiveMutableColumnCallback callback)
+void ColumnMapV2::forEachSubcolumnRecursively(RecursiveColumnCallback callback) const
 {
     callback(*nested);
     nested->forEachSubcolumnRecursively(callback);
@@ -342,14 +365,16 @@ bool ColumnMapV2::structureEquals(const IColumn & rhs) const
     return false;
 }
 
-ColumnPtr ColumnMapV2::compress() const
+ColumnPtr ColumnMapV2::compress(bool force_compression) const
 {
-    auto compressed = nested->compress();
+    auto compressed = nested->compress(force_compression);
     const auto byte_size = compressed->byteSize();
     /// The order of evaluation of function arguments is unspecified
     /// and could cause interacting with object in moved-from state
-    return ColumnCompressed::create(
-        size(), byte_size, [my_compressed = std::move(compressed)] { return ColumnMapV2::create(my_compressed->decompress()); });
+    return ColumnCompressed::create(size(), byte_size, [my_compressed = std::move(compressed)]
+    {
+        return ColumnMapV2::create(my_compressed->decompress());
+    });
 }
 
 void ColumnMapV2::takeDynamicStructureFromSourceColumns(const Columns & source_columns)

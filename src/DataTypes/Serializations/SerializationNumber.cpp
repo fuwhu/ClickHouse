@@ -228,6 +228,19 @@ void SerializationNumber<T>::deserializeBinaryBulk(IColumn & column, ReadBuffer 
             transformEndianness<std::endian::big, std::endian::little>(x[i]);
 }
 
+template <typename T, typename = void>
+struct GetUnsignedType;
+
+template <typename T>
+struct GetUnsignedType<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>>> {
+    using type =  std::make_unsigned_t<T>;
+};
+
+template <>
+struct GetUnsignedType<BFloat16> {
+    using type = BFloat16;
+};
+
 template <class T, bool condition>
 struct MemoryCompareWrapper;
 
@@ -240,8 +253,7 @@ struct MemoryCompareWrapper<T, true>
     void serializeMemComparable(const IColumn & column, size_t row_num, WriteBuffer & ostr) const
     {
         const auto & value = assert_cast<const ColumnVector<T> &>(column).getData()[row_num];
-        using UnsignedType = typename std::make_unsigned<T>::type;
-        // using UnsignedType = std::make_unsigned_t<T>;
+        using UnsignedType = typename GetUnsignedType<T>::type;
         auto unsigned_value = static_cast<UnsignedType>(value);
         /// flip sign bit for signed type
         if constexpr (std::is_signed_v<T>)
@@ -253,7 +265,7 @@ struct MemoryCompareWrapper<T, true>
 
     void deserializeMemComparable(IColumn & column, ReadBuffer & istr) const
     {
-        using UnsignedType = typename std::make_unsigned<T>::type;
+        using UnsignedType = typename GetUnsignedType<T>::type;
         UnsignedType unsigned_value;
         /// read a big endian value and convert to host endian
         readBinary(unsigned_value, istr);

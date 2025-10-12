@@ -73,6 +73,7 @@ namespace Setting
     extern const SettingsBool parallel_replicas_for_non_replicated_merge_tree;
     extern const SettingsBool throw_on_unsupported_query_inside_transaction;
     extern const SettingsUInt64 max_parts_to_move;
+    extern const SettingsBool enable_data_parts_receive_service;
 }
 
 namespace MergeTreeSetting
@@ -92,6 +93,7 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsUInt64 merge_tree_clear_old_temporary_directories_interval_seconds;
     extern const MergeTreeSettingsUInt64 non_replicated_deduplication_window;
     extern const MergeTreeSettingsSeconds temporary_directories_lifetime;
+    extern const MergeTreeSettingsBool enable_data_parts_receive_service;
 }
 
 namespace ErrorCodes
@@ -204,7 +206,7 @@ void StorageMergeTree::startup()
         startOutdatedAndUnexpectedDataPartsLoadingTask();
 
         /// Both server setting and MergeTree setting can enable DataPartsReceive, for backward compatibility
-        if ((getContext()->getSettingsRef().enable_data_parts_receive_service || getSettings()->enable_data_parts_receive_service)
+        if ((getContext()->getSettingsRef()[Setting::enable_data_parts_receive_service] || (*getSettings())[MergeTreeSetting::enable_data_parts_receive_service])
             && getStorageID().getDatabaseName() != DatabaseCatalog::SYSTEM_DATABASE)
         {
             InterserverIOEndpointPtr data_parts_receive_ptr = std::make_shared<DataPartsReceive::Service>(*this);
