@@ -5,6 +5,7 @@
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Storages/StorageInMemoryMetadata.h>
 #include <Common/MemoryTrackerBlockerInThread.h>
+#include <Common/checkImplicitColumn.h>
 #include <Columns/ColumnMapV2.h>
 
 namespace DB
@@ -136,6 +137,15 @@ ASTPtr IMergeTreeDataPartWriter::getCodecDescOrDefault(const String & column_nam
 
     if (const auto * virtual_desc = virtual_columns->tryGetDescription(column_name))
         return virtual_desc->codec ? virtual_desc->codec : default_codec_desc;
+
+    if (auto implicit_column = extractImplicitColumn(column_name))
+    {
+        std::string col_map_v2_name = implicit_column->first;
+        if (const auto * map_v2_desc = columns.tryGet(col_map_v2_name))
+            return map_v2_desc->codec ? map_v2_desc->codec : default_codec_desc;
+        else
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Unexpected mapv2 column name {} of implicit column {}", col_map_v2_name, column_name);
+    }
 
     throw Exception(ErrorCodes::LOGICAL_ERROR, "Unexpected column name: {}", column_name);
 }
