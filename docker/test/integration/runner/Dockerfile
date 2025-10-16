@@ -23,6 +23,7 @@ RUN apt-get update \
     iproute2 \
     cgroupfs-mount \
     python3-pip \
+    python3-apt \
     tzdata \
     libicu-dev \
     bsdutils \

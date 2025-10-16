@@ -8,8 +8,8 @@ echo '{
     "ip-forward": true,
     "log-level": "debug",
     "storage-driver": "overlay2",
-    "insecure-registries" : ["dockerhub-proxy.dockerhub-proxy-zone:5000"],
-    "registry-mirrors" : ["http://dockerhub-proxy.dockerhub-proxy-zone:5000"]
+    "insecure-registries" : ["https://hub.bilibili.co"],
+    "registry-mirrors" : ["https://hub.bilibili.co"]
 }' | dd of=/etc/docker/daemon.json 2>/dev/null
 
 if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
@@ -38,7 +38,7 @@ reties=0
 while true; do
     docker info &>/dev/null && break
     reties=$((reties+1))
-    if [[ $reties -ge 100 ]]; then # 10 sec max
+    if [[ $reties -ge 200 ]]; then # 20 sec max
         echo "Can't start docker daemon, timeout exceeded." >&2
         exit 1;
     fi
