@@ -5,7 +5,6 @@ stages:
   - build
   - functional_tests
   - integration_tests
-  - upload
 
 # 定义参数
 variables:
@@ -21,7 +20,7 @@ variables:
   ACCESS_KEY_ID: '7df5c4dc25027e7e'
   SECRET_ACCESS_KEY: 'b1366ca38d65975a1f7f37628fce511b'
   BUCKET: datacenter-alter
-  LOCAL_CK_PATH: /mnt/storage00/ck_package_ci_24/clickhouse
+  LOCAL_CK_PATH: /mnt/storage00/ck_package_ci_25/clickhouse
 
 include:
   - project: 'xuneng/datacenter-ci-script'
@@ -32,9 +31,10 @@ include:
 code_scan:
   stage: code_scan
   resource_group: devide
-  only:
-    - dev-25
-    - /release/25.5.*$/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev-25"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\/25\.5.*$/'
+    - when: never
   script:
     - echo "code_scan begin"
     # - docker run --rm --privileged --ulimit memlock=-1:-1 -v $(pwd):/clickhouse -w /clickhouse ci_code_scan:v1 bash bili_ci/code_scan.sh
@@ -44,9 +44,10 @@ code_scan:
 build:
   stage: build
   resource_group: devide
-  only:
-    - dev-25
-    - /release/25.5.*$/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev-25"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\/25\.5.*$/'
+    - when: never
   before_script:
     - echo "exec git before_script"
     - echo "git branch bef name " $CI_COMMIT_REF_NAME
@@ -79,12 +80,13 @@ build:
 functional_tests:
   resource_group: devide
   stage: functional_tests
-  only:
-    - dev-25
-    - /release/25.5.*$/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev-25"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\/25\.5.*$/'
+    - when: never
   script:
     - echo "functional_tests begin"
-    - docker run --rm --privileged --ulimit memlock=-1:-1 -v $(pwd)/bili_ci/config/config.xml:/etc/clickhouse-server/config.xml -v $(pwd)/bili_ci/config/users.xml:/etc/clickhouse-server/users.xml -v $(pwd):/clickhouse -w /clickhouse ci_dev_25:v1 bash bili_ci/ci_function_test.sh
+    - docker run --rm --privileged --ulimit memlock=-1:-1 -v $(pwd)/bili_ci/config/func_test/config.xml:/etc/clickhouse-server/config.xml -v $(pwd)/bili_ci/config/func_test/users.xml:/etc/clickhouse-server/users.xml -v $(pwd):/clickhouse -w /clickhouse ci_dev_25:v1 bash bili_ci/ci_function_test.sh
     - echo "functional_tests end"
   dependencies:
     - build
@@ -93,12 +95,13 @@ functional_tests:
 integration_tests:
   resource_group: devide
   stage: integration_tests
-  only:
-    - dev-25
-    - /release/25.5.*$/
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "dev-25"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\/25\.5.*$/'
+    - when: never
   script:
     - echo "integration_tests begin"
-    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config --docker-image-version v5 test_ddl_alter_query test_distributed_ddl test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_consistant_parts_after_move_partition test_multiple_disks test_rename_column test_ttl_move
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config/inter_test --docker-image-version v25 test_ddl_alter_query test_distributed_ddl test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_consistant_parts_after_move_partition test_multiple_disks test_rename_column test_ttl_move
     - echo "integration_tests end"
   dependencies:
     - build
