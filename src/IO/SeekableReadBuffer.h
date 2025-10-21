@@ -61,6 +61,13 @@ public:
     virtual String getInfoForLog() { return ""; }
 
     virtual size_t getFileOffsetOfBufferEnd() const { throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method getFileOffsetOfBufferEnd() not implemented"); }
+
+    virtual size_t readBigAt(char * /*to*/, size_t /*n*/, size_t /*offset*/, const std::function<bool(size_t m)> & /*progress_callback*/)
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method readBigAt() not implemented");
+    }
+    /// Checks if readBigAt() is allowed. May be slow, may throw (e.g. it may do an HTTP request or an fstat).
+    virtual bool supportsReadAt() { return false; }
 };
 
 using SeekableReadBufferPtr = std::shared_ptr<SeekableReadBuffer>;

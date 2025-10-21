@@ -6,6 +6,7 @@
 #include "base/types.h"
 #include "config_formats.h"
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <orc/Reader.hh>
 #include <Common/config.h>
@@ -68,11 +69,11 @@ Range createRangeFromOrcStatistics(const StatisticsType * stats);
 
 Range buildRange(const orc::ColumnStatistics * col_stats);
 
-class ORCInputStream : public orc::InputStream
+class ORCInputStream : public orc::InputStream, public std::enable_shared_from_this<ORCInputStream>
 {
 public:
-    static inline const uint64_t MAX_BUFFER_SIZE = 8 * 1024 * 1024; // TODO : make it configurable.
-    ORCInputStream(SeekableReadBuffer & in_, size_t file_size_);
+    static const uint64_t MAX_BUFFER_SIZE = 8 * 1024 * 1024; // TODO : make it configurable.
+    ORCInputStream(SeekableReadBuffer & in_, size_t file_size_, bool use_prefetch);
 
     uint64_t getLength() const override;
     uint64_t getNaturalReadSize() const override;
@@ -81,10 +82,12 @@ public:
     void prefetch(uint64_t offset, uint64_t length) override;
     const std::string & getName() const override { return name; }
     void setOrAddRangesToRead(const std::vector<orc::OffsetRange> & ranges, bool is_set) override;
+    std::future<void> readAsync(void * buf, uint64_t length, uint64_t offset) override;
 
 private :
     SeekableReadBuffer & in;
     size_t file_size;
+    bool supports_read_at;
     std::string name = "ORCInputStream";
     std::vector<orc::OffsetRange> ranges_to_read;
     orc::OffsetRange current_range{0, 0};
@@ -106,18 +109,18 @@ class ORCInputStreamFromString : public ReadBufferFromOwnString, public ORCInput
 public:
     template <typename S>
     ORCInputStreamFromString(S && s_, size_t file_size_)
-        : ReadBufferFromOwnString(std::forward<S>(s_)), ORCInputStream(dynamic_cast<SeekableReadBuffer &>(*this), file_size_)
+        : ReadBufferFromOwnString(std::forward<S>(s_)), ORCInputStream(dynamic_cast<SeekableReadBuffer &>(*this), file_size_, false)
     {
     }
 };
 
-std::unique_ptr<orc::InputStream> asORCInputStream(ReadBuffer & in, const FormatSettings & settings);
+std::unique_ptr<orc::InputStream> asORCInputStream(ReadBuffer & in, const FormatSettings & settings, bool use_prefetch);
 
 class ORCColumnToCHColumn;
 class NativeORCBlockInputFormat : public IInputFormat
 {
 public:
-    NativeORCBlockInputFormat(ReadBuffer & in_, Block header_, const FormatSettings & format_settings_);
+    NativeORCBlockInputFormat(ReadBuffer & in_, Block header_, const FormatSettings & format_settings_, bool use_prefetch_, size_t min_bytes_for_seek_);
 
     String getName() const override { return "NativeORCBlockInputFormat"; }
 
@@ -160,6 +163,16 @@ public:
     void prepareFileReaderAndMetadata();
 
     bool checkStripeColumnConstantness(UInt64 stripe_index, UInt64 column_index, Field & constant_value);
+
+    void checkStripeFiltered(std::vector<uint32_t> & stripes);
+
+    void setReverse() { is_reverse = true; } 
+
+    void prefetchFirstStripe() 
+    { 
+        if (use_prefetch)
+            prefetchStripes();
+    }
 
     UInt64 remove_constant_column_time_cost = 0;
     UInt64 add_constant_column_time_cost = 0;
@@ -259,13 +272,16 @@ private:
 
     std::unique_ptr<StripeReader> stripe_reader;
     std::unique_ptr<StripeReader> prewhere_stripe_reader;
+    std::unique_ptr<StripeReader> next_prewhere_stripe_reader;
 
     std::unique_ptr<StripeReader>
     newStripeReader(const OrcStripeInformation & stripe_info, const std::list<UInt64> & indices, const Block & sample_block, bool overwrite_input_ranges, OrcConstantColumnsDescriptionPtr & constant_column_values, const bool &constant_columns_only);
 
     bool prepareStripeReader();
 
-    size_t executePrewhere(ColumnsWithTypeAndName & pre_res_columns);
+    void prefetchStripes();
+
+    size_t executePrewhere(ColumnsWithTypeAndName & pre_res_columns, bool nextStripe = false);
     size_t executeFilter(ColumnsWithTypeAndName & pre_res_columns, ColumnsWithTypeAndName & res_columns, size_t num_rows);
 
     ColumnsDescription required_columns;
@@ -307,6 +323,15 @@ private:
     /// for in reverse order reading
     /// should read whole stripe or row group
     bool ignore_batch_size_limit{false};
+
+    const bool use_prefetch;
+    const size_t min_bytes_for_seek;
+    
+    size_t prefetch_iterator = 0;
+
+    std::mutex prefetch_mutex;
+    std::unordered_map<size_t, bool> filtered_map;
+    bool is_reverse = false;
 };
 
 class NativeORCSchemaReader : public ISchemaReader

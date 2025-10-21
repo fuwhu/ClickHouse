@@ -1,6 +1,7 @@
 #include <Formats/FormatFactory.h>
 
 #include <algorithm>
+#include <utility>
 #include <Core/Settings.h>
 #include <Formats/FormatSettings.h>
 #include <Interpreters/Context.h>
@@ -158,18 +159,25 @@ InputFormatPtr FormatFactory::getInput(
     const Block & sample,
     ContextPtr context,
     UInt64 max_block_size,
-    const std::optional<FormatSettings> & _format_settings) const
+    const std::optional<FormatSettings> & _format_settings,
+    std::optional<size_t> _max_parsing_threads,
+    std::optional<size_t> _max_download_threads,
+    bool is_remote_fs) const
 {
     auto format_settings = _format_settings
         ? *_format_settings : getFormatSettings(context);
 
-    if (!getCreators(name).input_creator)
+
+    auto creator = getCreators(name);
+    if (!creator.input_creator && !creator.random_access_input_creator)
     {
         throw Exception("Format " + name + " is not suitable for input (with processors)", ErrorCodes::FORMAT_IS_NOT_SUITABLE_FOR_INPUT);
     }
 
     const Settings & settings = context->getSettingsRef();
     const auto & file_segmentation_engine = getCreators(name).file_segmentation_engine;
+    size_t max_parsing_threads = _max_parsing_threads.value_or(settings.max_parsing_threads);
+    size_t max_download_threads = _max_download_threads.value_or(settings.max_download_threads);
 
     // Doesn't make sense to use parallel parsing with less than four threads
     // (segmentator + two parsers + reader).
@@ -211,7 +219,12 @@ InputFormatPtr FormatFactory::getInput(
                context->getApplicationType() == Context::ApplicationType::SERVER};
         return std::make_shared<ParallelParsingInputFormat>(params);
     }
-
+    else if (creator.random_access_input_creator)
+    {
+        if (name == "ORC")
+            is_remote_fs = true;
+        return creator.random_access_input_creator(buf, sample, format_settings, context->getReadSettings(), is_remote_fs, max_download_threads, max_parsing_threads);
+    }
 
     auto format = getInputFormat(name, buf, sample, context, max_block_size, format_settings);
     return format;
@@ -390,6 +403,16 @@ void FormatFactory::registerInputFormat(const String & name, InputCreator input_
     auto & target = dict[name].input_creator;
     if (target)
         throw Exception("FormatFactory: Input format " + name + " is already registered", ErrorCodes::LOGICAL_ERROR);
+    target = std::move(input_creator);
+    registerFileExtension(name, name);
+}
+
+void FormatFactory::registerRandomAccessInputFormat(const String & name, RandomAccessInputCreator input_creator)
+{
+    auto & target = dict[name].random_access_input_creator;
+    if (target)
+        throw Exception("FormatFacotry: Input format " + name + " is already registered", ErrorCodes::LOGICAL_ERROR);
+
     target = std::move(input_creator);
     registerFileExtension(name, name);
 }

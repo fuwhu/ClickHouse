@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <orc/OrcFile.hh>
 #include <orc/Reader.hh>
 #include "Common/Exception.h"
 #include "Common/Stopwatch.h"
@@ -94,7 +95,7 @@ private:
     ORCMemoryPool() = default;
 };
 
-ORCInputStream::ORCInputStream(SeekableReadBuffer & in_, size_t file_size_) : in(in_), file_size(file_size_), pool(ORCMemoryPool::instance()) {
+ORCInputStream::ORCInputStream(SeekableReadBuffer & in_, size_t file_size_, bool use_prefetch) : in(in_), file_size(file_size_), supports_read_at(use_prefetch && in_.supportsReadAt()), pool(ORCMemoryPool::instance()) {
     buffer = std::make_unique<orc::DataBuffer<char>>(pool);
     buffer->reserve(MAX_BUFFER_SIZE);
 }
@@ -111,15 +112,37 @@ uint64_t ORCInputStream::getNaturalReadSize() const
 
 void ORCInputStream::read(void * buf, uint64_t length, uint64_t offset)
 {
-    in.readDirect(reinterpret_cast<char *>(buf), offset, length);
+    if (supports_read_at)
+        in.readBigAt(reinterpret_cast<char *>(buf), length, offset, nullptr);
+    else
+        in.readDirect(reinterpret_cast<char *>(buf), offset, length);
 }
+
+std::future<void> ORCInputStream::readAsync(void * buf, uint64_t length, uint64_t offset)
+{
+    if (supports_read_at)
+    {
+        auto future = std::async(std::launch::async,
+                        [this, buf, length, offset] { read(buf, length, offset); });
+        
+        return future;
+    }
+    else 
+    {
+        read(buf, length, offset);
+        std::promise<void> promise;
+        promise.set_value();
+        return promise.get_future();
+    }
+}
+
 
 uint64_t ORCInputStream::readFromRanges(void* buf, uint64_t length, uint64_t offset)
 {
     if (!inCurrentRange(offset)) {
         current_range = findIncludingRange(offset);
         seek(offset, false);
-        uint64_t bytes_to_fetch = std::min(MAX_BUFFER_SIZE, current_range.length() - (offset - current_range.start));
+        uint64_t bytes_to_fetch = std::min(MAX_BUFFER_SIZE, current_range.end - offset);
         auto bytes_read = in.readDirect(buffer->data(), file_position, bytes_to_fetch);
         file_position += bytes_read;
         buffer->resize(bytes_read, false);
@@ -131,7 +154,7 @@ uint64_t ORCInputStream::readFromRanges(void* buf, uint64_t length, uint64_t off
         seek(offset, false);
         uint64_t bytes_read;
         if (buffer->empty()) {
-            uint64_t bytes_to_fetch = std::min(MAX_BUFFER_SIZE, current_range.length() - (offset - current_range.start));
+            uint64_t bytes_to_fetch = std::min(MAX_BUFFER_SIZE, current_range.end - offset);
             bytes_read = in.readDirect(buffer->data(), file_position, bytes_to_fetch);
             file_position += bytes_read;
             buffer->resize(bytes_read, false);
@@ -211,12 +234,12 @@ void ORCInputStream::setOrAddRangesToRead(const std::vector<orc::OffsetRange> & 
         ranges_to_read.insert(ranges_to_read.end(), ranges.begin(), ranges.end());
 }
 
-std::unique_ptr<orc::InputStream> asORCInputStream(ReadBuffer & in, const FormatSettings & settings)
+std::unique_ptr<orc::InputStream> asORCInputStream(ReadBuffer & in, const FormatSettings & settings, bool use_prefetch)
 {
     auto * seekable_in = dynamic_cast<SeekableReadBufferWithSize *>(&in);
 
     if (seekable_in && settings.seekable_read && seekable_in->getTotalSize())
-        return std::make_unique<ORCInputStream>(*seekable_in, *seekable_in->getTotalSize());
+        return std::make_unique<ORCInputStream>(*seekable_in, *seekable_in->getTotalSize(), use_prefetch);
     else
         throw Exception(ErrorCodes::LOGICAL_ERROR, "input should be subclass of SeekableReadBufferWithSize with positive size");
 }
@@ -326,13 +349,17 @@ static void getFileReaderAndSchema(
     std::unique_ptr<orc::Reader> & file_reader,
     Block & header,
     const FormatSettings & format_settings,
+    bool use_prefetch,
+    size_t min_bytes_for_seek,
     std::atomic<int> & is_stopped)
 {
     if (is_stopped)
         return;
 
     orc::ReaderOptions options;
-    auto input_stream = asORCInputStream(in, format_settings);
+    options.setCacheOptions(orc::CacheOptions{.holeSizeLimit = min_bytes_for_seek, .rangeSizeLimit = 10 * 1024 * 1024UL});
+    options.setReaderMetrics(orc::getDefaultReaderMetrics());
+    auto input_stream = asORCInputStream(in, format_settings, use_prefetch);
     file_reader = orc::createReader(std::move(input_stream), options, true);
     const auto & schema = file_reader->getType();
 
@@ -429,8 +456,8 @@ Range buildRange(const orc::ColumnStatistics * col_stats)
     return r;
 }
 
-NativeORCBlockInputFormat::NativeORCBlockInputFormat(ReadBuffer & in_, Block header_, const FormatSettings & format_settings_)
-    : IInputFormat(std::move(header_), in_), format_settings(format_settings_)
+NativeORCBlockInputFormat::NativeORCBlockInputFormat(ReadBuffer & in_, Block header_, const FormatSettings & format_settings_, bool use_prefetch_, size_t min_bytes_for_seek_)
+    : IInputFormat(std::move(header_), in_), format_settings(format_settings_), use_prefetch(use_prefetch_), min_bytes_for_seek(min_bytes_for_seek_)
 {
     header = getPort().getHeader();
 }
@@ -440,7 +467,7 @@ void NativeORCBlockInputFormat::prepareFileReaderAndMetadata()
     if (file_reader_and_metadata_initialized)
         return;
 
-    getFileReaderAndSchema(*in, file_reader, file_schema, format_settings, is_stopped);
+    getFileReaderAndSchema(*in, file_reader, file_schema, format_settings, use_prefetch, min_bytes_for_seek, is_stopped);
     if (is_stopped)
         return;
 
@@ -601,7 +628,6 @@ size_t NativeORCBlockInputFormat::StripeReader::readConstantColumns(ColumnsWithT
     size_t num_rows = to_read_rows;
     /// update current_row for checking if has pending data in this stripe, pay attention to reversed order
     current_row = stripe_info.first_row_of_stripe + std::min((stripe_info.row_groups[current_row_group_index - 1] + 1) * stripe_info.row_group_size, stripe_info.num_rows);
-
     // add the constant columns into res_columns if exist.
     appendConstantColumns(res_columns, num_rows, add_constant_col_time_cost);
 
@@ -667,6 +693,146 @@ bool NativeORCBlockInputFormat::checkStripeColumnConstantness(UInt64 stripe_inde
     return is_constant;
 }
 
+void NativeORCBlockInputFormat::checkStripeFiltered(std::vector<uint32_t> & stripes)
+{
+    std::vector<uint32_t> stripe_indexes;
+    OrcConstantColumnsDescriptionPtr constant_columns_desc;
+
+    auto remove_constant_column = [&](std::list<UInt64> &include_indices_, Block &sample_block)
+    {
+        Stopwatch stop_watch;
+        constant_columns_desc = std::make_shared<OrcConstantColumnsDescription>();
+        for (auto it = include_indices_.begin(); it != include_indices_.end(); )
+        {
+            const auto &col_id = *it;
+            auto & col_with_type_name = file_schema.getByPosition(col_id);
+            GetColumnsOptions options{GetColumnsOptions::Kind::Ordinary};
+            DataTypePtr column_type;
+            if (auto got_col = required_columns.tryGetColumn(options, col_with_type_name.name))
+                column_type = got_col->type;
+            else
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "constant column {} is not found in the required columns, which could be a bug.", col_with_type_name.name);
+
+            auto found_it = column_name_to_index.find(col_with_type_name.name);
+            if (found_it == column_name_to_index.end())
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "column {} is not found in column_name_to_index, which could be a bug.", col_with_type_name.name);
+            auto col_index = found_it->second;
+            Field constant_value;
+            auto is_constant = checkStripeColumnConstantness(current_stripe_index, col_index, constant_value);
+            if (is_constant)
+            {
+                OrcConstantColumnDescription constant_col_desc{col_id, col_with_type_name.name, column_type, constant_value};
+                constant_columns_desc->emplace_back(std::move(constant_col_desc));
+                it = include_indices_.erase(it);
+                sample_block.erase(sample_block.getPositionByName(col_with_type_name.name));
+            } else
+                ++it;
+        }
+        remove_constant_column_time_cost += stop_watch.elapsedMicroseconds();
+    };
+    for (auto stripe : stripes)
+    {
+        bool all_filtered = true;
+        if (prewhere_info)
+        {
+            std::list<UInt64> prewhere_include_indices_for_stripe = prewhere_include_indices;
+            Block prewhere_header_for_stripe = prewhere_header;
+
+            auto & stripe_info = (*stripes_to_read)[stripe];
+
+            remove_constant_column(prewhere_include_indices_for_stripe, prewhere_header_for_stripe);
+
+            next_prewhere_stripe_reader = newStripeReader(stripe_info, prewhere_include_indices_for_stripe, prewhere_header_for_stripe, false, constant_columns_desc, false);
+            ColumnsWithTypeAndName pre_res_columns;
+            UInt64 tmp_add_constant_col_time_cost = 0;
+            
+            while (next_prewhere_stripe_reader->hasPendingData())
+            {
+                size_t num_rows = next_prewhere_stripe_reader->read(pre_res_columns, tmp_add_constant_col_time_cost);
+                add_constant_column_time_cost += tmp_add_constant_col_time_cost;
+                file_total_orc_table_to_ch_columns_time_cost += next_prewhere_stripe_reader->getOrcToCHColumnsTimeCost();  
+
+                if (!num_rows)
+                    continue;
+
+                if (executePrewhere(pre_res_columns, true) != 0)
+                {
+                    all_filtered = false;
+                    break;
+                }
+                else 
+                {
+                    stripe_info.row_groups.erase(stripe_info.row_groups.begin() + next_prewhere_stripe_reader->current_row_group_index - 1);
+                    next_prewhere_stripe_reader->stripe_info = stripe_info;
+                    if (stripe_info.row_groups.empty())
+                    {
+                        next_prewhere_stripe_reader->stripe_info = stripe_info;
+                        break;
+                    }
+                    
+                    next_prewhere_stripe_reader->current_row_group_index--;
+                }
+            }
+            
+            {
+                std::lock_guard<std::mutex> lock(prefetch_mutex);
+                filtered_map[stripe_info.stripe_index] = all_filtered;
+            }
+
+            if (!all_filtered)
+                stripe_indexes.push_back(stripe_info.stripe_index);
+        }
+    }
+
+    if (!stripe_indexes.empty())
+        file_reader->preBuffer(stripe_indexes, include_indices);
+}
+
+void NativeORCBlockInputFormat::prefetchStripes()
+{
+    if (!stripes_to_read)
+        stripes_to_read = getStripes();
+
+    if (prefetch_iterator != 0 && prefetch_iterator <= current_stripe_index)
+        prefetch_iterator = current_stripe_index + 1;
+    
+    if (prefetch_iterator >= stripes_to_read->size())
+        return;
+
+    size_t total_stripe_size = 0;
+    std::vector<uint32_t> stripes;
+    std::vector<uint32_t> stripes_to_check;
+    while (prefetch_iterator < stripes_to_read->size() && total_stripe_size < min_bytes_for_seek)
+    {
+        int stripe = stripes_to_read->at(prefetch_iterator).stripe_index;
+
+        stripes.push_back(stripe);
+        stripes_to_check.push_back(prefetch_iterator);
+
+        total_stripe_size += file_reader->getStripe(stripe)->getLength();
+        ++prefetch_iterator;
+    }
+
+    std::list<uint64_t> new_include_indices;
+    for (auto indice : prewhere_include_indices)
+        new_include_indices.push_back(indice);
+    
+    file_reader->preBuffer(stripes, new_include_indices);
+
+    auto res = std::async(std::launch::async, [stripes_to_check_ = stripes_to_check, this]() mutable
+    {
+        try
+        {
+            checkStripeFiltered(stripes_to_check_);
+        }
+        catch (Exception & e)
+        {
+            e.addMessage("prefetch filter failed: {}", e.what());
+            throw;
+        }
+    });
+}
+
 bool NativeORCBlockInputFormat::prepareStripeReader()
 {
     assert(file_reader);
@@ -689,6 +855,16 @@ bool NativeORCBlockInputFormat::prepareStripeReader()
         while (current_stripe_index < stripes_to_read->size())
         {
             auto & current_stripe = (*stripes_to_read)[current_stripe_index];
+            /// prefetch prewhere columns filter this stripe
+            if (current_stripe_index < prefetch_iterator)
+            {
+                std::lock_guard<std::mutex> lock(prefetch_mutex);
+                if (filtered_map.find(current_stripe.stripe_index) != filtered_map.end() && filtered_map.at(current_stripe.stripe_index))
+                {
+                    current_stripe_index++;
+                    continue;
+                }
+            }
             filter_row_group_callback(current_stripe, getStripeStatistics(current_stripe.stripe_index).get());
             if (current_stripe.row_groups.empty())
                 current_stripe_index++;
@@ -725,7 +901,7 @@ bool NativeORCBlockInputFormat::prepareStripeReader()
             if (is_constant)
             {
                 OrcConstantColumnDescription constant_col_desc{col_id, col_with_type_name.name, column_type, constant_value};
-                constant_columns_desc->emplace_back(constant_col_desc);
+                constant_columns_desc->emplace_back(std::move(constant_col_desc));
                 it = include_indices_.erase(it);
                 sample_block.erase(sample_block.getPositionByName(col_with_type_name.name));
             } else
@@ -756,6 +932,17 @@ bool NativeORCBlockInputFormat::prepareStripeReader()
         stripe_reader = newStripeReader((*stripes_to_read)[current_stripe_index], include_indices_for_stripe, header_for_stripe, !static_cast<bool>(prewhere_info), constant_columns_desc, true);
     } else
         stripe_reader = newStripeReader((*stripes_to_read)[current_stripe_index], include_indices_for_stripe, header_for_stripe, !static_cast<bool>(prewhere_info), constant_columns_desc, false);
+
+    if (use_prefetch)
+    {
+        auto offset = stripes_to_read->at(current_stripe_index).offset;
+        if (is_reverse)
+            file_reader->releaseBuffer(offset + stripes_to_read->at(current_stripe_index).length, is_reverse);
+        else
+            file_reader->releaseBuffer(offset, is_reverse);
+
+        prefetchStripes();
+    }
 
     ++current_stripe_index;
     return true;
@@ -853,12 +1040,12 @@ void NativeORCBlockInputFormat::addPrewhere(NamesAndTypesList prewhere_columns_,
         header.erase(prewhere_info->prewhere_column_name);
 }
 
-size_t NativeORCBlockInputFormat::executePrewhere(ColumnsWithTypeAndName & pre_res_columns)
+size_t NativeORCBlockInputFormat::executePrewhere(ColumnsWithTypeAndName & pre_res_columns, bool nextStripe)
 {
     filter_holder.reset(nullptr);
     filter = nullptr;
 
-    size_t num_rows = prewhere_stripe_reader->to_read_rows;
+    size_t num_rows = nextStripe ? next_prewhere_stripe_reader->to_read_rows : prewhere_stripe_reader->to_read_rows;
     for (auto & col_with_type_name : pre_res_columns)
     {
         if (!col_with_type_name.column)
@@ -1037,7 +1224,7 @@ NamesAndTypesList NativeORCSchemaReader::readSchema()
     Block header;
     std::unique_ptr<orc::Reader> file_reader;
     std::atomic<int> is_stopped = 0;
-    getFileReaderAndSchema(in, file_reader, header, format_settings, is_stopped);
+    getFileReaderAndSchema(in, file_reader, header, format_settings, false, 0, is_stopped);
 
     return header.getNamesAndTypesList();
 }
@@ -1682,10 +1869,22 @@ ColumnsWithTypeAndName ORCColumnToCHColumn::orcColumnsToCHColumns(const Block & 
 
 void registerInputFormatORC(FormatFactory & factory)
 {
-    factory.registerInputFormat(
+    factory.registerRandomAccessInputFormat(
         "ORC",
-        [](ReadBuffer & buf, const Block & sample, const RowInputFormatParams &, const FormatSettings & settings) -> InputFormatPtr
-        { return std::make_shared<NativeORCBlockInputFormat>(buf, sample, settings); });
+        [](ReadBuffer & buf, 
+            const Block & sample, 
+            const FormatSettings & settings, 
+            const ReadSettings & read_settings, 
+            bool is_remote_fs, 
+            size_t /* max_download_threads */,
+            size_t /* max_parallel_replicas */) -> InputFormatPtr
+        { 
+            auto * seekable_in = dynamic_cast<SeekableReadBuffer *>(&buf);
+            bool use_prefetch = is_remote_fs && read_settings.remote_fs_prefetch && seekable_in && seekable_in->supportsReadAt() && settings.seekable_read;
+            const size_t min_bytes_for_seek = use_prefetch ? read_settings.remote_read_min_bytes_for_seek : 0;
+            return std::make_shared<NativeORCBlockInputFormat>(buf, sample, settings, use_prefetch, min_bytes_for_seek); 
+        });
+        
     factory.markFormatAsColumnOriented("ORC");
 }
 

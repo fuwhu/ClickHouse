@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Common/Allocator.h>
+#include "IO/ReadSettings.h"
 #include <Columns/IColumn.h>
 #include <Formats/FormatSettings.h>
 #include <Interpreters/Context_fwd.h>
@@ -13,6 +14,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace DB
@@ -82,6 +84,16 @@ private:
             const RowInputFormatParams & params,
             const FormatSettings & settings)>;
 
+    // Incompatible with FileSegmentationEngine.
+    using RandomAccessInputCreator = std::function<InputFormatPtr(
+        ReadBuffer & buf,
+        const Block & header,
+        const FormatSettings & settings,
+        const ReadSettings & read_settings,
+        bool is_remote_fs,
+        size_t max_download_threads,
+        size_t max_parsing_threads)>;
+
     using OutputCreator = std::function<OutputFormatPtr(
             WriteBuffer & buf,
             const Block & sample,
@@ -104,6 +116,7 @@ private:
     {
         InputCreator input_creator;
         OutputCreator output_creator;
+        RandomAccessInputCreator random_access_input_creator;
         FileSegmentationEngine file_segmentation_engine;
         SchemaReaderCreator schema_reader_creator;
         ExternalSchemaReaderCreator external_schema_reader_creator;
@@ -125,7 +138,11 @@ public:
         const Block & sample,
         ContextPtr context,
         UInt64 max_block_size,
-        const std::optional<FormatSettings> & format_settings = std::nullopt) const;
+        const std::optional<FormatSettings> & format_settings = std::nullopt,
+        std::optional<size_t> max_parsing_threads = std::nullopt,
+        std::optional<size_t> max_download_threads = std::nullopt,
+        // affects things like buffer sizes and parallel reading
+        bool is_remote_fs = false) const;
 
     InputFormatPtr getInputFormat(
         const String & name,
@@ -182,6 +199,7 @@ public:
 
     /// Register format by its name.
     void registerInputFormat(const String & name, InputCreator input_creator);
+    void registerRandomAccessInputFormat(const String & name, RandomAccessInputCreator input_creator);
     void registerOutputFormat(const String & name, OutputCreator output_creator);
 
     /// Register file extension for format
