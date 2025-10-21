@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <Common/config.h>
 #include <Disks/IO/IReadBufferFromRemote.h>
 
@@ -49,6 +50,10 @@ public:
 
     size_t readDirect(char * to, size_t offset, size_t n) override;
 
+    bool supportsReadAt() override;
+
+    size_t readBigAt(char * buffer, size_t size, size_t offset, const std::function<bool (size_t)> & progress_callback) override;
+
     UInt32 getRemoteSeekCount() const override;
     UInt64 getRemoteSeekTimeCostMicrosecond() const override;
     UInt64 getRemoteReadBytes() const override;
@@ -64,11 +69,11 @@ private:
     std::shared_ptr<arrow::io::RandomAccessFile> file;
     off_t file_offset = 0;
 
-    UInt64 hdfs_read_bytes = 0;
-    UInt32 hdfs_read_count = 0;
-    UInt32 hdfs_seek_count = 0;
-    UInt64 hdfs_read_time_cost_us = 0;
-    UInt64 hdfs_seek_time_cost_us = 0;
+    std::atomic<UInt64> hdfs_read_bytes = 0;
+    std::atomic<UInt32> hdfs_read_count = 0;
+    std::atomic<UInt32> hdfs_seek_count = 0;
+    std::atomic<UInt64> hdfs_read_time_cost_us = 0;
+    std::atomic<UInt64> hdfs_seek_time_cost_us = 0;
 };
 }
 

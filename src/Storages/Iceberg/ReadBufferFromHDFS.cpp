@@ -230,6 +230,40 @@ size_t ReadBufferFromHDFS::readBig(char * to, size_t n)
     return readDirect(to, file_offset, n);
 }
 
+size_t ReadBufferFromHDFS::readBigAt(char * buffer, size_t size, size_t offset, const std::function<bool (size_t)> &)
+{
+    size_t bytes_read = 0;
+    Stopwatch watch;
+    while (bytes_read < size)
+    {
+        auto result = file->ReadAt(offset, size - bytes_read, buffer + bytes_read);
+        ++hdfs_read_count;
+        if (!result.ok()) [[unlikely]]
+            throw Exception(ErrorCodes::UNKNOWN_EXCEPTION, "Fail to read from HDFS file: {}/{}.", hdfs_uri, hdfs_file_path);
+
+        watch.stop();
+        ProfileEvents::increment(ProfileEvents::HDFSReadElapsedMicroseconds, watch.elapsedMicroseconds());
+        hdfs_read_time_cost_us += watch.elapsedMicroseconds();
+
+        auto n_bytes_read = std::move(result).ValueOrDie();
+        if (n_bytes_read <= 0) [[unlikely]]
+            throw Exception(ErrorCodes::NETWORK_ERROR, "Fail to read enough data from HDFS file: {}/{}. value is {}", hdfs_uri, hdfs_file_path, n_bytes_read);
+
+        ProfileEvents::increment(ProfileEvents::HDFSReadBytes, n_bytes_read);
+        bytes_read += n_bytes_read;   
+        hdfs_read_bytes += n_bytes_read;
+        offset += n_bytes_read;
+
+        watch.restart();
+    }
+    return bytes_read;
+}
+
+bool ReadBufferFromHDFS::supportsReadAt()
+{
+    return true;
+}
+
 UInt32 ReadBufferFromHDFS::getRemoteSeekCount() const { return hdfs_seek_count; }
 UInt64 ReadBufferFromHDFS::getRemoteSeekTimeCostMicrosecond() const { return hdfs_seek_time_cost_us; }
 UInt64 ReadBufferFromHDFS::getRemoteReadBytes() const { return hdfs_read_bytes; }

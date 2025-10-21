@@ -286,6 +286,7 @@ void IcebergORCFile::reverseSplits()
     std::reverse(stripes_statistics->begin(), stripes_statistics->end());
 
     orc_input_format->ignoreBatchSizeLimit();
+    orc_input_format->setReverse();
 }
 
 void IcebergORCFile::prepare(const ContextPtr & context, const ReadType & read_type)
@@ -320,6 +321,8 @@ void IcebergORCFile::prepare(const ContextPtr & context, const ReadType & read_t
 
     UInt64 row_index_filter_time_cost_us;
     applyFilters(FilterStage::FILTER_WITH_ROW_INDEX, row_index_filter_time_cost_us);
+
+    orc_input_format->prefetchFirstStripe();
 }
 
 

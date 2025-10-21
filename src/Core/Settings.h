@@ -728,7 +728,10 @@ class IColumn;
     M(Bool, output_format_arrow_low_cardinality_as_dictionary, false, "Enable output LowCardinality type as Dictionary Arrow type", 0) \
     \
     M(EnumComparingMode, format_capn_proto_enum_comparising_mode, FormatSettings::EnumComparingMode::BY_VALUES, "How to map ClickHouse Enum and CapnProto Enum", 0)\
-
+    \
+    M(MaxThreads, max_parsing_threads, 0, "The maximum number of threads to parse data in input formats that support parallel parsing. By default, it is determined automatically", 0)\
+    \
+    M(MaxThreads, max_download_threads, 0, "The maximum number of threads to download data (e.g. for URL engine)", 0)\
 // End of FORMAT_FACTORY_SETTINGS
 // Please add settings non-related to formats into the COMMON_SETTINGS above.
 
