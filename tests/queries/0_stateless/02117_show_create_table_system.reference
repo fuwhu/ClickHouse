@@ -521,6 +521,7 @@ CREATE TABLE system.parts
     `rows_where_ttl_info.min` Array(DateTime),
     `rows_where_ttl_info.max` Array(DateTime),
     `projections` Array(String),
+    `implicit_columns` Array(String),
     `visible` UInt8,
     `creation_tid` Tuple(
         UInt64,
@@ -536,6 +537,9 @@ CREATE TABLE system.parts
     `has_lightweight_delete` UInt8,
     `last_removal_attempt_time` DateTime,
     `removal_state` String,
+    `effective_rows` UInt64,
+    `merge_update_status` String,
+    `commit_type` String,
     `bytes` UInt64 ALIAS bytes_on_disk,
     `marks_size` UInt64 ALIAS marks_bytes,
     `part_name` String ALIAS name
@@ -1127,6 +1131,7 @@ CREATE TABLE system.tables
     `sampling_key` String,
     `storage_policy` String,
     `total_rows` Nullable(UInt64),
+    `total_effective_rows` Nullable(UInt64),
     `total_bytes` Nullable(UInt64),
     `total_bytes_uncompressed` Nullable(UInt64),
     `parts` Nullable(UInt64),
