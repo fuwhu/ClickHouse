@@ -1,5 +1,5 @@
-DROP TABLE IF EXISTS partitioned_table;
-DROP TABLE IF EXISTS mv_table;
+DROP TABLE IF EXISTS partitioned_table SYNC;
+DROP TABLE IF EXISTS mv_table SYNC;
 
 
 SET deduplicate_blocks_in_dependent_materialized_views = 1;
@@ -27,8 +27,8 @@ SELECT * FROM partitioned_table ORDER BY ALL;
 SELECT 'mv_table is not deduplicated because the inserted blocks was different:';
 SELECT * FROM mv_table ORDER BY ALL;
 
-DROP TABLE partitioned_table;
-DROP TABLE mv_table;
+DROP TABLE partitioned_table SYNC;
+DROP TABLE mv_table SYNC;
 
 
 SELECT 'with user deduplication token';
@@ -53,8 +53,8 @@ SELECT * FROM partitioned_table ORDER BY ALL;
 SELECT 'mv_table is not deduplicated because different tokens:';
 SELECT * FROM mv_table ORDER BY ALL;
 
-DROP TABLE partitioned_table;
-DROP TABLE mv_table;
+DROP TABLE partitioned_table SYNC;
+DROP TABLE mv_table SYNC;
 
 
 SELECT 'with incorrect ussage of user deduplication token';
@@ -79,5 +79,5 @@ SELECT * FROM partitioned_table ORDER BY ALL;
 SELECT 'mv_table is deduplicated because equal tokens:';
 SELECT * FROM mv_table ORDER BY ALL;
 
-DROP TABLE partitioned_table;
-DROP TABLE mv_table;
+DROP TABLE partitioned_table SYNC;
+DROP TABLE mv_table SYNC;

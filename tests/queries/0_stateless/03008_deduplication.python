@@ -113,7 +113,7 @@ def instance_insert_statement(
 
 def get_drop_tables_statements(tables):
     return "".join(
-        [f"DROP TABLE IF EXISTS {table_name};\n" for table_name in tables[::-1]]
+        [f"DROP TABLE IF EXISTS {table_name} SYNC;\n" for table_name in tables[::-1]]
     )
 
 

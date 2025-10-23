@@ -26,7 +26,7 @@ function thread_ddl()
         # A kind of backoff
         timeout 5s $CLICKHOUSE_CLIENT -q "select sleepEachRow(0.1) from system.dropped_tables format Null" 2>/dev/null ||:
 
-        $CLICKHOUSE_CLIENT -q "drop database if exists db_$CLICKHOUSE_DATABASE"
+        $CLICKHOUSE_CLIENT -q "drop database if exists db_$CLICKHOUSE_DATABASE sync"
     done
 }
 
@@ -61,4 +61,4 @@ wait
 
 timeout 45s $CLICKHOUSE_CLIENT -q "select sleepEachRow(0.3) from system.dropped_tables format Null" 2>/dev/null ||:
 
-$CLICKHOUSE_CLIENT -q "drop database if exists db_$CLICKHOUSE_DATABASE" 2>&1| grep -Fa "Exception: " | grep -Fv -e "TABLE_IS_DROPPED" -e "UNKNOWN_TABLE" -e "DATABASE_NOT_EMPTY" ||:
+$CLICKHOUSE_CLIENT -q "drop database if exists db_$CLICKHOUSE_DATABASE sync" 2>&1| grep -Fa "Exception: " | grep -Fv -e "TABLE_IS_DROPPED" -e "UNKNOWN_TABLE" -e "DATABASE_NOT_EMPTY" ||:
