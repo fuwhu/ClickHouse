@@ -103,7 +103,6 @@ echo "Running clickhouse-test..."
     00652_mutations_alter_update \
     02445_replicated_db_alter_partition \
     02441_alter_delete_and_drop_column \
-    02471_storage_unique_engine \
     02871_insert_filename_too_long_mapv2
 
 echo "ClickHouse test finished."
