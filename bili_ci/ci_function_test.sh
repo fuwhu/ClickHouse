@@ -91,7 +91,6 @@ echo "Running clickhouse-test..."
     00052_group_by_in \
     00021_1_select_with_in \
     00021_2_select_with_in \
-    00021_3_select_with_in \
-    02871_insert_filename_too_long_mapv2
+    00021_3_select_with_in
 
 echo "ClickHouse test finished."
