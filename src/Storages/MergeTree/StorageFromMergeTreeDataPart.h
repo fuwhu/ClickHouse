@@ -84,6 +84,11 @@ public:
         return !parts.empty() && parts.front().data_part->supportLightweightDeleteMutate();
     }
 
+    const MergeTreeData & getStorage() const
+    {
+        return storage;
+    }
+
 private:
     const RangesInDataParts parts;
     const MergeTreeData::MutationsSnapshotPtr mutations_snapshot;

@@ -6,8 +6,10 @@
 #include <Storages/MergeTree/LoadedMergeTreeDataPartInfoForReader.h>
 #include <DataTypes/NestedUtils.h>
 #include <DataTypes/DataTypeNested.h>
+#include "Common/logger_useful.h"
 #include <Common/checkImplicitColumn.h>
 #include <Common/escapeForFileName.h>
+#include "Storages/MergeTree/StorageFromMergeTreeDataPart.h"
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Compression/CachedCompressedReadBuffer.h>
 #include <Columns/ColumnArray.h>
@@ -64,8 +66,16 @@ IMergeTreeReader::IMergeTreeReader(
         : columns_)
     , virtual_fields(virtual_fields_)
 {
-    const auto & merge_tree_data = dynamic_cast<const MergeTreeData &>(storage_snapshot->storage);
-    if (!(*merge_tree_data.getSettings())[MergeTreeSetting::implicit_map_duplication])
+    const MergeTreeData * merge_tree_data = nullptr;
+
+    if (const auto * data = dynamic_cast<const MergeTreeData *>(&storage_snapshot->storage))
+        merge_tree_data = data;
+    else if (const auto * wrapper = dynamic_cast<const StorageFromMergeTreeDataPart *>(&storage_snapshot->storage))
+        merge_tree_data = &wrapper->getStorage();
+    else
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Unknown storage type: expected MergeTreeData or StorageFromMergeTreeDataPart.");
+
+    if (merge_tree_data && !(*merge_tree_data->getSettings())[MergeTreeSetting::implicit_map_duplication])
     {
         for (const auto & requested_column : requested_columns)
         {
