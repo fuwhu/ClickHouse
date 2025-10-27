@@ -137,6 +137,13 @@ private:
         {
             state = uint128(0, 0);
         }
+
+        ~HashingFile() override
+        {
+            // Cancel the buffer if not finalized to avoid destructor warning
+            if (!finalized && !canceled)
+                cancel();
+        }
     };
 
     HashingFile hashing_file;

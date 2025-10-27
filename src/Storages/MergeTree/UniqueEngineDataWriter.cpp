@@ -745,6 +745,7 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
     auto unique_delete_bitmap_out = disk->writeFile(tmp_dir_to_write / UNIQUE_ENGINE_DELETE_BITMAP);
 
     unique_delete_bitmap_map[data_part]->serializeBinary(*unique_delete_bitmap_out);
+    unique_delete_bitmap_out->finalize();
 }
 
 void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_part, const DeletedKeysPtr & deleted_keys)
@@ -777,6 +778,7 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
     bool is_write_binary = (*storage_settings)[MergeTreeSetting::unique_key_index_type] == IUniqueKeyIndex::Type::LEVEL_DB;
 
     deleted_keys->serializeBinary(*out, is_write_binary);
+    out->finalize();
 }
 
 void UniqueEngineDataWriter::clearTempDirs()
