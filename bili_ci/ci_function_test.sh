@@ -92,17 +92,6 @@ echo "Running clickhouse-test..."
     00021_1_select_with_in \
     00021_2_select_with_in \
     00021_3_select_with_in \
-    02792_drop_projection_lwd \
-    01414_freeze_does_not_prevent_alters \
-    02832_alter_delete_indexes_projections \
-    03442_alter_delete_empty_part_rmt \
-    01413_alter_update_supertype \
-    02521_lightweight_delete_and_ttl \
-    03442_alter_delete_empty_part \
-    02100_alter_scalar_circular_deadlock \
-    00652_mutations_alter_update \
-    02445_replicated_db_alter_partition \
-    02441_alter_delete_and_drop_column \
     02871_insert_filename_too_long_mapv2
 
 echo "ClickHouse test finished."
