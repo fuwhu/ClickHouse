@@ -173,9 +173,6 @@ public:
     {
         const auto & state = data(place);
 
-        if (!state.bsi_slices[0].roaring_bitmap_with_small_set.size())
-            return;
-
         int highest_non_empty_index = AggregateFunctionBsiBuildData::getHighestNonEmptyIndex(state.bsi_slices);
 
         /// if all metric is 0, size = 1(id_bitmap), else size = 1(id_bitmap) +（highest_non_empty_index)

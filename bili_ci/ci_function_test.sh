@@ -60,7 +60,7 @@ done
 
 echo "Running clickhouse-test..."
 
-./tests/clickhouse-test create alter select drop group ttl unique_engine read_in_order insert prom_metric \
+./tests/clickhouse-test create alter select drop group ttl unique_engine read_in_order insert prom_metric bsi \
     --skip s3 \
     02228_merge_tree_insert_memory_usage \
     02285_executable_user_defined_function_group_by \
