@@ -70,9 +70,6 @@ public:
     {
         const auto & state = data(place);
 
-        if (!state.ids_with_bsi[0].roaring_bitmap_with_small_set.size())
-            return;
-
         int highest_non_empty_index = -1;
 
         for (int i = static_cast<int>(state.ids_with_bsi.size()) - 1; i > 0; --i)

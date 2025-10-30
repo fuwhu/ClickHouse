@@ -21,6 +21,7 @@ namespace ErrorCodes
 {
 extern const int LOGICAL_ERROR;
 extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
+extern const int BAD_ARGUMENTS;
 }
 
 
@@ -60,27 +61,35 @@ public:
         size_t pos = 0;
         size_t row = 0;
 
+        const auto & array_ptr = array_data.getData();
+        auto & result_ptr = result_arr_data->getData();
+
         for (const auto *offsets_data = array_offsets.data(), *end = offsets_data + array_offsets.size(); offsets_data < end;
              ++offsets_data)
         {
-            auto offset_data = *offsets_data;
+            const auto offset_data = *offsets_data;
+            const auto * rbm_ptr = reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.size() == 1 ? rbm_col.getData()[0] : rbm_col.getData()[row]);
+
+            bool is_first = true;
+            bool skip = false;
 
             for (; pos < offset_data; ++pos)
             {
                 result_arr_data->insertDefault();
 
-                AggregateFunctionGroupBitmapData<UInt64> & bitmap_data
-                    = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(array_data.getData()[pos]);
-                AggregateFunctionGroupBitmapData<UInt64> & result_bitmap_data
-                    = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(result_arr_data->getData()[pos]);
+                if (skip)
+                    continue;
 
+                auto &bitmap_data = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(array_ptr[pos]);
+                auto &result_bitmap_data = *reinterpret_cast<AggregateFunctionGroupBitmapData<UInt64> *>(result_ptr[pos]);
+                
                 result_bitmap_data.roaring_bitmap_with_small_set.merge(bitmap_data.roaring_bitmap_with_small_set);
+                result_bitmap_data.roaring_bitmap_with_small_set.rb_and(rbm_ptr->roaring_bitmap_with_small_set);
 
-                const AggregateFunctionGroupBitmapData<UInt64> & rbm_data = rbm_col.size() == 1
-                    ? *reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.getData()[0])
-                    : *reinterpret_cast<const AggregateFunctionGroupBitmapData<UInt64> *>(rbm_col.getData()[row]);
-
-                result_bitmap_data.roaring_bitmap_with_small_set.rb_and(rbm_data.roaring_bitmap_with_small_set);
+                if (is_first) {
+                    skip = result_bitmap_data.roaring_bitmap_with_small_set.size() == 0;
+                    is_first = false;
+                }
             }
 
             row++;
@@ -109,6 +118,15 @@ public:
         const ColumnAggregateFunction & rbm_col = isColumnConst(*arguments[1].column)
             ? typeid_cast<const ColumnAggregateFunction &>(typeid_cast<const ColumnConst &>(*arguments[1].column).getDataColumn())
             : typeid_cast<const ColumnAggregateFunction &>(*arguments[1].column);
+        
+        const auto & aggregate_function = rbm_col.getAggregateFunction();
+        const auto & data_type = aggregate_function->getArgumentTypes()[0];
+
+        if (!WhichDataType(data_type).isUInt64()) {
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                          "Function {} only supports UInt64 bitmap types.",
+                          getName());
+        }
 
         MutableColumnPtr result;
         filter(array_data, array_offsets, result, rbm_col);
