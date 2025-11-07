@@ -67,15 +67,16 @@ def drop_distributed_table(node, table_name):
     time.sleep(1)
 
 
-def insert(
+def insert_data(
     node,
     table_name,
-    insert_data
+    data,
+    ignore_exception=False
 ):
     try:
         query = "INSERT INTO {}_replicated SELECT 1, bsi_build(u_id, gmv) AS bsi FROM ("
         
-        for k,v in insert_data.items():
+        for k,v in data.items():
             query = query + "SELECT " + str(k) + " AS u_id, " + str(v) + " AS gmv " + "UNION ALL "
         
         query = query[:-10]
@@ -126,12 +127,79 @@ def test_select_bsi_ge(started_cluster):
         create_distributed_table(node1, table_name)
 
         d1 = {1:3,2:6}
-        insert(node1, table_name, d1)
+        insert_data(node1, table_name, d1)
 
         d2 = {3:4,4:10,5:7}
-        insert(node3, table_name, d2)
+        insert_data(node3, table_name, d2)
 
-        # check that select still works
         select(node1, table_name, "3\n")
+    finally:
+        drop_distributed_table(node1, table_name)
+
+
+def test_bsi_distributed_aggregations(started_cluster):
+    table_name = "test_bsi_distributed"
+    drop_distributed_table(node1, table_name)
+    
+    try:
+        create_distributed_table(node1, table_name)
+
+        data_shard1 = {1: 3, 2: 6, 3: 4}
+        insert_data(node1, table_name, data_shard1)
+
+        data_shard2 = {4: 10, 5: 7, 6: 8}
+        insert_data(node3, table_name, data_shard2)
+
+        time.sleep(3)
+
+        result_1 = node1.query("SELECT bsi_sum(bsi) FROM {}_replicated".format(table_name))
+        assert result_1.strip() == "(13,3)"
+
+        result_2 = node3.query("SELECT bsi_sum(bsi) FROM {}_replicated".format(table_name))
+        assert result_2.strip() == "(25,3)"
+
+        result_add_agg = node1.query("""
+            SELECT bsi_sum(bsi_agg) FROM (
+                SELECT bsi_add_agg(bsi) AS bsi_agg FROM {}
+            )
+        """.format(table_name))
+        assert result_add_agg.strip() == "(38,6)"
+
+        result_ge = node1.query("""
+            SELECT bitmapCardinality(bsi_ge(bsi_agg, 5)) AS count_ge_5 
+            FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})
+        """.format(table_name))
+        assert result_ge.strip() == "4"
+
+        result_gt = node1.query("""
+            SELECT bitmapCardinality(bsi_gt(bsi_agg, 5)) AS count_gt_5 
+            FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})
+        """.format(table_name))
+        assert result_gt.strip() == "4"
+
+        result_le = node1.query("""
+            SELECT bitmapCardinality(bsi_le(bsi_agg, 5)) AS count_le_5 
+            FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})
+        """.format(table_name))
+        assert result_le.strip() == "2"
+
+        result_range = node1.query("""
+            SELECT bitmapCardinality(bsi_range(bsi_agg, 4, 7)) AS count_range 
+            FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})
+        """.format(table_name))
+        assert result_range.strip() == "3"
+
+        test_queries = [
+            "SELECT bsi_sum(bsi_agg) FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})".format(table_name),
+            "SELECT bitmapCardinality(bsi_ge(bsi_agg, 5)) FROM (SELECT bsi_add_agg(bsi) AS bsi_agg FROM {})".format(table_name)
+        ]
+        
+        for query in test_queries:
+            results = []
+            for node in nodes:
+                result = node.query(query)
+                results.append(result.strip())
+            assert len(set(results)) == 1, f"Results differ across nodes for query: {query}"
+
     finally:
         drop_distributed_table(node1, table_name)
