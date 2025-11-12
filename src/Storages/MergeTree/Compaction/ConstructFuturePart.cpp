@@ -7,8 +7,7 @@ namespace DB
 static std::optional<MergeTreeDataPartsVector> findPartsInMemory(
     const MergeTreeData & data,
     const PartsRange & range,
-    MergeTreeData::DataPartStates lookup_statuses,
-    const MergeType & merge_type)
+    MergeTreeData::DataPartStates lookup_statuses)
 {
     LoggerPtr log = getLogger("ConstructFuturePart");
     MergeTreeDataPartsVector data_parts;
@@ -53,13 +52,6 @@ static std::optional<MergeTreeDataPartsVector> findPartsInMemory(
             LOG_DEBUG(log, "no part to merge");
             return std::nullopt;
         }
-
-        if (data_parts.size() == 1 && merge_type == MergeType::Regular)
-        {
-            /// rollback merge_update_status of part
-            data.changePartMergeUpdateStatus(data_parts[0], IMergeTreeDataPart::MergeUpdateStatus::MERGING, IMergeTreeDataPart::MergeUpdateStatus::NORMAL);
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "Logical error: regular merge selector returned only one part that can be merged.");
-        }
     }
     else
     {
@@ -77,7 +69,7 @@ static std::optional<MergeTreeDataPartsVector> findPartsInMemory(
 
 FutureMergedMutatedPartPtr constructFuturePart(const MergeTreeData & data, const MergeSelectorChoice & choice, MergeTreeData::DataPartStates lookup_statuses)
 {
-    auto data_parts = findPartsInMemory(data, choice.range, std::move(lookup_statuses), choice.merge_type);
+    auto data_parts = findPartsInMemory(data, choice.range, std::move(lookup_statuses));
     if (!data_parts.has_value())
         return nullptr;
 

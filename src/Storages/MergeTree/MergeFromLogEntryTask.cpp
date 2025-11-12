@@ -58,14 +58,6 @@ ReplicatedMergeMutateTaskBase::PrepareResult MergeFromLogEntryTask::prepare()
     LOG_TRACE(log, "Executing log entry to merge parts {} to {}",
         fmt::join(entry.source_parts, ", "), entry.new_part_name);
 
-    /// For replicated unique engine tables, due to the realtime data updating to each data part, the result data parts of executing same merge-type log entry on different replicas may have different file checksums, which may lead to the failure of checksum validation.
-    /// So we only execute each merge-type log entry on one replica, and then fetch the merged result on other replicas.
-    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique && storage.replica_name != entry.source_replica)
-    {
-        LOG_INFO(log, "Will fetch part {} because engine is unique.", entry.new_part_name);
-        return PrepareResult{false, true, {}};
-    }
-
     StorageMetadataPtr metadata_snapshot = storage.getInMemoryMetadataPtr();
     int32_t metadata_version = metadata_snapshot->getMetadataVersion();
     const auto storage_settings_ptr = storage.getSettings();
@@ -78,6 +70,18 @@ ReplicatedMergeMutateTaskBase::PrepareResult MergeFromLogEntryTask::prepare()
             PartLogElement::MERGE_PARTS, execution_status, stopwatch.elapsed(),
             entry.new_part_name, part, parts, merge_mutate_entry.get(), std::move(profile_counters_snapshot));
     };
+
+    /// For replicated unique engine tables, due to the realtime data updating to each data part, the result data parts of executing same merge-type log entry on different replicas may have different file checksums, which may lead to the failure of checksum validation.
+    /// So we only execute each merge-type log entry on one replica, and then fetch the merged result on other replicas.
+    if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique && storage.replica_name != entry.source_replica)
+    {
+        LOG_INFO(log, "Will fetch part {} because engine is unique.", entry.new_part_name);
+        return PrepareResult{
+            .prepared_successfully = false,
+            .need_to_check_missing_part_in_fetch = true,
+            .part_log_writer = part_log_writer,
+        };
+    }
 
     if ((*storage_settings_ptr)[MergeTreeSetting::always_fetch_merged_part])
     {
