@@ -97,9 +97,6 @@ public:
         {
             global_ctx = std::make_shared<GlobalRuntimeContext>();
 
-            if (merging_params_.mode == MergeTreeData::MergingParams::Unique)
-                future_part_->setUniqueDeleteBitmaps();
-
             global_ctx->future_part = std::move(future_part_);
             global_ctx->metadata_snapshot = std::move(metadata_snapshot_);
             global_ctx->merge_entry = std::move(merge_entry_);

@@ -224,67 +224,21 @@ void MergeTreeSequentialSource::updateRowsToRead(size_t mark_number)
         current_rows_to_read = index_granularity->getMarkRows(mark_number);
 }
 
-static void filterColumns(Columns & columns, const IColumn::Filter & filter)
-{
-    for (auto & column : columns)
-    {
-        if (column)
-        {
-            column = column->filter(filter, -1);
-
-            if (column->empty())
-            {
-                columns.clear();
-                return;
-            }
-        }
-    }
-}
-
 Chunk MergeTreeSequentialSource::generate()
 try
 {
-    while (true)
+    const auto & index_granularity = read_task_info->data_part->index_granularity;
+
+    while (!isCancelled() && current_mark < index_granularity->getMarksCountWithoutFinal() && current_row < read_task_info->data_part->rows_count)
     {
-        const auto & index_granularity = read_task_info->data_part->index_granularity;
-        if (current_mark >= index_granularity->getMarksCountWithoutFinal() || current_row >= read_task_info->data_part->rows_count)
-        {
-            finish();
-            return {};
-        }
-
-        if (isCancelled())
-            return {};
-
         auto read_result = readers_chain.read(current_rows_to_read, mark_ranges);
-        if (!read_result.num_rows)
-            return {};
 
-        if (read_result.num_rows > current_rows_to_read)
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "Read {} rows, more than requested to read: {}", read_result.num_rows, current_rows_to_read);
+        if (read_result.numReadRows() > current_rows_to_read)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Read {} rows, more than requested to read: {}", read_result.numReadRows(), current_rows_to_read);
 
-        size_t delete_size = 0;
-        if (storage.merging_params.mode == MergeTreeData::MergingParams::Unique
-                && unique_delete_bitmap && unique_delete_bitmap->deleteRowsSize())
-        {
-            auto col_vec = ColumnUInt8::create(read_result.num_rows);
-            auto & data = col_vec->getData();
-
-            UInt8 * pos = data.data();
-
-            for (size_t row = current_row; row < current_row + read_result.num_rows; ++row)
-            {
-                auto is_deleted = unique_delete_bitmap->isDeleted(row);
-                if (is_deleted)
-                    delete_size++;
-                *pos++ = !is_deleted;
-            }
-
-            filterColumns(read_result.columns, col_vec->getData());
-        }
-
-        current_row += read_result.num_rows;
-        current_rows_to_read -= read_result.num_rows;
+        
+        current_row += read_result.numReadRows();
+        current_rows_to_read -= read_result.numReadRows();
 
         if (!current_rows_to_read)
         {
@@ -292,7 +246,9 @@ try
             updateRowsToRead(current_mark);
         }
 
-        if (read_result.columns.empty())
+        /// Unique Engine
+        /// If all rows were filtered out by delete bitmap, continue to next granularity.
+        if (!read_result.num_rows)
             continue;
 
         const auto & result_header = getPort().getHeader();
@@ -322,7 +278,7 @@ try
             result_column->assumeMutableRef().shrinkToFit();
         }
 
-        auto result = Chunk(std::move(result_columns), read_result.num_rows - delete_size);
+        auto result = Chunk(std::move(result_columns), read_result.num_rows);
         /// Part level is useful for next step for merging non-merge tree table
         bool add_part_level = storage.merging_params.mode != MergeTreeData::MergingParams::Ordinary;
 
@@ -331,6 +287,12 @@ try
 
         return result;
     }
+
+    if (isCancelled())
+        return {};
+
+    finish();
+    return {};
 }
 catch (...)
 {

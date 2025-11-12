@@ -150,3 +150,25 @@ UNIQUE KEY award_id
 SETTINGS unique_key_index_type = 5; -- { serverError BAD_ARGUMENTS }
 
 DROP TABLE IF EXISTS test_uk_settings;
+
+
+DROP TABLE IF EXISTS test_unique_engine_merge;
+
+CREATE TABLE test_unique_engine_merge (id UInt32, name String, version UInt32, dt DateTime)
+ENGINE = UniqueMergeTree(version)
+PARTITION BY toDate(dt)
+ORDER BY id
+UNIQUE KEY id
+SETTINGS index_granularity = 3, index_granularity_bytes = 0, min_bytes_for_wide_part = 0, max_bytes_to_merge_at_min_space_in_pool = 0, max_bytes_to_merge_at_max_space_in_pool = 0;
+
+INSERT INTO test_unique_engine_merge VALUES (1, 'a', 1, '2025-11-11 15:00:00'), (2, 'b2', 2, '2025-11-11 15:00:00'), (3, 'c', 1, '2025-11-11 15:00:00'),  (1, 'a2', 2, '2025-11-11 15:00:00'), (2, 'b', 1, '2025-11-11 15:00:00'), (5, 'e', 1, '2025-11-11 15:00:00'), (6, 'f', 1, '2025-11-11 15:00:00');
+
+INSERT INTO test_unique_engine_merge VALUES (7, 'g', 1, '2025-11-11 15:00:00');
+
+SELECT _part, * FROM test_unique_engine_merge ORDER BY id;
+
+OPTIMIZE table test_unique_engine_merge FINAL;
+
+SELECT _part, * FROM test_unique_engine_merge ORDER BY id;
+
+DROP TABLE IF EXISTS test_unique_engine_merge;
