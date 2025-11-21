@@ -101,7 +101,7 @@ integration_tests:
     - when: never
   script:
     - echo "integration_tests begin"
-    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config/inter_test --docker-image-version v25 test_ddl_alter_query test_distributed_ddl test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_consistant_parts_after_move_partition test_multiple_disks test_rename_column test_ttl_move test_repliacted_storage_unique_engine test_replicated_bsi test_cluster_replica_is_enable
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config/inter_test --docker-image-version v25 test_ddl_alter_query test_distributed_ddl test_system_merges test_zookeeper_config test_cluster_all_replicas test_replicated_merge_tree_config test_consistant_parts_after_move_partition test_multiple_disks test_rename_column test_ttl_move test_repliacted_storage_unique_engine test_replicated_bsi test_cluster_replica_is_enable test_ttl_move_strategy
     - echo "integration_tests end"
   dependencies:
     - build
