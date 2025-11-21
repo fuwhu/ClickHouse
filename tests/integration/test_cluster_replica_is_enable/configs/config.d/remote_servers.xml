@@ -1,0 +1,69 @@
+<clickhouse>
+    <remote_servers>
+        <!-- node1 and node3 are enabled, node2 is disabled -->
+        <test_cluster_partial_disabled>
+            <shard>
+                <replica>
+                    <host>node1</host>
+                    <port>9000</port>
+                    <is_enable>1</is_enable>
+                </replica>
+                <replica>
+                    <host>node2</host>
+                    <port>9000</port>
+                    <is_enable>0</is_enable>
+                </replica>
+                <replica>
+                    <host>node3</host>
+                    <port>9000</port>
+                    <is_enable>1</is_enable>
+                </replica>
+            </shard>
+        </test_cluster_partial_disabled>
+
+        <!-- node1 and node3 are enabled, node2 is disabled, node4 is enabled by default -->
+        <test_cluster_multi_shard>
+            <shard>
+                <replica>
+                    <host>node1</host>
+                    <port>9000</port>
+                    <is_enable>1</is_enable>
+                </replica>
+                <replica>
+                    <host>node2</host>
+                    <port>9000</port>
+                    <is_enable>0</is_enable>
+                </replica>
+            </shard>
+            <shard>
+                <replica>
+                    <host>node3</host>
+                    <port>9000</port>
+                    <is_enable>1</is_enable>
+                </replica>
+                <replica>
+                    <host>node4</host>
+                    <port>9000</port>
+                </replica>
+            </shard>
+        </test_cluster_multi_shard>
+
+        <!-- node1 is enabled, node2 is disabled -->
+        <test_cluster_internal_replication>
+            <shard>
+                <internal_replication>true</internal_replication>
+                <replica>
+                    <host>node1</host>
+                    <port>9000</port>
+                    <is_enable>1</is_enable>
+                </replica>
+                <replica>
+                    <host>node2</host>
+                    <port>9000</port>
+                    <is_enable>0</is_enable>
+                </replica>
+            </shard>
+        </test_cluster_internal_replication>
+    </remote_servers>
+</clickhouse>
+
