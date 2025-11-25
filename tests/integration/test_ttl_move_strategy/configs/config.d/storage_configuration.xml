@@ -1,0 +1,29 @@
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <hot_disk>
+                <path>/hot_disk/</path>
+            </hot_disk>
+            <cold_disk>
+                <path>/cold_disk/</path>
+            </cold_disk>
+        </disks>
+        
+        <policies>
+            <ttl_move_policy>
+                <volumes>
+                    <hot>
+                        <disk>hot_disk</disk>
+                        <perform_ttl_move_on_insert>false</perform_ttl_move_on_insert>
+                    </hot>
+                    <cold>
+                        <disk>cold_disk</disk>
+                        <perform_ttl_move_on_insert>false</perform_ttl_move_on_insert>
+                    </cold>
+                </volumes>
+                <move_factor>0.2</move_factor>
+            </ttl_move_policy>
+        </policies>
+    </storage_configuration>
+</clickhouse>
+
