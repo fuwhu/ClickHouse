@@ -96,6 +96,10 @@ void registerAggregateFunctionDistinctJSONPathsAndTypes(AggregateFunctionFactory
 void registerAggregateFunctionBsiBuild(AggregateFunctionFactory &);
 void registerAggregateFunctionBsiAddAgg(AggregateFunctionFactory &);
 void registerAggregateFunctionBsiMergeAgg(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricHistogramQuantile(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricIncrease(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricIRate(AggregateFunctionFactory &);
+void registerAggregateFunctionPromMetricRate(AggregateFunctionFactory &);
 
 class AggregateFunctionCombinatorFactory;
 void registerAggregateFunctionCombinatorIf(AggregateFunctionCombinatorFactory &);
@@ -205,6 +209,11 @@ void registerAggregateFunctions()
         registerAggregateFunctionBsiBuild(factory);
         registerAggregateFunctionBsiAddAgg(factory);
         registerAggregateFunctionBsiMergeAgg(factory);
+        registerAggregateFunctionPromMetricHistogramQuantile(factory);
+        registerAggregateFunctionPromMetricIncrease(factory);
+        registerAggregateFunctionPromMetricIRate(factory);
+        registerAggregateFunctionPromMetricRate(factory);
+
 
         registerWindowFunctions(factory);
     }
