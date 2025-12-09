@@ -386,13 +386,20 @@ void SerializationArray::deserializeBinaryBulkWithMultipleStreams(
     {
         ColumnArray::Offsets & offset_values = column_array.getOffsets();
 
-        size_t skipped_idx = std::min(prev_offset_size + rows_offset, offset_values.size()) - 1;
-        skipped_nested_rows = offset_values[skipped_idx] - prev_last_offset;
+        /// Check if we actually read any data from the stream before attempting to popBack.
+        /// When a column was added via ALTER ADD COLUMN, the column file may not exist in old parts,
+        /// so offset_values.size() remains equal to prev_offset_size (no new data was read).
+        /// In this case, we should skip the popBack operation to avoid unsigned integer underflow.
+        if (offset_values.size() > prev_offset_size)
+        {
+            size_t skipped_idx = std::min(prev_offset_size + rows_offset, offset_values.size()) - 1;
+            skipped_nested_rows = offset_values[skipped_idx] - prev_last_offset;
 
-        for (auto i = prev_offset_size; i + rows_offset < offset_values.size(); ++i)
-            offset_values[i] = offset_values[i + rows_offset] - skipped_nested_rows;
+            for (auto i = prev_offset_size; i + rows_offset < offset_values.size(); ++i)
+                offset_values[i] = offset_values[i + rows_offset] - skipped_nested_rows;
 
-        column_array.getOffsetsPtr()->assumeMutable()->popBack(rows_offset);
+            column_array.getOffsetsPtr()->assumeMutable()->popBack(rows_offset);
+        }
     }
 
     settings.path.back() = Substream::ArrayElements;
