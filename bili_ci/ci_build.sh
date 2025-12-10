@@ -12,7 +12,7 @@ export CC=clang-19
 export CXX=clang++-19
 
 echo "Configuring project with CMake (Release build)..."
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_LIBHDFS=1
 
 echo "Building project using Ninja..."
 ninja
