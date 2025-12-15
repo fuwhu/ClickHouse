@@ -1074,7 +1074,10 @@ ContextData::ContextData(const ContextData &o) :
     remote_write_query_throttler(o.remote_write_query_throttler),
     local_read_query_throttler(o.local_read_query_throttler),
     local_write_query_throttler(o.local_write_query_throttler),
-    backups_query_throttler(o.backups_query_throttler)
+    backups_query_throttler(o.backups_query_throttler),
+    iceberg_data_streams_metrics(o.iceberg_data_streams_metrics),
+    iceberg_scan_files_metrics(o.iceberg_scan_files_metrics),
+    iceberg_create_files_metrics(o.iceberg_create_files_metrics)
 {
 }
 
@@ -6584,6 +6587,343 @@ Poco::Timespan HTTPContext::getReceiveTimeout() const
 Poco::Timespan HTTPContext::getSendTimeout() const
 {
     return context->getSettingsRef()[Setting::http_send_timeout];
+}
+
+void Context::initIcebergDataStreamsMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics == nullptr)
+        iceberg_data_streams_metrics = std::make_shared<IcebergDataStreamsMetrics>();
+}
+
+Context::IcebergDataStreamsMetricsPtr Context::getIcebergDataStreamsMetrics() const
+{
+    SharedLockGuard lock(shared->mutex);
+    return iceberg_data_streams_metrics;
+}
+
+Int32 Context::newIcebergDataStreamMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        iceberg_data_streams_metrics->emplace_back();
+        return iceberg_data_streams_metrics->size() - 1;
+    }
+    throw Exception(ErrorCodes::LOGICAL_ERROR,
+                    "New a iceberg data stream metrics index while iceberg_data_streams_metrics is not initialized yet, which is a bug.");
+}
+
+void Context::setIcebergFileSourceReadStartTime(Int32 metrics_index, Decimal64 time) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].iceberg_file_source_read_start_time_us = time;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting iceberg_file_source_read_start_time, which is a bug.");
+    }
+}
+
+void Context::setStreamAssignedFileCount(Int32 metrics_index, UInt32 assigned_file_cnt) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].assigned_file_count = assigned_file_cnt;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting assigned_file_count, which is a bug.");
+    }
+}
+
+void Context::setStreamAssignedFileSize(Int32 metrics_index, UInt64 assigned_file_size) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].assigned_file_size = assigned_file_size;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting assigned_file_size, which is a bug.");
+    }
+}
+
+void Context::setStreamAssignedSplitCount(Int32 metrics_index, UInt32 assigned_split_cnt) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].assigned_split_count = assigned_split_cnt;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting assigned_split_count, which is a bug.");
+    }
+}
+
+void Context::incrementStreamReadFileCount(Int32 metrics_index) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            ++((*iceberg_data_streams_metrics)[metrics_index].read_file_count);
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while increment read_file_count, which is a bug.");
+    }
+}
+
+void Context::increaseStreamPrepareFilesTimeCostMicroseconds(Int32 metrics_index, UInt32 prepare_files_time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].prepare_files_time_cost_us += prepare_files_time_cost_us;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while increasing prepare_files_time_cost_us, which is a bug.");
+    }
+}
+
+void Context::updateIcebergFileMetrics(
+        Int32 metrics_index,
+        UInt64 iceberg_file_source_read_time_cost_us,
+        UInt64 read_remote_bytes,
+        UInt64 read_remote_time_cost_us,
+        UInt32 seek_remote_count,
+        UInt32 read_remote_count,
+        UInt64 seek_remote_time_cost_us,
+        UInt64 remote_read_init_wait_cost_us,
+        UInt64 read_local_bytes,
+        UInt32 read_local_count,
+        UInt64 read_local_time_cost_us,
+        UInt64 write_local_bytes,
+        UInt32 write_local_count,
+        UInt64 write_local_time_cost_us,
+        UInt64 read_total_time_cost_us,
+        UInt64 orc_table_to_ch_columns_time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+        {
+            (*iceberg_data_streams_metrics)[metrics_index].file_iceberg_file_source_read_time_cost_us = iceberg_file_source_read_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_bytes = read_remote_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_time_cost_us = read_remote_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_seek_remote_count = seek_remote_count;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_count = read_remote_count;
+            (*iceberg_data_streams_metrics)[metrics_index].file_seek_remote_time_cost_us = seek_remote_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_remote_read_init_wait_cost_us = remote_read_init_wait_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_bytes = read_local_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_count = read_local_count;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_time_cost_us = read_local_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_bytes = write_local_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_count = write_local_count;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_time_cost_us = write_local_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_total_time_cost_us = read_total_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].file_orc_to_ch_columns_time_cost_us = orc_table_to_ch_columns_time_cost_us;
+        }
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting iceberg_file_source_read_start_time, which is a bug.");
+    }
+}
+
+void Context::addIcebergFileMetricsToStreamMetrics(
+        Int32 metrics_index,
+        UInt64 file_iceberg_file_source_read_time_cost_us, 
+        UInt64 file_read_remote_bytes,
+        UInt64 file_read_remote_time_cost_us,
+        UInt32 file_seek_remote_count,
+        UInt32 file_read_remote_count,
+        UInt64 file_seek_remote_time_cost_us,
+        UInt64 file_remote_read_init_wait_cost_us,
+        UInt64 file_read_local_bytes,
+        UInt32 file_read_local_count,
+        UInt64 file_read_local_time_cost_us,
+        UInt64 file_write_local_bytes,
+        UInt32 file_write_local_count,
+        UInt64 file_write_local_time_cost_us,
+        UInt64 file_read_total_time_cost_us,
+        UInt64 file_orc_table_to_ch_columns_time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+        {
+            (*iceberg_data_streams_metrics)[metrics_index].stream_iceberg_file_source_read_time_cost_us += file_iceberg_file_source_read_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_remote_bytes += file_read_remote_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_remote_time_cost_us += file_read_remote_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_seek_remote_count += file_seek_remote_count;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_remote_count += file_read_remote_count;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_seek_remote_time_cost_us += file_seek_remote_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_remote_read_init_wait_cost_us += file_remote_read_init_wait_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_local_bytes += file_read_local_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_local_count += file_read_local_count;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_local_time_cost_us += file_read_local_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_write_local_bytes += file_write_local_bytes;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_write_local_count += file_write_local_count;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_write_local_time_cost_us += file_write_local_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_read_total_time_cost_us += file_read_total_time_cost_us;
+            (*iceberg_data_streams_metrics)[metrics_index].stream_orc_to_ch_columns_time_cost_us += file_orc_table_to_ch_columns_time_cost_us;
+
+            (*iceberg_data_streams_metrics)[metrics_index].file_iceberg_file_source_read_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_bytes = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_seek_remote_count = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_remote_count = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_seek_remote_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_remote_read_init_wait_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_bytes = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_count = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_local_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_bytes = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_count = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_write_local_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_read_total_time_cost_us = 0;
+            (*iceberg_data_streams_metrics)[metrics_index].file_orc_to_ch_columns_time_cost_us = 0;
+        }
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting iceberg_file_source_read_start_time, which is a bug.");
+    }
+}
+
+void Context::addStreamRemoteReadInitWaitTime(Int32 metrics_index, UInt64 remote_read_init_wait_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_data_streams_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_data_streams_metrics)[metrics_index].stream_remote_read_init_wait_cost_us += remote_read_init_wait_cost_us;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting stream_remote_read_init_wait_cost_us, which is a bug.");
+    }
+}
+
+void Context::initIcebergScanFilesMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_scan_files_metrics == nullptr)
+        iceberg_scan_files_metrics = std::make_shared<IcebergScanFilesMetrics>();
+}
+
+void Context::initIcebergCreateFilesMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_create_files_metrics == nullptr)
+        iceberg_create_files_metrics = std::make_shared<IcebergCreateFilesMetrics>();
+}
+
+Context::IcebergScanFilesMetricsPtr Context::getIcebergScanFilesMetrics() const
+{
+    SharedLockGuard lock(shared->mutex);
+    return iceberg_scan_files_metrics;
+}
+
+Context::IcebergCreateFilesMetricsPtr Context::getIcebergCreateFilesMetrics() const
+{
+    SharedLockGuard lock(shared->mutex);
+    return iceberg_create_files_metrics;
+}
+
+Int32 Context::newIcebergScanFileMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_scan_files_metrics != nullptr)
+    {
+        iceberg_scan_files_metrics->emplace_back();
+        return iceberg_scan_files_metrics->size() - 1;
+    }
+    throw Exception(ErrorCodes::LOGICAL_ERROR,
+                    "New a iceberg scan file metrics index while iceberg_scan_files_metrics is not initialized yet, which is a bug.");
+}
+
+Int32 Context::newIcebergCreateFileMetrics() const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_create_files_metrics != nullptr)
+    {
+        iceberg_create_files_metrics->emplace_back();
+        return iceberg_create_files_metrics->size() - 1;
+    }
+    throw Exception(ErrorCodes::LOGICAL_ERROR,
+                    "New a iceberg create file metrics index while iceberg_create_files_metrics is not initialized yet, which is a bug.");
+}
+
+void Context::setScanFileStartTime(Int32 metrics_index, Decimal64 time) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_scan_files_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_scan_files_metrics)[metrics_index].scan_file_start_time_us = time;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting scan_file_start_time_us, which is a bug.");
+    }
+}
+
+void Context::setCreateFileStartTime(Int32 metrics_index, Decimal64 time) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_create_files_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_create_files_metrics)[metrics_index].create_file_start_time_us = time;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting create_file_start_time_us, which is a bug");
+    }
+}
+
+void Context::setScanIcebergFileTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_scan_files_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_scan_files_metrics)[metrics_index].scan_iceberg_file_time_cost_us = time_cost_us;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting scan_file_start_time_us, which is a bug.");
+    }
+}
+
+void Context::setCreateIcebergFileTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_create_files_metrics != nullptr)
+    {
+        if (metrics_index >= 0 && static_cast<size_t>(metrics_index) < iceberg_create_files_metrics->size())
+            (*iceberg_create_files_metrics)[metrics_index].create_iceberg_file_time_cost_us = time_cost_us;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index {} found while setting create_iceberg_file_time_cost_us, which is a bug.", metrics_index);
+    }
+}
+
+void Context::setApplyFiltersTimeCostMicroseconds(Int32 metrics_index, UInt64 time_cost_us) const
+{
+    std::lock_guard lock(shared->mutex);
+    if (iceberg_create_files_metrics != nullptr)
+    {
+        if (metrics_index >= 0)
+            (*iceberg_create_files_metrics)[metrics_index].apply_filters_time_cost_us = time_cost_us;
+        else
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "Invalid metrics_index found while setting apply_filters_time_cost_us, which is a bug.");
+    }
 }
 
 }

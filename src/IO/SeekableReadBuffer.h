@@ -4,6 +4,7 @@
 #include <IO/WithFileSize.h>
 
 #include <functional>
+#include "Common/Exception.h"
 #include <optional>
 
 namespace DB
@@ -27,6 +28,8 @@ public:
      */
     virtual off_t seek(off_t off, int whence) = 0;
 
+    virtual off_t seek(off_t /*off*/) { throw Exception(ErrorCodes::NOT_IMPLEMENTED, "the seek with only offset as argument is not implemented."); }
+
     /**
      * Keep in mind that seekable buffer may encounter eof() once and the working buffer
      * may get into inconsistent state. Don't forget to reset it on the first nextImpl()
@@ -37,6 +40,12 @@ public:
      * @return Offset from the begin of the underlying buffer / file corresponds to the buffer current position.
      */
     virtual off_t getPosition() = 0;
+
+    struct Range
+    {
+        size_t left;
+        std::optional<size_t> right;
+    };
 
     /// Returns the current position in the file corresponding to the buffer.
     /// This function is like getPosition(), but it returns std::nullopt instead of throwing exception.
@@ -51,6 +60,16 @@ public:
     /// it first releases the buffer, and then do logging, and so other thread
     /// can already call seek() which will lead to data-race).
     virtual size_t getFileOffsetOfBufferEnd() const;
+
+    /**
+     * Returns a struct, where `left` is current read position in file and `right` is the
+     * last included offset for reading according to setReadUntilPosition() or setReadUntilEnd().
+     * E.g. next nextImpl() call will read within range [left, right].
+     */
+    virtual Range getRemainingReadRange() const
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Method getRemainingReadRange() not implemented");
+    }
 
     /// If true, setReadUntilPosition() guarantees that eof will be reported at the given position.
     virtual bool supportsRightBoundedReads() const { return false; }
@@ -110,5 +129,20 @@ std::unique_ptr<SeekableReadBuffer> wrapSeekableReadBufferPointer(SeekableReadBu
 /// Helper for implementing readBigAt().
 /// Updates *out_bytes_copied after each call to the callback, as well as at the end.
 void copyFromIStreamWithProgressCallback(std::istream & istr, char * to, size_t n, const std::function<bool(size_t)> & progress_callback, size_t * out_bytes_copied, bool * out_cancelled = nullptr);
+
+class SeekableReadBufferWithSize : public SeekableReadBuffer
+{
+public:
+    SeekableReadBufferWithSize(Position ptr, size_t size)
+        : SeekableReadBuffer(ptr, size) {}
+    SeekableReadBufferWithSize(Position ptr, size_t size, size_t offset)
+        : SeekableReadBuffer(ptr, size, offset) {}
+
+    /// set std::nullopt in case it is impossible to find out total size.
+    virtual std::optional<size_t> getTotalSize() = 0;
+
+protected:
+    std::optional<size_t> file_size;
+};
 
 }

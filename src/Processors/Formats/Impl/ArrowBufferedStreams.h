@@ -172,7 +172,6 @@ std::shared_ptr<arrow::io::RandomAccessFile> asArrowFileLoadIntoMemory(
     std::atomic<int> & is_cancelled,
     const std::string & format_name,
     const std::string & magic_bytes);
-
 }
 
 #endif

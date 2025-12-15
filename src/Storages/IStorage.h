@@ -193,7 +193,7 @@ public:
     /// Get immutable version (snapshot) of storage metadata. Metadata object is
     /// multiversion, so it can be concurrently changed, but returned copy can be
     /// used without any locks.
-    StorageMetadataPtr getInMemoryMetadataPtr() const { return metadata.get(); }
+    virtual StorageMetadataPtr getInMemoryMetadataPtr() const { return metadata.get(); }
 
     /// Update storage metadata. Used in ALTER or initialization of Storage.
     /// Metadata object is multiversion, so this method can be called without
@@ -284,8 +284,10 @@ private:
 
     mutable std::mutex id_mutex;
 
-    /// Multiversion storage metadata. Allows to read/write storage metadata without locks.
-    MultiVersionStorageMetadataPtr metadata;
+protected:
+    /// Multiversion storage metadata. Allows to read/write storage metadata
+    /// without locks.
+    mutable MultiVersionStorageMetadataPtr metadata;
 
     /// Description of virtual columns. Optional, may be set in constructor.
     MultiVersionVirtualsDescriptionPtr virtuals;

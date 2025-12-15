@@ -65,5 +65,4 @@ private:
     bool case_insentive;
     std::map<String, BlockPtr> nested_tables;
 };
-
 }

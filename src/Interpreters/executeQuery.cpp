@@ -437,6 +437,10 @@ QueryLogElement logQueryStart(
 
     elem.client_info = context->getClientInfo();
 
+    elem.iceberg_data_streams_metrics = context->getIcebergDataStreamsMetrics();
+    elem.iceberg_scan_files_metrics = context->getIcebergScanFilesMetrics();
+    elem.iceberg_create_files_metrics = context->getIcebergCreateFilesMetrics();
+
     if (auto txn = context->getCurrentTransaction())
         elem.tid = txn->tid;
 
@@ -1430,6 +1434,9 @@ static BlockIO executeQueryImpl(
                 }
                 return false;
             };
+            context->initIcebergDataStreamsMetrics();
+            context->initIcebergScanFilesMetrics();
+            context->initIcebergCreateFilesMetrics();
 
             if (!get_result_from_query_result_cache())
             {

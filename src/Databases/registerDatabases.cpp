@@ -43,6 +43,8 @@ void registerDatabaseDataLake(DatabaseFactory & factory);
 
 void registerDatabaseBackup(DatabaseFactory & factory);
 
+void registerDatabaseIceberg(DatabaseFactory & factory);
+
 void registerDatabases()
 {
     auto & factory = DatabaseFactory::instance();
@@ -80,5 +82,9 @@ void registerDatabases()
 #endif
 
     registerDatabaseBackup(factory);
+
+#if USE_LIBHDFS
+    registerDatabaseIceberg(factory);
+#endif
 }
 }

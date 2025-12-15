@@ -11,6 +11,9 @@
 #include <DataTypes/DataTypeUUID.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <Disks/IStoragePolicy.h>
+#include <Storages/Iceberg/StorageIceberg.h>
+#include <Storages/StorageBuffer.h>
+#include <Databases/IDatabase.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
 #include <Interpreters/formatWithPossiblyHidingSecrets.h>
@@ -541,7 +544,7 @@ protected:
                     res_columns[res_index++]->insert(static_cast<UInt64>(database->getObjectMetadataModificationTime(table_name)));
 
                 StorageMetadataPtr metadata_snapshot;
-                if (table)
+                if (table && !dynamic_cast<StorageIceberg *>(table.get()))
                     metadata_snapshot = table->getInMemoryMetadataPtr();
 
                 if (columns_mask[src_index++])

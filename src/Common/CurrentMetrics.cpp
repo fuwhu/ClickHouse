@@ -248,6 +248,12 @@
     M(ParquetEncoderThreads, "Number of threads in ParquetBlockOutputFormat thread pool.") \
     M(ParquetEncoderThreadsActive, "Number of threads in ParquetBlockOutputFormat thread pool running a task.") \
     M(ParquetEncoderThreadsScheduled, "Number of queued or active jobs in ParquetBlockOutputFormat thread pool.") \
+    M(ORCPreInitThreads, "Number of thread in IcebergFileSource preinit thread pool.") \
+    M(ORCPreInitThreadsActive, "Number of threads in IcebergFileSource preinit thread pool running a task.") \
+    M(ORCPreInitThreadsScheduled, "Number of queued or active jobs in IcebergFileSource preinit thread pool.") \
+    M(ORCCreateThreads, "Number of thread in StorageIceberg create orc file thread pool.") \
+    M(ORCCreageThreadsActive, "Number of threads StorageIceberg create orc file thread pool running a task.") \
+    M(ORCCreateThreadsScheduled, "Number of queued or active jobs StorageIceberg create orc file thread pool.") \
     M(MergeTreeSubcolumnsReaderThreads, "Number of threads in the thread pool used for subcolumns reading in MergeTree.") \
     M(MergeTreeSubcolumnsReaderThreadsActive, "Number of threads in the thread pool used for subcolumns reading in MergeTree running a task.") \
     M(MergeTreeSubcolumnsReaderThreadsScheduled, "Number of queued or active jobs in the thread pool used for subcolumns reading in MergeTree.") \
@@ -408,6 +414,24 @@
     M(UniqueKeyBucketLoadThreadsScheduled, "Number of threads doing unique key updating") \
     M(BackgroundUniqueEngineUpdateTask, "Number of active tasks updating unique engine data parts.") \
     M(BackgroundUniqueEngineLoadTask, "Number of active tasks loading unique key buckets of unique engine.") \
+    \
+    M(ZooKeeperRequests_DEFAULT, "default type of zookeeper requests.")        \
+    M(ZooKeeperRequests_INSERT, "insert related zk requests")        \
+    M(ZooKeeperRequests_MERGE_SELECT, "merge selecting related zk requests")        \
+    M(ZooKeeperRequests_QUEUE_UPDATE, "queue updating related zk requests")        \
+    M(ZooKeeperRequests_MUTATION_UPDATE, "mutation updating related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_PARTS, "clear old parts related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_LOGS, "clear old logs related zk requests")        \
+    M(ZooKeeperRequests_CLEAR_OLD_BLOCKS, "clear old blocks related zk requests")        \
+    M(FilesystemCacheElementLimit, "Filesystem cache element limit(file segment limit)") \
+    M(FilesystemCacheAsyncEvictElements, "Filesystem cache async evicted elements (file segments)") \
+    M(FilesystemCacheSyncEvictElements, "Filesystem cache sync evicted elements (file segments)") \
+    M(FilesystemCacheAsyncEvictSize, "Filesystem cache async evicted size (file segments)") \
+    M(FilesystemCacheAsyncEvictTime, "Filesystem cache async cost time while evict (file segments)") \
+    M(CacheWriteBytes, "total bytes write to cache") \
+    M(CacheReadBytes, "total bytes read from cache") \
+    M(RemoteReadBytes, "total bytes read from remote storage") \
+    M(IcebergFileSourceRecyclePoolSize, "Number of iceberg init thread pool waiting for recycle") \
 
 #ifdef APPLY_FOR_EXTERNAL_METRICS
     #define APPLY_FOR_METRICS(M) APPLY_FOR_BUILTIN_METRICS(M) APPLY_FOR_EXTERNAL_METRICS(M)
@@ -415,6 +439,7 @@
     #define APPLY_FOR_METRICS(M) APPLY_FOR_BUILTIN_METRICS(M)
 #endif
 
+    
 
 namespace CurrentMetrics
 {

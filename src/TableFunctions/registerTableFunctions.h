@@ -65,6 +65,7 @@ void registerDataLakeTableFunctions(TableFunctionFactory & factory);
 void registerDataLakeClusterTableFunctions(TableFunctionFactory & factory);
 
 void registerTableFunctionTimeSeries(TableFunctionFactory & factory);
+void registerTableFunctionIceberg(TableFunctionFactory & factory);
 
 void registerTableFunctions();
 

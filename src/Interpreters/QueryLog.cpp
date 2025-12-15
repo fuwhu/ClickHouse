@@ -1,5 +1,6 @@
 #include <Interpreters/QueryLog.h>
 
+#include <array>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnFixedString.h>
 #include <Columns/ColumnString.h>
@@ -26,6 +27,7 @@
 #include <Common/IPv6ToBinary.h>
 #include <Common/ProfileEvents.h>
 #include <Common/typeid_cast.h>
+#include "base/Decimal.h"
 
 #include <Poco/Net/IPAddress.h>
 #include <Poco/Net/SocketAddress.h>
@@ -151,6 +153,35 @@ ColumnsDescription QueryLogElement::getColumnsDescription()
         {"query_cache_usage", std::move(query_result_cache_usage_datatype), "Usage of the query cache during query execution. Values: 'Unknown' = Status unknown, 'None' = The query result was neither written into nor read from the query result cache, 'Write' = The query result was written into the query result cache, 'Read' = The query result was read from the query result cache."},
 
         {"asynchronous_read_counters", std::make_shared<DataTypeMap>(low_cardinality_string, std::make_shared<DataTypeUInt64>()), "Metrics for asynchronous reading."},
+        
+
+        {"iceberg_file_source_read_start_time_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime64>(6)), ""},
+        {"iceberg_file_assigned_file_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_file_assigned_file_size", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_file_assigned_split_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_file_read_file_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_file_prepare_files_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_file_source_read_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_read_remote_bytes", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_read_remote_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_seek_remote_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_read_remote_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_seek_remote_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_remote_read_init_wait_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_read_local_bytes", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_read_local_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_read_local_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_write_local_bytes", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_write_local_count", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt32>()), ""},
+        {"iceberg_write_local_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"iceberg_read_total_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"orc_table_to_ch_columns_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+
+        {"scan_file_start_time_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime64>(6)), ""},
+        {"scan_iceberg_file_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"create_file_start_time_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeDateTime64>(6)), ""},
+        {"create_iceberg_file_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""},
+        {"apply_filters_time_cost_us", std::make_shared<DataTypeArray>(std::make_shared<DataTypeUInt64>()), ""}
     };
 }
 
@@ -314,6 +345,10 @@ void QueryLogElement::appendToBlock(MutableColumns & columns) const
         async_read_counters->dumpToMapColumn(columns[i++].get());
     else
         columns[i++]->insertDefault();
+
+    appendIcebergDataStreamsMetrics(iceberg_data_streams_metrics, columns, i);
+    appendIcebergScanFilesMetrics(iceberg_scan_files_metrics, columns, i);
+    appendIcebergCreateFilesMetrics(iceberg_create_files_metrics, columns, i);
 }
 
 void QueryLogElement::appendClientInfo(const ClientInfo & client_info, MutableColumns & columns, size_t & i)
@@ -353,5 +388,188 @@ void QueryLogElement::appendClientInfo(const ClientInfo & client_info, MutableCo
 
     columns[i++]->insert(client_info.quota_key);
     columns[i++]->insert(client_info.distributed_depth);
+}
+
+void QueryLogElement::appendIcebergDataStreamsMetrics(const Context::IcebergDataStreamsMetricsPtr & iceberg_data_streams_metrics, MutableColumns & columns, size_t & i)
+{
+    auto & column_iceberg_file_source_read_start_time_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_assigned_file_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_assigned_file_size = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_assigned_split_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_file_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_prepare_files_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+
+    auto & column_iceberg_file_source_read_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_remote_bytes = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_remote_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_seek_remote_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_remote_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_seek_remote_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_remote_read_init_wait_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_local_bytes = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_local_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_local_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_write_local_bytes = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_write_local_count = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_write_local_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_read_total_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_iceberg_orc_table_to_ch_columns_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+
+    std::vector<Decimal64> data_iceberg_file_source_read_start_time_us;
+    std::vector<UInt32> data_iceberg_assigned_file_count;
+    std::vector<UInt64> data_iceberg_assigned_file_size;
+    std::vector<UInt32> data_iceberg_assigned_split_count;
+    std::vector<UInt32> data_iceberg_read_file_count;
+    std::vector<UInt64> data_iceberg_prepare_files_time_cost_us;
+
+    std::vector<UInt64> data_iceberg_file_source_read_time_cost_us;
+    std::vector<UInt64> data_iceberg_read_remote_bytes;
+    std::vector<UInt64> data_iceberg_read_remote_time_cost_us;
+    std::vector<UInt32> data_iceberg_seek_remote_count;
+    std::vector<UInt32> data_iceberg_read_remote_count;
+    std::vector<UInt64> data_iceberg_seek_remote_time_cost_us;
+    std::vector<UInt64> data_iceberg_remote_read_init_wait_cost_us;
+    std::vector<UInt64> data_iceberg_read_local_bytes;
+    std::vector<UInt32> data_iceberg_read_local_count;
+    std::vector<UInt64> data_iceberg_read_local_time_cost_us;
+    std::vector<UInt64> data_iceberg_write_local_bytes;
+    std::vector<UInt32> data_iceberg_write_local_count;
+    std::vector<UInt64> data_iceberg_write_local_time_cost_us;
+    std::vector<UInt64> data_iceberg_read_total_time_cost_us;
+    std::vector<UInt64> data_iceberg_orc_table_to_ch_columns_time_cost_us;
+
+    if (iceberg_data_streams_metrics)
+    {
+        for (auto stream_metrics : *iceberg_data_streams_metrics)
+        {
+            data_iceberg_file_source_read_start_time_us.emplace_back(stream_metrics.iceberg_file_source_read_start_time_us);
+            data_iceberg_assigned_file_count.emplace_back(stream_metrics.assigned_file_count);
+            data_iceberg_assigned_file_size.emplace_back(stream_metrics.assigned_file_size);
+            data_iceberg_assigned_split_count.emplace_back(stream_metrics.assigned_split_count);
+            data_iceberg_read_file_count.emplace_back(stream_metrics.read_file_count);
+            data_iceberg_prepare_files_time_cost_us.emplace_back(stream_metrics.prepare_files_time_cost_us);
+
+            data_iceberg_file_source_read_time_cost_us.emplace_back(stream_metrics.stream_iceberg_file_source_read_time_cost_us + stream_metrics.file_iceberg_file_source_read_time_cost_us);
+            data_iceberg_read_remote_bytes.emplace_back(stream_metrics.stream_read_remote_bytes + stream_metrics.file_read_remote_bytes);
+            data_iceberg_read_remote_time_cost_us.emplace_back(stream_metrics.stream_read_remote_time_cost_us + stream_metrics.file_read_remote_time_cost_us);
+            data_iceberg_seek_remote_count.emplace_back(stream_metrics.stream_seek_remote_count + stream_metrics.file_seek_remote_count);
+            data_iceberg_read_remote_count.emplace_back(stream_metrics.stream_read_remote_count + stream_metrics.file_read_remote_count);
+            data_iceberg_seek_remote_time_cost_us.emplace_back(stream_metrics.stream_seek_remote_time_cost_us + stream_metrics.file_seek_remote_time_cost_us);
+            data_iceberg_remote_read_init_wait_cost_us.emplace_back(stream_metrics.stream_remote_read_init_wait_cost_us + stream_metrics.file_remote_read_init_wait_cost_us);
+            data_iceberg_read_local_bytes.emplace_back(stream_metrics.stream_read_local_bytes + stream_metrics.file_read_local_bytes);
+            data_iceberg_read_local_count.emplace_back(stream_metrics.stream_read_local_count + stream_metrics.file_read_local_count);
+            data_iceberg_read_local_time_cost_us.emplace_back(stream_metrics.stream_read_local_time_cost_us + stream_metrics.file_read_local_time_cost_us);
+            data_iceberg_write_local_bytes.emplace_back(stream_metrics.stream_write_local_bytes + stream_metrics.file_write_local_bytes);
+            data_iceberg_write_local_count.emplace_back(stream_metrics.stream_write_local_count + stream_metrics.file_write_local_count);
+            data_iceberg_write_local_time_cost_us.emplace_back(stream_metrics.stream_write_local_time_cost_us + stream_metrics.file_write_local_time_cost_us);
+            data_iceberg_read_total_time_cost_us.emplace_back(stream_metrics.stream_read_total_time_cost_us + stream_metrics.file_read_total_time_cost_us);
+            data_iceberg_orc_table_to_ch_columns_time_cost_us.emplace_back(stream_metrics.stream_orc_to_ch_columns_time_cost_us + stream_metrics.file_orc_to_ch_columns_time_cost_us);
+        }
+    }
+
+    auto fill_column = []<class T>(const std::vector<T> & data, ColumnArray & column)
+    {
+        size_t size = 0;
+        for (const auto & value : data)
+        {
+            column.getData().insert(value);
+            ++size;
+        }
+        auto & offsets = column.getOffsets();
+        offsets.push_back(offsets.back() + size);
+    };
+
+    fill_column(data_iceberg_file_source_read_start_time_us, column_iceberg_file_source_read_start_time_us);
+    fill_column(data_iceberg_assigned_file_count, column_iceberg_assigned_file_count);
+    fill_column(data_iceberg_assigned_file_size, column_iceberg_assigned_file_size);
+    fill_column(data_iceberg_assigned_split_count, column_iceberg_assigned_split_count);
+    fill_column(data_iceberg_read_file_count, column_iceberg_read_file_count);
+    fill_column(data_iceberg_prepare_files_time_cost_us, column_iceberg_prepare_files_time_cost_us);
+
+    fill_column(data_iceberg_file_source_read_time_cost_us, column_iceberg_file_source_read_time_cost_us);
+    fill_column(data_iceberg_read_remote_bytes, column_iceberg_read_remote_bytes);
+    fill_column(data_iceberg_read_remote_time_cost_us, column_iceberg_read_remote_time_cost_us);
+    fill_column(data_iceberg_seek_remote_count, column_iceberg_seek_remote_count);
+    fill_column(data_iceberg_read_remote_count, column_iceberg_read_remote_count);
+    fill_column(data_iceberg_seek_remote_time_cost_us, column_iceberg_seek_remote_time_cost_us);
+    fill_column(data_iceberg_remote_read_init_wait_cost_us, column_iceberg_remote_read_init_wait_cost_us);
+    fill_column(data_iceberg_read_local_bytes, column_iceberg_read_local_bytes);
+    fill_column(data_iceberg_read_local_count, column_iceberg_read_local_count);
+    fill_column(data_iceberg_read_local_time_cost_us, column_iceberg_read_local_time_cost_us);
+    fill_column(data_iceberg_write_local_bytes, column_iceberg_write_local_bytes);
+    fill_column(data_iceberg_write_local_count, column_iceberg_write_local_count);
+    fill_column(data_iceberg_write_local_time_cost_us, column_iceberg_write_local_time_cost_us);
+    fill_column(data_iceberg_read_total_time_cost_us, column_iceberg_read_total_time_cost_us);
+    fill_column(data_iceberg_orc_table_to_ch_columns_time_cost_us, column_iceberg_orc_table_to_ch_columns_time_cost_us);
+}
+
+void QueryLogElement::appendIcebergScanFilesMetrics(const Context::IcebergScanFilesMetricsPtr & iceberg_scan_files_metrics, MutableColumns & columns, size_t & i)
+{
+    auto & column_scan_file_start_time_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_scan_iceberg_file_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+
+    std::vector<Decimal64> data_scan_file_start_time_us;
+    std::vector<UInt64> data_scan_iceberg_file_time_cost_us;
+
+    if (iceberg_scan_files_metrics)
+    {
+        for (auto scan_file_metrics : *iceberg_scan_files_metrics)
+        {
+            data_scan_file_start_time_us.emplace_back(scan_file_metrics.scan_file_start_time_us);
+            data_scan_iceberg_file_time_cost_us.emplace_back(scan_file_metrics.scan_iceberg_file_time_cost_us);
+        }
+    }
+
+    auto fill_column = []<class T>(const std::vector<T> & data, ColumnArray & column)
+    {
+        size_t size = 0;
+        for (const auto & value : data)
+        {
+            column.getData().insert(value);
+            ++size;
+        }
+        auto & offsets = column.getOffsets();
+        offsets.push_back(offsets.back() + size);
+    };
+
+    fill_column(data_scan_file_start_time_us, column_scan_file_start_time_us);
+    fill_column(data_scan_iceberg_file_time_cost_us, column_scan_iceberg_file_time_cost_us);
+}
+
+void QueryLogElement::appendIcebergCreateFilesMetrics(const Context::IcebergCreateFilesMetricsPtr & iceberg_create_files_metrics, MutableColumns & columns, size_t & i)
+{
+    auto & column_create_file_start_time_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_create_iceberg_file_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+    auto & column_apply_filters_time_cost_us = typeid_cast<ColumnArray &>(*columns[i++]);
+
+    std::vector<Decimal64> data_create_iceberg_file_start_time_us;
+    std::vector<UInt64> data_create_iceberg_file_time_cost_us;
+    std::vector<UInt64> data_apply_filters_time_cost_us;
+
+    if (iceberg_create_files_metrics)
+    {
+        for (auto create_file_metrics : *iceberg_create_files_metrics)
+        {
+            data_create_iceberg_file_start_time_us.emplace_back(create_file_metrics.create_file_start_time_us);
+            data_create_iceberg_file_time_cost_us.emplace_back(create_file_metrics.create_iceberg_file_time_cost_us);
+            data_apply_filters_time_cost_us.emplace_back(create_file_metrics.apply_filters_time_cost_us);
+        }
+    }
+
+    auto fill_column = []<class T>(const std::vector<T> & data, ColumnArray & column)
+    {
+        size_t size = 0;
+        for (const auto & value : data)
+        {
+            column.getData().insert(value);
+            ++size;
+        }
+        auto & offsets = column.getOffsets();
+        offsets.push_back(offsets.back() + size);
+    };
+
+    fill_column(data_create_iceberg_file_start_time_us, column_create_file_start_time_us);
+    fill_column(data_create_iceberg_file_time_cost_us, column_create_iceberg_file_time_cost_us);
+    fill_column(data_apply_filters_time_cost_us, column_apply_filters_time_cost_us);
 }
 }

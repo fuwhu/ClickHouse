@@ -167,7 +167,10 @@ void FileCacheFactory::updateSettingsFromConfig(const Poco::Util::AbstractConfig
         checked_paths.emplace(cache_info->config_path);
 
         FileCacheSettings new_settings;
-        new_settings.loadFromConfig(config, cache_info->config_path);
+        if (cache_info->config_path == "iceberg")
+            new_settings.loadIcebergCacheFromConfig(config, cache_info->config_path);
+        else
+            new_settings.loadFromConfig(config, cache_info->config_path);
 
         FileCacheSettings old_settings = cache_info->getSettings();
         if (old_settings == new_settings)

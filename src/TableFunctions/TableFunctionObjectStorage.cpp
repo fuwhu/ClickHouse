@@ -306,48 +306,48 @@ template class TableFunctionObjectStorage<DeltaLakeClusterDefinition, StorageS3D
 template class TableFunctionObjectStorage<HudiClusterDefinition, StorageS3HudiConfiguration>;
 #endif
 
-#if USE_AVRO
-void registerTableFunctionIceberg(TableFunctionFactory & factory)
-{
-#if USE_AWS_S3
-    factory.registerFunction<TableFunctionIceberg>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored on S3 object store. Alias to icebergS3)",
-            .examples{{"iceberg", "SELECT * FROM iceberg(url, access_key_id, secret_access_key)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
-    factory.registerFunction<TableFunctionIcebergS3>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored on S3 object store.)",
-            .examples{{"icebergS3", "SELECT * FROM icebergS3(url, access_key_id, secret_access_key)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
+// #if USE_AVRO
+// void registerTableFunctionIceberg(TableFunctionFactory & factory)
+// {
+// #if USE_AWS_S3
+//     factory.registerFunction<TableFunctionIceberg>(
+//         {.documentation
+//          = {.description = R"(The table function can be used to read the Iceberg table stored on S3 object store. Alias to icebergS3)",
+//             .examples{{"iceberg", "SELECT * FROM iceberg(url, access_key_id, secret_access_key)", ""}},
+//             .category = FunctionDocumentation::Category::TableFunction},
+//          .allow_readonly = false});
+//     factory.registerFunction<TableFunctionIcebergS3>(
+//         {.documentation
+//          = {.description = R"(The table function can be used to read the Iceberg table stored on S3 object store.)",
+//             .examples{{"icebergS3", "SELECT * FROM icebergS3(url, access_key_id, secret_access_key)", ""}},
+//             .category = FunctionDocumentation::Category::TableFunction},
+//          .allow_readonly = false});
 
-#endif
-#if USE_AZURE_BLOB_STORAGE
-    factory.registerFunction<TableFunctionIcebergAzure>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored on Azure object store.)",
-            .examples{{"icebergAzure", "SELECT * FROM icebergAzure(url, access_key_id, secret_access_key)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
-#endif
-#if USE_HDFS
-    factory.registerFunction<TableFunctionIcebergHDFS>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored on HDFS virtual filesystem.)",
-            .examples{{"icebergHDFS", "SELECT * FROM icebergHDFS(url)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
-#endif
-    factory.registerFunction<TableFunctionIcebergLocal>(
-        {.documentation
-         = {.description = R"(The table function can be used to read the Iceberg table stored locally.)",
-            .examples{{"icebergLocal", "SELECT * FROM icebergLocal(filename)", ""}},
-            .category = FunctionDocumentation::Category::TableFunction},
-         .allow_readonly = false});
-}
-#endif
+// #endif
+// #if USE_AZURE_BLOB_STORAGE
+//     factory.registerFunction<TableFunctionIcebergAzure>(
+//         {.documentation
+//          = {.description = R"(The table function can be used to read the Iceberg table stored on Azure object store.)",
+//             .examples{{"icebergAzure", "SELECT * FROM icebergAzure(url, access_key_id, secret_access_key)", ""}},
+//             .category = FunctionDocumentation::Category::TableFunction},
+//          .allow_readonly = false});
+// #endif
+// #if USE_HDFS
+//     factory.registerFunction<TableFunctionIcebergHDFS>(
+//         {.documentation
+//          = {.description = R"(The table function can be used to read the Iceberg table stored on HDFS virtual filesystem.)",
+//             .examples{{"icebergHDFS", "SELECT * FROM icebergHDFS(url)", ""}},
+//             .category = FunctionDocumentation::Category::TableFunction},
+//          .allow_readonly = false});
+// #endif
+//     factory.registerFunction<TableFunctionIcebergLocal>(
+//         {.documentation
+//          = {.description = R"(The table function can be used to read the Iceberg table stored locally.)",
+//             .examples{{"icebergLocal", "SELECT * FROM icebergLocal(filename)", ""}},
+//             .category = FunctionDocumentation::Category::TableFunction},
+//          .allow_readonly = false});
+// }
+// #endif
 
 
 #if USE_PARQUET && USE_DELTA_KERNEL_RS
@@ -396,9 +396,9 @@ void registerTableFunctionHudi(TableFunctionFactory & factory)
 void registerDataLakeTableFunctions(TableFunctionFactory & factory)
 {
     UNUSED(factory);
-#if USE_AVRO
-    registerTableFunctionIceberg(factory);
-#endif
+// #if USE_AVRO
+//     registerTableFunctionIceberg(factory);
+// #endif
 
 #if USE_PARQUET && USE_DELTA_KERNEL_RS
     registerTableFunctionDeltaLake(factory);

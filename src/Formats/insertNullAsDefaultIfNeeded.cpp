@@ -120,5 +120,4 @@ bool insertNullAsDefaultIfNeeded(ColumnWithTypeAndName & input_column, const Col
 
     return true;
 }
-
 }

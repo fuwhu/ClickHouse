@@ -349,7 +349,7 @@ public:
 StorageKeeperMap::StorageKeeperMap(
     ContextPtr context_,
     const StorageID & table_id,
-    const StorageInMemoryMetadata & metadata,
+    const StorageInMemoryMetadata & metadata_,
     bool attach,
     std::string_view primary_key_,
     const std::string & zk_root_path_,
@@ -368,7 +368,7 @@ StorageKeeperMap::StorageKeeperMap(
 
     verifyTableId(table_id);
 
-    setInMemoryMetadata(metadata);
+    setInMemoryMetadata(metadata_);
 
     VirtualColumnsDescription virtuals;
     virtuals.addEphemeral(String(version_column_name), std::make_shared<DataTypeInt32>(), "");
@@ -376,8 +376,8 @@ StorageKeeperMap::StorageKeeperMap(
 
     WriteBufferFromOwnString out;
     out << "KeeperMap metadata format version: 1\n"
-        << "columns: " << metadata.columns.toString()
-        << "primary key: " << formattedAST(metadata.getPrimaryKey().expression_list_ast) << "\n";
+        << "columns: " << metadata_.columns.toString()
+        << "primary key: " << formattedAST(metadata_.getPrimaryKey().expression_list_ast) << "\n";
     metadata_string = out.str();
 
     if (zk_root_path.empty())

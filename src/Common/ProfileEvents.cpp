@@ -1032,7 +1032,19 @@ The server successfully detected this situation and will download merged part fr
     \
     M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache", ValueType::Number) \
     M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely", ValueType::Number) \
-
+    \
+    M(HDFSReadElapsedMicroseconds, "Total time spent waiting for reading/seeking from HDFS (ClickHouse on Iceberg)", ValueType::Microseconds) \
+    M(HDFSReadBytes, "Total number of bytes received from HDFS (ClickHouse on Iceberg)", ValueType::Bytes) \
+    M(HDFSReadSeeks, "Total number of HDFS read buffer seeks (ClickHouse on Iceberg)", ValueType::Number) \
+    M(IcebergApiCallElapsedMicroseconds, "Total time spent for Iceberg api call (ClickHouse on Iceberg)", ValueType::Microseconds) \
+    M(IcebergApiCalls, "Total number of Iceberg api calls (ClickHouse on Iceberg)", ValueType::Number) \
+    M(IcebergAnalysisElapsedMicroseconds, "Total time spent for Iceberg table query analysis (ClickHouse on Iceberg)", ValueType::Microseconds) \
+    \
+    M(IcebergScanIcebergTableTimeCostMicroseconds, "Total time spent for scan iceberg table, namely calling api server to get file list to process.)", ValueType::Microseconds) \
+    M(IcebergScanIcebergTableCount, "times of scanning iceberg table, namely calling api server to get file list to process.)", ValueType::Number) \
+    M(IcebergScanFileTimeCostMicroseconds, "Total tieme spent for scanning file, including scanIcebergFile and createIcebergFile function calls.)", ValueType::Microseconds) \
+    M(IcebergScanFileCount, "times of scanning file, including scanIcebergFile and createIcebergFile function calls.)", ValueType::Number) \
+    M(IcebergReadBufferInitCostMicroseconds, "times of initRemote call synchronously after create buffer(initializeInputFormat for example)", ValueType::Microseconds) \
 
 #ifdef APPLY_FOR_EXTERNAL_EVENTS
     #define APPLY_FOR_EVENTS(M) APPLY_FOR_BUILTIN_EVENTS(M) APPLY_FOR_EXTERNAL_EVENTS(M)

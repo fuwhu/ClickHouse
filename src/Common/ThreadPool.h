@@ -132,6 +132,8 @@ public:
     /// and the exception will be cleared.
     void wait();
 
+    bool hasIdleThread();
+
     /// Waits for all threads. Doesn't rethrow exceptions (use 'wait' method to rethrow exceptions).
     /// You should not destroy the object while calling schedule or wait methods from other threads.
     ~ThreadPoolImpl();

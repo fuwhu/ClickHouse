@@ -447,6 +447,8 @@ InputFormatPtr FormatFactory::getInput(
     }
     else if (creators.random_access_input_creator)
     {
+        if (name == "ORC")
+            is_remote_fs = true;
         format = creators.random_access_input_creator(
             buf, sample, format_settings, context->getReadSettings(), is_remote_fs, max_download_threads, max_parsing_threads);
     }
