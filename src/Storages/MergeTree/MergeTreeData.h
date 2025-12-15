@@ -1799,7 +1799,7 @@ private:
         const StorageSnapshotPtr & storage_snapshot,
         SelectQueryInfo & query_info) const;
 
-    void checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata, bool throw_on_error) const;
+    void checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata_, bool throw_on_error) const;
     void checkColumnFilenamesForCollision(const ColumnsDescription & columns, const MergeTreeSettings & settings, bool throw_on_error) const;
 };
 

@@ -306,6 +306,7 @@ struct FormatSettings
         double bloom_filter_bits_per_value = 10.5;
         size_t bloom_filter_flush_threshold_bytes = 1024 * 1024 * 128;
         bool allow_geoparquet_parser = true;
+        int64_t row_batch_size = 10'000;
     } parquet{};
 
     struct Pretty
@@ -437,7 +438,7 @@ struct FormatSettings
     struct
     {
         bool allow_missing_columns = false;
-        int64_t row_batch_size = 100'000;
+        int64_t row_batch_size = 10'000;
         bool skip_columns_with_unsupported_types_in_schema_inference = false;
         bool case_insensitive_column_matching = false;
         std::unordered_set<int> skip_stripes = {};

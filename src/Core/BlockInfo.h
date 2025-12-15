@@ -1,6 +1,7 @@
 #pragma once
 
 #include <base/types.h>
+#include <unordered_map>
 
 namespace DB
 {

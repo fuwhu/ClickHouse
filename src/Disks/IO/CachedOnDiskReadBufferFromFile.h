@@ -10,6 +10,7 @@
 #include <Interpreters/FilesystemCacheLog.h>
 #include <Interpreters/Cache/FileSegment.h>
 #include <Interpreters/Cache/UserInfo.h>
+#include "Disks/IO/IReadBufferFromRemote.h"
 
 
 namespace CurrentMetrics
@@ -21,6 +22,7 @@ namespace DB
 {
 
 class CachedOnDiskReadBufferFromFile : public ReadBufferFromFileBase
+// class CachedOnDiskReadBufferFromFile : public IReadBufferFromRemote
 {
 public:
     using ImplementationBufferCreator = std::function<std::unique_ptr<ReadBufferFromFileBase>()>;
@@ -69,6 +71,27 @@ public:
     bool isSeekCheap() override;
 
     bool isContentCached(size_t offset, size_t size) override;
+
+    ImplementationBufferCreator getCreator() const { return implementation_buffer_creator ? implementation_buffer_creator : nullptr; }
+
+    size_t readDirect(char * to, size_t offset, size_t n) override;
+
+    off_t seek(off_t offset_) override;
+
+    UInt32 getRemoteSeekCount() const { return remote_seek_count; }
+    UInt64 getRemoteSeekTimeCostMicrosecond() const { return remote_seek_time_cost_us; }
+    UInt64 getRemoteReadBytes() const { return remote_read_bytes; }
+    UInt64 getRemoteReadCount() const { return remote_read_count; }
+    UInt64 getRemoteReadTimeCostMicrosecond() const { return remote_read_time_cost_us; }
+    UInt64 getRemoteReadInitWaitCostMicrosecond() const { return remote_read_init_wait_cost_us; }
+
+    UInt64 getLocalReadBytes() const { return local_read_bytes; }
+    UInt64 getLocalReadCount() const { return local_read_count; }
+    UInt64 getLocalReadTimeCostMicrosecond() const { return local_read_time_cost_us; }
+    UInt64 getLocalWriteBytes() const { return local_write_bytes; }
+    UInt64 getLocalWriteCount() const { return local_write_count; }
+    UInt64 getLocalWriteTimeCostMicrosecond() const { return local_write_time_cost_us; }
+    UInt64 getTotalReadTimeCostMicrosecond() const { return total_read_time_cost_us; }
 
 private:
     using ImplementationBufferPtr = std::shared_ptr<ReadBufferFromFileBase>;
@@ -149,6 +172,22 @@ private:
     FileCacheQueryLimit::QueryContextHolderPtr query_context_holder;
 
     std::shared_ptr<FilesystemCacheLog> cache_log;
+
+    ReadBuffer swap_internal_buffer = ReadBuffer(nullptr, 0, 0);
+
+    UInt64 remote_read_bytes = 0;
+    UInt32 remote_read_count = 0;
+    UInt32 remote_seek_count = 0;
+    UInt64 remote_read_time_cost_us = 0;
+    UInt64 remote_seek_time_cost_us = 0;
+    UInt64 remote_read_init_wait_cost_us = 0;
+    UInt64 local_read_bytes = 0;
+    UInt32 local_read_count = 0;
+    UInt64 local_read_time_cost_us = 0;
+    UInt64 local_write_bytes = 0;
+    UInt32 local_write_count = 0;
+    UInt64 local_write_time_cost_us = 0;
+    UInt64 total_read_time_cost_us = 0;
 };
 
 }

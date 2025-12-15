@@ -371,6 +371,7 @@ void ParquetBlockOutputFormat::writeUsingArrow(std::vector<Chunk> chunks)
         throw Exception(ErrorCodes::UNKNOWN_EXCEPTION, "Error while writing a table: {}", status.ToString());
 }
 
+
 void ParquetBlockOutputFormat::writeRowGroupInOneThread(Chunk chunk)
 {
     if (chunk.getNumRows() == 0)

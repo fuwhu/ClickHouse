@@ -195,35 +195,35 @@ std::optional<size_t> ORCSchemaReader::readNumberOrRows()
     return file_reader->NumberOfRows();
 }
 
-void registerInputFormatORC(FormatFactory & factory)
-{
-    factory.registerRandomAccessInputFormat(
-        "ORC",
-        [](ReadBuffer & buf,
-           const Block & sample,
-           const FormatSettings & settings,
-           const ReadSettings & read_settings,
-           bool is_remote_fs,
-           size_t /* max_download_threads */,
-           size_t /* max_parsing_threads */)
-        {
-            InputFormatPtr res;
-            if (settings.orc.use_fast_decoder)
-            {
-                const bool has_file_size = isBufferWithFileSize(buf);
-                auto * seekable_in = dynamic_cast<SeekableReadBuffer *>(&buf);
-                const bool use_prefetch = is_remote_fs && read_settings.remote_fs_prefetch && has_file_size && seekable_in
-                    && seekable_in->checkIfActuallySeekable() && seekable_in->supportsReadAt() && settings.seekable_read;
-                const size_t min_bytes_for_seek = use_prefetch ? read_settings.remote_read_min_bytes_for_seek : 0;
-                res = std::make_shared<NativeORCBlockInputFormat>(buf, sample, settings, use_prefetch, min_bytes_for_seek);
-            }
-            else
-                res = std::make_shared<ORCBlockInputFormat>(buf, sample, settings);
+// void registerInputFormatORC(FormatFactory & factory)
+// {
+//     factory.registerRandomAccessInputFormat(
+//         "ORC",
+//         [](ReadBuffer & buf,
+//            const Block & sample,
+//            const FormatSettings & settings,
+//            const ReadSettings & read_settings,
+//            bool is_remote_fs,
+//            size_t /* max_download_threads */,
+//            size_t /* max_parsing_threads */)
+//         {
+//             InputFormatPtr res;
+//             if (settings.orc.use_fast_decoder)
+//             {
+//                 const bool has_file_size = isBufferWithFileSize(buf);
+//                 auto * seekable_in = dynamic_cast<SeekableReadBuffer *>(&buf);
+//                 const bool use_prefetch = is_remote_fs && read_settings.remote_fs_prefetch && has_file_size && seekable_in
+//                     && seekable_in->checkIfActuallySeekable() && seekable_in->supportsReadAt() && settings.seekable_read;
+//                 const size_t min_bytes_for_seek = use_prefetch ? read_settings.remote_read_min_bytes_for_seek : 0;
+//                 res = std::make_shared<NativeORCBlockInputFormat>(buf, sample, settings, use_prefetch, min_bytes_for_seek);
+//             }
+//             else
+//                 res = std::make_shared<ORCBlockInputFormat>(buf, sample, settings);
 
-            return res;
-        });
-    factory.markFormatSupportsSubsetOfColumns("ORC");
-}
+//             return res;
+//         });
+//     factory.markFormatSupportsSubsetOfColumns("ORC");
+// }
 
 void registerORCSchemaReader(FormatFactory & factory)
 {

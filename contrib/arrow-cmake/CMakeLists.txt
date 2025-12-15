@@ -89,8 +89,17 @@ target_compile_definitions(_flatbuffers PRIVATE -DFLATBUFFERS_LOCALE_INDEPENDENT
 
 
 # ===  hdfs
+if (USE_LIBHDFS)
+    message(STATUS "Building arrow with libhdfs instead of libhdfs3")
+    if(DEFINED ENV{HADOOP_HOME})
+        set(HDFS_INCLUDE_DIR "$ENV{HADOOP_HOME}/include")
+    else()
+        set(HDFS_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/arrow-cmake/cpp/libhdfs")
+    endif()
+else()
 # NOTE: cannot use ch_contrib::hdfs since it's INCLUDE_DIRECTORIES does not includes trailing "hdfs/"
-set(HDFS_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/libhdfs3/include/hdfs/")
+    set(HDFS_INCLUDE_DIR "${ClickHouse_SOURCE_DIR}/contrib/libhdfs3/include/hdfs/")
+endif()
 
 # arrow-cmake cmake file calling orc cmake subroutine which detects certain compiler features.
 # Apple Clang compiler failed to compile this code without specifying c++11 standard.
@@ -427,10 +436,24 @@ set(ARROW_SRCS
         "${LIBRARY_DIR}/vendored/uriparser/UriShorten.c"
         "${LIBRARY_DIR}/visitor.cc"
 
+        # "${LIBRARY_DIR}/compute/light_array.cc"
+
         "${ARROW_SRC_DIR}/arrow/adapters/orc/adapter.cc"
         "${ARROW_SRC_DIR}/arrow/adapters/orc/util.cc"
         "${ARROW_SRC_DIR}/arrow/adapters/orc/options.cc"
         )
+
+if (USE_LIBHDFS)
+    SET(ARROW_SRCS         
+        "${LIBRARY_DIR}/filesystem/filesystem.cc"
+        "${LIBRARY_DIR}/filesystem/hdfs.cc"
+        "${LIBRARY_DIR}/filesystem/localfs.cc"
+        "${LIBRARY_DIR}/filesystem/mockfs.cc"
+        "${LIBRARY_DIR}/filesystem/path_util.cc"
+        "${LIBRARY_DIR}/filesystem/util_internal.cc"
+        ${ARROW_SRCS}
+    )
+endif()
 
 add_definitions(-DARROW_WITH_LZ4)
 SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_lz4.cc" ${ARROW_SRCS})

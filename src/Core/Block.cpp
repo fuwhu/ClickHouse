@@ -18,6 +18,7 @@
 
 #include <boost/algorithm/string.hpp>
 #include <fmt/ranges.h>
+#include <base/sort.h>
 
 
 namespace DB
@@ -386,7 +387,6 @@ ColumnWithTypeAndName Block::getColumnOrSubcolumnByName(const std::string & name
 
     return *result;
 }
-
 
 bool Block::has(const std::string & name, bool case_insensitive) const
 {

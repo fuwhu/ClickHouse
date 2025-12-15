@@ -41,6 +41,11 @@ struct FileCacheSettings
         const std::string & config_prefix,
         const std::string & default_cache_path = "");
 
+    void loadIcebergCacheFromConfig(
+        const Poco::Util::AbstractConfiguration & config,
+        const std::string & config_prefix
+    );
+
     void loadFromCollection(const NamedCollection & collection);
     void dumpToSystemSettingsColumns(
         MutableColumnsAndConstraints & params,

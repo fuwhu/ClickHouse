@@ -1,3 +1,4 @@
+#include "Interpreters/ActionsDAG.h"
 #include <Access/AccessControl.h>
 
 #include <DataTypes/DataTypeAggregateFunction.h>
@@ -103,6 +104,7 @@
 #include <Common/quoteString.h>
 #include <Common/scope_guard_safe.h>
 #include <Common/typeid_cast.h>
+#include <memory>
 
 
 namespace ProfileEvents
@@ -2530,7 +2532,8 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
     std::optional<UInt64> num_rows;
 
     /// Optimization for trivial query like SELECT count() FROM table.
-    if (processing_stage == QueryProcessingStage::FetchColumns && (num_rows = getTrivialCount(settings[Setting::allow_experimental_parallel_reading_from_replicas])))
+    if ((storage && storage->getName() == "Iceberg" && processing_stage == QueryProcessingStage::WithMergeableState && (num_rows = getTrivialCount(settings[Setting::allow_experimental_parallel_reading_from_replicas]))) 
+            || (processing_stage == QueryProcessingStage::FetchColumns && (num_rows = getTrivialCount(settings[Setting::allow_experimental_parallel_reading_from_replicas]))))
     {
         const auto & desc = query_analyzer->aggregates()[0];
         const auto & func = desc.function;
@@ -2705,6 +2708,26 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
 
         query_info.storage_limits = std::make_shared<StorageLimitsList>(storage_limits);
         query_info.settings_limit_offset_done = options.settings_limit_offset_done;
+
+        if (storage && storage->getName() == "Iceberg")
+        {
+            ActionsDAG::NodeRawConstPtrs filter_nodes;
+            if (analysis_result.hasPrewhere())
+            {
+                auto & prewhere_info_iceberg = analysis_result.prewhere_info;
+                filter_nodes.push_back(&prewhere_info_iceberg->prewhere_actions.findInOutputs(prewhere_info_iceberg->prewhere_column_name));
+
+                if (prewhere_info_iceberg->row_level_filter)
+                    filter_nodes.push_back(&prewhere_info_iceberg->row_level_filter->findInOutputs(prewhere_info_iceberg->row_level_column_name));
+            }
+            if (analysis_result.hasWhere())
+            {
+                filter_nodes.push_back(&analysis_result.before_where->dag.findInOutputs(analysis_result.where_column_name));
+            }
+            auto filter_actions_dag = ActionsDAG::buildFilterActionsDAG(filter_nodes);
+            if (filter_actions_dag)
+                query_info.filter_actions_dag = std::make_shared<ActionsDAG>((*filter_actions_dag).clone());
+        }
 
         storage->read(query_plan, required_columns, storage_snapshot, query_info, context, processing_stage, max_block_size, max_streams);
 

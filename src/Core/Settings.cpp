@@ -5479,7 +5479,7 @@ Method of reading data from remote filesystem, one of: read, threadpool.
     DECLARE(Bool, local_filesystem_read_prefetch, false, R"(
 Should use prefetching when reading data from local filesystem.
 )", 0) \
-    DECLARE(Bool, remote_filesystem_read_prefetch, true, R"(
+    DECLARE(Bool, remote_filesystem_read_prefetch, false, R"(
 Should use prefetching when reading data from remote filesystem.
 )", 0) \
     DECLARE(Int64, read_priority, 0, R"(
@@ -6593,6 +6593,24 @@ Number of threads performing background tasks for unique engine tables to load u
 )", 0) \
     DECLARE(UInt64, background_unique_engine_load_schedule_timeout, 10, R"(
 Timeout of scheduling unique engine unique key buckets loading task, unit is second.
+)", 0) \
+    DECLARE(Bool, iceberg_data_cache_enabled, false, R"(
+Allow use cache when query data from iceberg
+)", 0) \
+    DECLARE(UInt64, iceberg_init_pool_max_size, 10000, R"(
+max size of pool queue in iceberg file source static recycle thread
+)", 0) \
+    DECLARE(Bool, iceberg_file_input_format_pre_initialization, true, R"(
+Controls whether pre-initialize the input format of iceberg files at the begining of each IcebergFileSource execution.
+)", 0) \
+    DECLARE(Bool, separate_sorted_and_non_sorted_iceberg_file_processing, true, R"(
+Controls whether separate the sorted and non-sorted iceberg file processing for distributed ck-on-iceberg query against non-single-shard cluster.
+)", 0) \
+    DECLARE(MaxThreads, iceberg_file_input_format_pre_initialization_thread_pool_size, 0, R"(
+The pool size of the thread pool which is used for pre-initialization of iceberg files. this setting only works when the iceberg_file_input_format_pre_initialization is true. By default, it is determined automatically.
+)", 0) \
+    DECLARE(Float, iceberg_file_pre_initialization_batch_size_pool_size_ratio, 1, R"(
+the ratio of iceberg file input format pre-initialization batch size and the iceberg_file_input_format_pre_initialization_thread_pool_size, it controls how many iceberg files to pre-initialize in a single batch.
 )", 0) \
     \
     /* ####################################################### */ \

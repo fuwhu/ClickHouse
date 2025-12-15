@@ -40,7 +40,7 @@ struct PlainRanges
 
     static std::vector<Ranges> invert(const Ranges & to_invert_ranges);
 
-    static PlainRanges makeBlank() { return PlainRanges({}); }
+    static PlainRanges makeBlank() { return PlainRanges(Ranges{}); }
     static PlainRanges makeUniverse() { return PlainRanges({Range::createWholeUniverseWithoutNull()}); }
 };
 }

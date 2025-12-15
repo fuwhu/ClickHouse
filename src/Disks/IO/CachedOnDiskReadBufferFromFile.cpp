@@ -1,5 +1,6 @@
 #include "CachedOnDiskReadBufferFromFile.h"
 #include <algorithm>
+#include <optional>
 
 #include <Disks/IO/createReadBufferFromFileBase.h>
 #include <Disks/ObjectStorages/Cached/CachedObjectStorage.h>
@@ -919,6 +920,22 @@ bool CachedOnDiskReadBufferFromFile::nextImplStep()
     // the caller doesn't try to use this CachedOnDiskReadBufferFromFile after it threw an exception.)
     std::optional<SwapHelper> swap;
     swap.emplace(*this, *implementation_buffer);
+    
+    size_t needed_to_predownload = bytes_to_predownload;
+    //use swap_internal_buffer rather than internal_buffer for three reason
+    //0. swap_internal_buffer is not empty which means swap_internal_buffer is real internal_buffer and internal_buffer is user buffer
+    //1. zero copy is impossiable when predownload
+    //2. download as much as possible when file_segment remain size > user buffer and internal buffer > user buffer
+    // bool need_swap_buffer = !swap_internal_buffer.internalBuffer().empty() && (needed_to_predownload ||
+    //     (internal_buffer.size() < current_read_range.right + 1 - file_segment.getCurrentWriteOffset()
+    //         && swap_internal_buffer.internalBuffer().size() > internal_buffer.size()));
+
+    // if (!need_swap_buffer)
+    //     swap(*implementation_buffer);
+    // else {
+    //     swap(swap_internal_buffer);
+    //     swap(*implementation_buffer);
+    // }
 
     LOG_TEST(
         log,
@@ -935,7 +952,6 @@ bool CachedOnDiskReadBufferFromFile::nextImplStep()
     bool result = false;
     size_t size = 0;
 
-    size_t needed_to_predownload = bytes_to_predownload;
     if (needed_to_predownload)
     {
         if (predownload(file_segment))
@@ -1015,12 +1031,18 @@ bool CachedOnDiskReadBufferFromFile::nextImplStep()
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheHits);
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheBytes, size);
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheMicroseconds, elapsed);
+            local_read_bytes += size;
+            local_read_count++;
+            local_read_time_cost_us += elapsed;
         }
         else
         {
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheMisses);
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromSourceBytes, size);
             ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromSourceMicroseconds, elapsed);
+            remote_read_bytes += size;
+            remote_read_count++;
+            remote_read_time_cost_us += elapsed;
         }
     }
 
@@ -1037,9 +1059,15 @@ bool CachedOnDiskReadBufferFromFile::nextImplStep()
             {
                 chassert(file_segment.getCurrentWriteOffset() == static_cast<size_t>(implementation_buffer->getPosition()));
 
+                Stopwatch watch(CLOCK_MONOTONIC);
                 success = writeCache(implementation_buffer->position(), size, file_offset_of_buffer_end, file_segment);
+                watch.stop();
+                auto elapsed = watch.elapsedMicroseconds();
                 if (success)
                 {
+                    local_write_bytes += size;
+                    local_write_count++;
+                    local_write_time_cost_us += elapsed;
                     chassert(file_segment.getCurrentWriteOffset() <= file_segment.range().right + 1);
                     chassert(
                         /* last_file_segment */file_segments->size() == 1
@@ -1325,5 +1353,106 @@ bool CachedOnDiskReadBufferFromFile::isContentCached(size_t offset, size_t size)
     /// and the range covered by this segment currently.
     const auto right_boundary = std::min(file_segments->back().range().right, read_until_position - 1);
     return isRangeContainedInSegments(offset, std::min(offset + size - 1, right_boundary), file_segments);
+}
+off_t CachedOnDiskReadBufferFromFile::seek(off_t offset_)
+{
+    return seek(offset_, SEEK_SET);
+}
+
+size_t CachedOnDiskReadBufferFromFile::readDirect(char * to, size_t offset, size_t n)
+{
+    if (offset + n > read_until_position)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, 
+            "param error in CachedOnDiskReadBufferFromFile::readDirect, offset {} + n {} > read_until_position {}", 
+            offset, n, read_until_position);
+    
+    seek(offset);
+    size_t bytes_copied = 0;
+    
+    if (available() > 0)
+    {
+        bytes_copied = std::min(available(), n);
+        ::memcpy(to, pos, bytes_copied);
+        pos += bytes_copied;
+        if (bytes_copied == n)
+            return bytes_copied;
+    }
+    
+    size_t reserved_read_until_position = read_until_position;
+    read_until_position = offset + n;
+    
+    SCOPE_EXIT({
+        read_until_position = reserved_read_until_position;
+    });
+    
+    while (bytes_copied < n)
+    {
+        size_t remaining = n - bytes_copied;
+        
+        ReadBuffer temp_buf(to + bytes_copied, remaining);
+        
+        size_t predownload_offset = 0;  // record offset of predownload
+        bool has_data = false;
+        size_t bytes_read = 0;
+        
+        {
+            SwapHelper swap_guard(*this, temp_buf);
+            
+            // call nextImpl, may need predownload
+            has_data = nextImpl();
+            
+            if (has_data)
+            {
+                /// why we do this ? we use the zero copy in readDirect, but if encounter the following situation, zero copy doesn't work
+                /// If we were predownloading:
+                ///                   segment{1}
+                /// cache:         [_____|___________
+                ///                      ^
+                ///                      current_write_offset
+                /// requested_range:          [__________]
+                ///                           ^
+                ///                           file_offset_of_buffer_end
+                ///                      [      ]
+                ///                      ^
+                ///                      user buffer
+                /// we can see that the last step of predownload may exceed the file_offset_of_buffer_end because of size of user buffer
+                /// so we need get predownload_offset and calculate the available data to move to user buffer below
+                /// check if has predownload offset
+                predownload_offset = nextimpl_working_buffer_offset;
+                
+                /// calculate the available data in user buffer
+                bytes_read = working_buffer.size() - predownload_offset;
+                
+                // check position
+                if (working_buffer.begin() != to + bytes_copied) [[unlikely]]
+                    throw Exception(ErrorCodes::LOGICAL_ERROR,
+                        "Buffer position mismatch in readDirect: expected {}, got {}",
+                        to + bytes_copied, working_buffer.begin());
+            }
+        }
+        
+        // reset offset
+        nextimpl_working_buffer_offset = 0;
+        
+        if (!has_data)
+            break;
+        
+        /// if has predownload, need to move data
+        if (predownload_offset > 0 && bytes_read > 0)
+        {
+            // predownload data in to[bytes_copied .. bytes_copied + predownload_offset)
+            // available data in to[bytes_copied + predownload_offset .. bytes_copied + predownload_offset + bytes_read)
+            // move to to[bytes_copied .. bytes_copied + bytes_read)
+            ::memmove(to + bytes_copied, to + bytes_copied + predownload_offset, bytes_read);
+        }
+        
+        bytes_copied += std::min(bytes_read, remaining);
+    }
+    
+    if (bytes_copied != n)
+        throw Exception(ErrorCodes::LOGICAL_ERROR,
+            "Cannot read all data. Bytes copied: {}, expected: {}", bytes_copied, n);
+    
+    return bytes_copied;
 }
 }

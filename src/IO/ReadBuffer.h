@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Common/Exception.h"
 #include <cstring>
 #include <memory>
 
@@ -11,6 +12,12 @@ namespace DB
 {
 
 static constexpr auto DEFAULT_PREFETCH_PRIORITY = Priority{0};
+namespace ErrorCodes
+{
+    extern const int ATTEMPT_TO_READ_AFTER_EOF;
+    extern const int CANNOT_READ_ALL_DATA;
+    extern const int NOT_IMPLEMENTED;
+}
 
 /** A simple abstract class for buffered data reading (char sequences) from somewhere.
   * Unlike std::istream, it provides access to the internal buffer,
@@ -191,6 +198,11 @@ public:
       * Don't use for small reads.
       */
     [[nodiscard]] virtual size_t readBig(char * to, size_t n) { return read(to, n); }
+
+    virtual size_t readDirect(char * /*to*/, size_t /*offset*/, size_t /*n*/)
+    {
+        throw Exception(ErrorCodes::NOT_IMPLEMENTED, "readDirect not implemented.");
+    }
 
     /** Do something to allow faster subsequent call to 'nextImpl' if possible.
       * It's used for asynchronous readers with double-buffering.

@@ -7,13 +7,13 @@
 #include "Columns/IColumn.h"
 
 #include <DataTypes/DataTypeArray.h>
+#include <DataTypes/DataTypeNested.h>
 #include <DataTypes/DataTypeTuple.h>
 #include <DataTypes/NestedUtils.h>
-#include <DataTypes/DataTypeNested.h>
 
 #include <Columns/ColumnArray.h>
-#include <Columns/ColumnTuple.h>
 #include <Columns/ColumnConst.h>
+#include <Columns/ColumnTuple.h>
 
 #include <Parsers/IAST.h>
 #include <Storages/ColumnsDescription.h>
@@ -45,7 +45,7 @@ std::string concatenateName(const std::string & nested_table_name, const std::st
 
 
 /** Name can be treated as compound if it contains dot (.) in the middle.
-  */
+*/
 std::pair<std::string, std::string> splitName(const std::string & name, bool reverse)
 {
     auto idx = (reverse ? name.find_last_of('.') : name.find_first_of('.'));
@@ -64,13 +64,11 @@ std::pair<std::string_view, std::string_view> splitName(std::string_view name, b
     return {name.substr(0, idx), name.substr(idx + 1)};
 }
 
-
 std::string extractTableName(const std::string & nested_name)
 {
     auto split = splitName(nested_name);
     return split.first;
 }
-
 
 static Block flattenImpl(const Block & block, bool flatten_named_tuple)
 {
@@ -158,7 +156,6 @@ Block flattenNested(const Block & block)
 
 namespace
 {
-
 using NameToDataType = std::map<String, DataTypePtr>;
 
 NameToDataType getSubcolumnsOfNested(const NamesAndTypesList & names_and_types)
@@ -227,7 +224,6 @@ NamesAndTypesList convertToSubcolumns(const NamesAndTypesList & names_and_types)
     return res;
 }
 
-
 void validateArraySizes(const Block & block)
 {
     /// Nested prefix -> position of first column in block.
@@ -240,9 +236,9 @@ void validateArraySizes(const Block & block)
         if (isArray(elem.type))
         {
             if (!typeid_cast<const ColumnArray *>(elem.column.get()))
-                throw Exception(ErrorCodes::ILLEGAL_COLUMN,
-                                "Column with Array type is not represented by ColumnArray column: {}",
-                                elem.column->dumpStructure());
+                throw Exception(
+                    ErrorCodes::ILLEGAL_COLUMN,
+                    "Column with Array type is not represented by ColumnArray column: {}", elem.column->dumpStructure());
 
             auto split = splitName(elem.name);
 
@@ -258,10 +254,11 @@ void validateArraySizes(const Block & block)
                     const ColumnArray & another_array_column = assert_cast<const ColumnArray &>(*elem.column);
 
                     if (!first_array_column.hasEqualOffsets(another_array_column))
-                        throw Exception(ErrorCodes::SIZES_OF_ARRAYS_DONT_MATCH,
-                                        "Elements '{}' and '{}' "
-                                        "of Nested data structure '{}' (Array columns) have different array sizes.",
-                                        block.getByPosition(it->second).name, elem.name, split.first);
+                        throw Exception(
+                            ErrorCodes::SIZES_OF_ARRAYS_DONT_MATCH,
+                            "Elements '{}' and '{}' "
+                            "of Nested data structure '{}' (Array columns) have different array sizes.",
+                            block.getByPosition(it->second).name, elem.name, split.first);
                 }
             }
         }
@@ -272,17 +269,18 @@ void validateArraySizes(const Block & block)
 std::unordered_set<String> getAllTableNames(const Block & block, bool to_lower_case)
 {
     std::unordered_set<String> nested_table_names;
-    for (const auto & name : block.getNames())
+    for (auto & name : block.getNames())
     {
         auto nested_table_name = Nested::extractTableName(name);
         if (to_lower_case)
             boost::to_lower(nested_table_name);
 
         if (!nested_table_name.empty())
-            nested_table_names.insert(std::move(nested_table_name));
+            nested_table_names.insert(nested_table_name);
     }
     return nested_table_names;
 }
+
 
 Names getAllNestedColumnsForTable(const Block & block, const std::string & table_name)
 {

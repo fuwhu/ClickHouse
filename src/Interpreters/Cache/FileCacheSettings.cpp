@@ -15,6 +15,7 @@
 #include <IO/ReadHelpers.h>
 #include <IO/Operators.h>
 #include <Columns/IColumn.h>
+#include <sys/statfs.h>
 
 namespace DB
 {
@@ -23,6 +24,7 @@ namespace ErrorCodes
 {
     extern const int BAD_ARGUMENTS;
     extern const int NO_ELEMENTS_IN_CONFIG;
+    extern const int INVALID_CONFIG_PARAMETER;
 }
 
 #define LIST_OF_FILE_CACHE_SETTINGS(DECLARE, ALIAS) \
@@ -49,6 +51,10 @@ namespace ErrorCodes
     DECLARE(Bool, write_cache_per_user_id_directory, false, "Internal ClickHouse Cloud setting", 0) \
     DECLARE(Bool, allow_dynamic_cache_resize, false, "Allow dynamic resize of filesystem cache", 0) \
     DECLARE(Double, max_size_ratio_to_total_space, 0, "Ratio of `max_size` to total disk space", 0) \
+    DECLARE(Double, async_clean_ratio, 1, "", 0) \
+    DECLARE(UInt64, clean_interval_seconds, 10*60, "", 0) \
+    DECLARE(UInt64, min_clean_interval_seconds, 10*60, "", 0) \
+    DECLARE(UInt64, clean_ttl, 3600, "", 0) \
 
 DECLARE_SETTINGS_TRAITS(FileCacheSettingsTraits, LIST_OF_FILE_CACHE_SETTINGS)
 IMPLEMENT_SETTINGS_TRAITS(FileCacheSettingsTraits, LIST_OF_FILE_CACHE_SETTINGS)
@@ -186,6 +192,68 @@ void FileCacheSettings::loadFromConfig(
         (*this)[FileCacheSetting::path] = default_cache_path;
 
     validate();
+}
+
+void FileCacheSettings::loadIcebergCacheFromConfig(
+    const Poco::Util::AbstractConfiguration & config,
+    const std::string & config_prefix)
+{
+    if (!config.has(config_prefix))
+        throw Exception(ErrorCodes::NO_ELEMENTS_IN_CONFIG, "There is no path '{}' in configuration file.", config_prefix);
+
+    if (!config.has(config_prefix + ".data_cache_path"))
+    {
+        throw Exception(ErrorCodes::NO_ELEMENTS_IN_CONFIG, "{}.data_cache_path must not be empty", config_prefix);
+    }
+
+    auto base_path = config.getString(config_prefix + ".data_cache_path");
+
+    impl->set("path", base_path);
+    
+    if (config.has(config_prefix + ".data_cache_max_size"))
+        impl->set("max_size", config.getUInt64(config_prefix + ".data_cache_max_size"));
+    else
+    {
+        if (config.has(config_prefix + ".data_cache_disk_max_ratio"))
+        {
+            if (!std::filesystem::exists(base_path))
+                std::filesystem::create_directories(base_path);
+            struct statfs buf;
+            statfs(base_path.c_str(), &buf);
+            size_t total_size = buf.f_bsize * buf.f_blocks;
+            impl->set("keep_free_space_size_ratio", config.getDouble(config_prefix + ".data_cache_disk_max_ratio"));
+            impl->set("max_size", static_cast<size_t>(total_size * config.getDouble(config_prefix + ".data_cache_disk_max_ratio")));
+        }
+    }
+
+    if (config.has(config_prefix + ".data_cache_max_elements"))
+        impl->set("max_elements", config.getUInt64(config_prefix + ".data_cache_max_elements"));
+    else
+    {
+        if (config.has(config_prefix + ".avg_file_segment_size"))
+            impl->set("max_elements", (*this)[FileCacheSetting::max_size].value / config.getUInt64(config_prefix + ".avg_file_segment_size"));
+    }
+
+    if (config.has(config_prefix + ".max_file_segment_size"))
+        impl->set("max_file_segment_size", config.getUInt64(config_prefix + ".max_file_segment_size"));
+
+    if (config.has(config_prefix + ".max_clean_segment_per_turn"))
+        impl->set("keep_free_space_remove_batch", config.getDouble(config_prefix + ".max_clean_segment_per_turn"));
+
+    if (config.has(config_prefix + ".min_clean_interval_seconds"))
+        impl->set("min_clean_interval_seconds", config.getInt(config_prefix + ".min_clean_interval_seconds")); 
+
+    if (config.has(config_prefix + ".clean_interval_seconds"))
+        impl->set("clean_interval_seconds", config.getInt(config_prefix + ".clean_interval_seconds"));
+
+    if ((*this)[FileCacheSetting::min_clean_interval_seconds].value > (*this)[FileCacheSetting::clean_interval_seconds].value)
+        impl->set("min_clean_interval_seconds", config.getInt(config_prefix + ".clean_interval_seconds"));
+
+    if (config.has(config_prefix + ".clean_ttl"))
+        impl->set("clean_ttl", config.getInt(config_prefix + ".clean_ttl"));
+
+    if (config.has(config_prefix + ".async_clean_ratio"))
+        impl->set("async_clean_ratio", config.getDouble(config_prefix + ".async_clean_ratio"));
 }
 
 void FileCacheSettings::loadFromCollection(const NamedCollection & collection)

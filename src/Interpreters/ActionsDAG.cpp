@@ -25,6 +25,7 @@
 
 #include <stack>
 #include <base/sort.h>
+#include "Common/Exception.h"
 #include <Common/JSONBuilder.h>
 #include <Common/SipHash.h>
 #include <DataTypes/DataTypeSet.h>
@@ -813,6 +814,8 @@ ActionsDAG ActionsDAG::cloneSubDAG(const NodeRawConstPtrs & outputs, bool remove
 static ColumnWithTypeAndName executeActionForPartialResult(const ActionsDAG::Node * node, ColumnsWithTypeAndName arguments, size_t input_rows_count)
 {
     ColumnWithTypeAndName res_column;
+    if (!node->result_type)
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Node {} has null result_type", node->result_name);
     res_column.type = node->result_type;
     res_column.name = node->result_name;
 

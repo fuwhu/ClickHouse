@@ -200,8 +200,8 @@ using TableFunctionLocal = TableFunctionObjectStorage<LocalDefinition, StorageLo
 
 #if USE_AVRO
 #    if USE_AWS_S3
-using TableFunctionIceberg = TableFunctionObjectStorage<IcebergDefinition, StorageS3IcebergConfiguration>;
-using TableFunctionIcebergS3 = TableFunctionObjectStorage<IcebergS3Definition, StorageS3IcebergConfiguration>;
+// using TableFunctionIceberg = TableFunctionObjectStorage<IcebergDefinition, StorageS3IcebergConfiguration>;
+// using TableFunctionIcebergS3 = TableFunctionObjectStorage<IcebergS3Definition, StorageS3IcebergConfiguration>;
 #    endif
 #    if USE_AZURE_BLOB_STORAGE
 using TableFunctionIcebergAzure = TableFunctionObjectStorage<IcebergAzureDefinition, StorageAzureIcebergConfiguration>;

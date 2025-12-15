@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#define ARROW_VERSION_MAJOR 11
+#define ARROW_VERSION_MAJOR 13
 #define ARROW_VERSION_MINOR 0
 #define ARROW_VERSION_PATCH 0
 #define ARROW_VERSION ((ARROW_VERSION_MAJOR * 1000) + ARROW_VERSION_MINOR) * 1000 + ARROW_VERSION_PATCH
 
-#define ARROW_VERSION_STRING "11.0.0"
+#define ARROW_VERSION_STRING "13.0.0"
 
-#define ARROW_SO_VERSION "1100"
-#define ARROW_FULL_SO_VERSION "1100.0.0"
+#define ARROW_SO_VERSION "1300"
+#define ARROW_FULL_SO_VERSION "1300.0.0"
 
 #define ARROW_CXX_COMPILER_ID "Clang"
 #define ARROW_CXX_COMPILER_VERSION "ClickHouse"

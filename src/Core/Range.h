@@ -2,6 +2,7 @@
 
 #include <Core/ColumnsWithTypeAndName.h>
 #include <Core/Field.h>
+#include <optional>
 
 /** Range between fields, used for index analysis
   * (various arithmetic on intervals of various forms).
@@ -50,6 +51,11 @@ public:
     FieldRef right;       /// the right border
     bool left_included;   /// includes the left border
     bool right_included;  /// includes the right border
+
+    std::optional<bool> has_null; /// special case for ORC/Parquet filter push down
+    std::optional<bool> only_null;
+    
+    Range() = default;
 
     /// One point.
     Range(const FieldRef & point); /// NOLINT

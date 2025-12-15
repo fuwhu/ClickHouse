@@ -1,3 +1,5 @@
+#include "IO/WriteBufferFromString.h"
+#include <memory>
 #include <Access/ContextAccess.h>
 #include <Columns/ColumnString.h>
 #include <DataTypes/DataTypeString.h>
@@ -26,7 +28,8 @@ ColumnsDescription StorageSystemDatabases::getColumnsDescription()
         {"metadata_path", std::make_shared<DataTypeString>(), "Metadata path."},
         {"uuid", std::make_shared<DataTypeUUID>(), "Database UUID."},
         {"engine_full", std::make_shared<DataTypeString>(), "Parameters of the database engine."},
-        {"comment", std::make_shared<DataTypeString>(), "Database comment."}
+        {"comment", std::make_shared<DataTypeString>(), "Database comment."},
+        {"create_query", std::make_shared<DataTypeString>(), "Database create sql."}
     };
 
     description.setAliases({
@@ -143,6 +146,27 @@ void StorageSystemDatabases::fillData(MutableColumns & res_columns, ContextPtr c
             res_columns[res_index++]->insert(getEngineFull(context, database));
         if (columns_mask[src_index++])
             res_columns[res_index++]->insert(database->getDatabaseComment());
+        if (columns_mask[src_index++])
+        {
+            if (database->getEngineName() == "Iceberg")
+            {
+                ASTPtr create_query = database->getCreateDatabaseQuery();
+                WriteBufferFromOwnString buf;
+                IAST::FormatSettings settings(true);
+                settings.hilite = true;
+                IAST::FormatState state;
+                IAST::FormatStateStacked state_stacked;
+                IAST::FormattingBuffer format_buf{buf, settings, state, state_stacked};
+
+                create_query->format(format_buf);
+                res_columns[res_index++]->insert(buf.str());
+            }
+            else 
+            {
+                res_columns[res_index++]->insert("");    
+            }
+        }
+        
    }
 }
 

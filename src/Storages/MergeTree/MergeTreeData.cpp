@@ -614,7 +614,7 @@ MergeTreeData::MergeTreeData(
     }
 }
 
-VirtualColumnsDescription MergeTreeData::createVirtuals(const StorageInMemoryMetadata & metadata)
+VirtualColumnsDescription MergeTreeData::createVirtuals(const StorageInMemoryMetadata & metadata_)
 {
     VirtualColumnsDescription desc;
 
@@ -627,9 +627,9 @@ VirtualColumnsDescription MergeTreeData::createVirtuals(const StorageInMemoryMet
     desc.addEphemeral("_part_offset", std::make_shared<DataTypeUInt64>(), "Number of row in the part");
     desc.addEphemeral("_part_data_version", std::make_shared<DataTypeUInt64>(), "Data version of part (either min block number or mutation version)");
 
-    if (metadata.hasPartitionKey())
+    if (metadata_.hasPartitionKey())
     {
-        auto partition_types = metadata.partition_key.sample_block.getDataTypes();
+        auto partition_types = metadata_.partition_key.sample_block.getDataTypes();
         desc.addEphemeral("_partition_value", std::make_shared<DataTypeTuple>(std::move(partition_types)), "Value (a tuple) of a PARTITION BY expression");
     }
 
@@ -640,7 +640,7 @@ VirtualColumnsDescription MergeTreeData::createVirtuals(const StorageInMemoryMet
     return desc;
 }
 
-VirtualColumnsDescription MergeTreeData::createProjectionVirtuals(const StorageInMemoryMetadata & metadata)
+VirtualColumnsDescription MergeTreeData::createProjectionVirtuals(const StorageInMemoryMetadata & metadata_)
 {
     VirtualColumnsDescription desc;
 
@@ -651,9 +651,9 @@ VirtualColumnsDescription MergeTreeData::createProjectionVirtuals(const StorageI
     desc.addEphemeral("_partition_id", std::make_shared<DataTypeLowCardinality>(std::make_shared<DataTypeString>()), "Name of partition");
     desc.addEphemeral("_part_data_version", std::make_shared<DataTypeUInt64>(), "Data version of part (either min block number or mutation version)");
 
-    if (metadata.hasPartitionKey())
+    if (metadata_.hasPartitionKey())
     {
-        auto partition_types = metadata.partition_key.sample_block.getDataTypes();
+        auto partition_types = metadata_.partition_key.sample_block.getDataTypes();
         desc.addEphemeral("_partition_value", std::make_shared<DataTypeTuple>(std::move(partition_types)), "Value (a tuple) of a PARTITION BY expression");
     }
 
@@ -1459,9 +1459,9 @@ void MergeTreeData::MergingParams::check(const MergeTreeSettings & settings, con
 
 const Names MergeTreeData::virtuals_useful_for_filter = {"_part", "_partition_id", "_part_uuid", "_partition_value", "_part_data_version"};
 
-Block MergeTreeData::getHeaderWithVirtualsForFilter(const StorageMetadataPtr & metadata) const
+Block MergeTreeData::getHeaderWithVirtualsForFilter(const StorageMetadataPtr & metadata_) const
 {
-    const auto columns = metadata->getColumns().getAllPhysical();
+    const auto columns = metadata_->getColumns().getAllPhysical();
     Block header;
     auto virtuals_desc = getVirtualsPtr();
     for (const auto & name : virtuals_useful_for_filter)
@@ -1476,9 +1476,9 @@ Block MergeTreeData::getHeaderWithVirtualsForFilter(const StorageMetadataPtr & m
 }
 
 Block MergeTreeData::getBlockWithVirtualsForFilter(
-    const StorageMetadataPtr & metadata, const RangesInDataParts & parts, bool ignore_empty) const
+    const StorageMetadataPtr & metadata_, const RangesInDataParts & parts, bool ignore_empty) const
 {
-    auto block = getHeaderWithVirtualsForFilter(metadata);
+    auto block = getHeaderWithVirtualsForFilter(metadata_);
 
     for (const auto & part : parts)
     {
@@ -8104,16 +8104,16 @@ UInt64 MergeTreeData::estimateNumberOfRowsToRead(
     return total_rows;
 }
 
-void MergeTreeData::checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata, bool throw_on_error) const
+void MergeTreeData::checkColumnFilenamesForCollision(const StorageInMemoryMetadata & metadata_, bool throw_on_error) const
 {
     auto settings = getDefaultSettings();
-    if (metadata.settings_changes)
+    if (metadata_.settings_changes)
     {
-        const auto & changes = metadata.settings_changes->as<const ASTSetQuery &>().changes;
+        const auto & changes = metadata_.settings_changes->as<const ASTSetQuery &>().changes;
         settings->applyChanges(changes);
     }
 
-    checkColumnFilenamesForCollision(metadata.getColumns(), *settings, throw_on_error);
+    checkColumnFilenamesForCollision(metadata_.getColumns(), *settings, throw_on_error);
 }
 
 void MergeTreeData::checkColumnFilenamesForCollision(const ColumnsDescription & columns, const MergeTreeSettings & settings, bool throw_on_error) const

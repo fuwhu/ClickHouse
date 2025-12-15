@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Interpreters/Context.h"
 #include <Columns/IColumn_fwd.h>
 #include <Core/QueryLogElementType.h>
 #include <Interpreters/Cache/QueryResultCacheUsage.h>
@@ -92,6 +93,10 @@ struct QueryLogElement
     std::vector<std::string> exception_format_string_args{};
 
     ClientInfo client_info;
+    
+    ContextData::IcebergDataStreamsMetricsPtr iceberg_data_streams_metrics;
+    ContextData::IcebergScanFilesMetricsPtr iceberg_scan_files_metrics;
+    ContextData::IcebergCreateFilesMetricsPtr iceberg_create_files_metrics;
 
     String log_comment;
 
@@ -112,5 +117,9 @@ struct QueryLogElement
     void appendToBlock(MutableColumns & columns) const;
 
     static void appendClientInfo(const ClientInfo & client_info, MutableColumns & columns, size_t & i);
+
+    static void appendIcebergDataStreamsMetrics(const ContextData::IcebergDataStreamsMetricsPtr & iceberg_data_streams_metrics, MutableColumns & columns, size_t & i);
+    static void appendIcebergScanFilesMetrics(const ContextData::IcebergScanFilesMetricsPtr & iceberg_scan_files_metrics, MutableColumns & columns, size_t & i);
+    static void appendIcebergCreateFilesMetrics(const ContextData::IcebergCreateFilesMetricsPtr & iceberg_create_files_metrics, MutableColumns & columns, size_t & i);
 };
 }

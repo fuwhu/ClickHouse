@@ -11,6 +11,8 @@
 #include <Common/filesystemHelpers.h>
 
 
+#include <Databases/DatabaseIceberg.h>
+
 namespace fs = std::filesystem;
 
 namespace DB
@@ -27,6 +29,8 @@ namespace ErrorCodes
     extern const int UNKNOWN_DATABASE_ENGINE;
     extern const int CANNOT_CREATE_DATABASE;
     extern const int LOGICAL_ERROR;
+    extern const int NOT_IMPLEMENTED;
+    extern const int NO_ELEMENTS_IN_CONFIG;
 }
 
 void cckMetadataPathForOrdinary(const ASTCreateQuery & create, const String & metadata_path)

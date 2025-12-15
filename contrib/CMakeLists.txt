@@ -148,8 +148,14 @@ add_contrib (libgsasl-cmake libgsasl) # requires krb5
 add_contrib (librdkafka-cmake librdkafka) # requires: libgsasl
 add_contrib (nats-io-cmake nats-io)
 add_contrib (isa-l-cmake isa-l)
-add_contrib (libhdfs3-cmake libhdfs3) # requires: google-protobuf, krb5, isa-l
-add_contrib (hive-metastore-cmake hive-metastore) # requires: thrift, avro, arrow, libhdfs3
+# add_contrib (libhdfs3-cmake libhdfs3) # requires: google-protobuf, krb5, isa-l
+# add_contrib (hive-metastore-cmake hive-metastore) # requires: thrift, avro, arrow, libhdfs3
+
+if (NOT USE_LIBHDFS)
+    add_contrib (libhdfs3-cmake libhdfs3) # requires: protobuf, krb5
+    add_contrib (hive-metastore-cmake hive-metastore) # requires: thrift/avro/arrow/libhdfs3
+endif()
+
 add_contrib (cppkafka-cmake cppkafka)
 
 option(ENABLE_LIBPQXX "Enable PostgreSQL" ${ENABLE_LIBRARIES})

@@ -640,6 +640,7 @@
     M(1005, UNKNOWN_REMOTE_QUERY_TIMEOUT_MODE) \
     M(1006, GRPC_ERROR) \
     M(1007, TOO_MANY_IMPLICIT_COLUMNS) \
+    M(1008, ICEBERG_CATALOG_ERROR) \
 /* See END */
 
 #ifdef APPLY_FOR_EXTERNAL_ERROR_CODES
@@ -656,7 +657,7 @@ namespace ErrorCodes
     APPLY_FOR_ERROR_CODES(M)
 #undef M
 
-    constexpr ErrorCode END = 1007;
+    constexpr ErrorCode END = 1008;
     ErrorPairHolder values[END + 1]{};
 
     struct ErrorCodesNames

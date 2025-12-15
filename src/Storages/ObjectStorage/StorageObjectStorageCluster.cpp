@@ -28,7 +28,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
 }
 
-String StorageObjectStorageCluster::getPathSample(StorageInMemoryMetadata metadata, ContextPtr context)
+String StorageObjectStorageCluster::getPathSample(StorageInMemoryMetadata metadata_, ContextPtr context)
 {
     auto query_settings = configuration->getQuerySettings(context);
     /// We don't want to throw an exception if there are no files with specified path.
@@ -41,7 +41,7 @@ String StorageObjectStorageCluster::getPathSample(StorageInMemoryMetadata metada
         context,
         {}, // predicate
         {},
-        metadata.getColumns().getAll(), // virtual_columns
+        metadata_.getColumns().getAll(), // virtual_columns
         nullptr, // read_keys
         {} // file_progress_callback
     );
