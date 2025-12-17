@@ -253,7 +253,6 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processEpollEvents(boo
         {
             int index = timeout_fd_to_replica_index[event_fd];
             replicas[index].change_replica_timeout.reset();
-            ++shuffled_pools[index].slowdown_count;
             ProfileEvents::increment(ProfileEvents::HedgedRequestsChangeReplica);
         }
         else
@@ -441,6 +440,12 @@ void HedgedConnectionsFactory::incrementRemoteErrorCountForConnection(size_t ind
 {
     auto index = std::make_shared<int>(index_in_pool);
     pool->addRemoteError(index);
+}
+
+void HedgedConnectionsFactory::incrementSlowdownCountForConnection(size_t index_in_pool)
+{
+    auto index = std::make_shared<int>(index_in_pool);
+    pool->addSlowDown(index);
 }
 
 }

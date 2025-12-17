@@ -152,7 +152,9 @@ protected:
 
     void updateErrorCounts(PoolStates & states, time_t & last_decrease_time, time_t & last_remote_decrease_time) const;
 
-    void addRemoteErrorCounts(std::shared_ptr<int> index);
+    void addRemoteErrorCount(std::shared_ptr<int> index);
+
+    void addSlowdownCount(std::shared_ptr<int> index);
 
     std::vector<ShuffledPool> getShuffledPools(size_t max_ignored_errors, const GetPriorityFunc & get_priority, bool use_slowdown_count = false);
 
@@ -184,7 +186,7 @@ protected:
 };
 
 template<typename TNestedPool>
-void PoolWithFailoverBase<TNestedPool>::addRemoteErrorCounts(std::shared_ptr<int> index)
+void PoolWithFailoverBase<TNestedPool>::addRemoteErrorCount(std::shared_ptr<int> index)
 {
     if(*index == -1)
     {
@@ -196,6 +198,16 @@ void PoolWithFailoverBase<TNestedPool>::addRemoteErrorCounts(std::shared_ptr<int
     shared_pool_states[*index].remote_error_count++;
 }
 
+template<typename TNestedPool>
+void PoolWithFailoverBase<TNestedPool>::addSlowdownCount(std::shared_ptr<int> index)
+{
+    if(*index == -1)
+        return;
+
+    LOG_WARNING(log, "A replica changing happened, we will plus one to the slow down count");
+    std::lock_guard lock(pool_states_mutex);
+    shared_pool_states[*index].slowdown_count++;
+}
 
 template <typename TNestedPool>
 std::vector<typename PoolWithFailoverBase<TNestedPool>::ShuffledPool>

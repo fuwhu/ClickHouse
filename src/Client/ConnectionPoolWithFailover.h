@@ -109,7 +109,12 @@ public:
 
     void addRemoteError(std::shared_ptr<int> index)
     {
-        Base::addRemoteErrorCounts(index);
+        Base::addRemoteErrorCount(index);
+    }
+
+    void addSlowDown(std::shared_ptr<int> index)
+    {
+        Base::addSlowdownCount(index);
     }
 
     void incrementErrorCount(ConnectionPoolPtr pool)
