@@ -26,7 +26,6 @@ JSONStringsEachRow
 MsgPack
 NDJSON
 Native
-ORC
 Parquet
 Raw
 RawWithNames
