@@ -251,6 +251,11 @@ private:
     std::unique_ptr<IConnections> connections;
     std::unique_ptr<ReadContext> read_context;
 
+    // Get the shard connection pool
+    mutable ConnectionPoolWithFailoverPtr connection_pool;
+    // Get the index of replica
+    std::shared_ptr<int> connected_index = std::make_shared<int>(-1);
+
     const String query;
     std::shared_ptr<const QueryPlan> query_plan;
     String query_id;

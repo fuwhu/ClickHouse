@@ -28,6 +28,7 @@ namespace Setting
     extern const SettingsUInt64 parallel_replica_offset;
     extern const SettingsBool skip_unavailable_shards;
     extern const SettingsSeconds remote_query_timeout;
+    extern const SettingsRemoteQueryTimeOutMode remote_query_timeout_mode;
 }
 
 namespace ErrorCodes
@@ -37,6 +38,7 @@ namespace ErrorCodes
     extern const int SOCKET_TIMEOUT;
     extern const int ALL_CONNECTION_TRIES_FAILED;
     extern const int NOT_IMPLEMENTED;
+    extern const int REMOTE_QUERY_TIMEOUT_EXCEEDED;
 }
 
 HedgedConnections::HedgedConnections(
@@ -62,7 +64,7 @@ HedgedConnections::HedgedConnections(
     , settings(context->getSettingsRef())
     , throttler(throttler_)
 {
-    std::vector<Connection *> connections = hedged_connections_factory.getManyConnections(pool_mode, std::move(async_callback));
+    std::vector<HedgedConnectionsFactory::ConnectionWithIndexPtr> connections = hedged_connections_factory.getManyConnections(pool_mode, std::move(async_callback));
 
     if (connections.empty())
         return;
@@ -71,17 +73,17 @@ HedgedConnections::HedgedConnections(
     for (size_t i = 0; i != connections.size(); ++i)
     {
         offset_states.emplace_back();
-        offset_states[i].replicas.emplace_back(connections[i]);
+        offset_states[i].replicas.emplace_back(connections[i]->connection);
         offset_states[i].active_connection_count = 1;
 
         ReplicaState & replica = offset_states[i].replicas.back();
         replica.connection->setThrottler(throttler_);
 
         epoll.add(replica.packet_receiver->getFileDescriptor());
-        fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{i, 0};
+        fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{i, 0, connections[i]->index_in_pool};
 
         epoll.add(replica.change_replica_timeout.getDescriptor());
-        timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{i, 0};
+        timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{i, 0, connections[i]->index_in_pool};
     }
 
     active_connection_count = connections.size();
@@ -350,7 +352,7 @@ Packet HedgedConnections::drain()
     {
         ReplicaLocation location = getReadyReplicaLocation();
 
-        if (location.remote_query_timeout_exceeded)
+        if (location.generated_by_remote_query_timeout)
             continue;
 
         Packet packet = receivePacketFromReplica(location);
@@ -398,8 +400,11 @@ Packet HedgedConnections::receivePacketUnlocked(AsyncCallback async_callback)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "No pending events in epoll.");
 
     ReplicaLocation location = getReadyReplicaLocation(std::move(async_callback));
-    if (location.remote_query_timeout_exceeded)
+    if (location.generated_by_remote_query_timeout)
     {
+        incrementRemoteErrorCountForActiveConnections();
+        if (context->getSettingsRef()[Setting::remote_query_timeout_mode] == RemoteQueryTimeOutMode::IMMEDIATE_THROW)
+            throw Exception(ErrorCodes::REMOTE_QUERY_TIMEOUT_EXCEEDED, "Remote query timeout exceeded.");
         Packet packet;
         packet.type = Protocol::Server::RemoteQueryTimeout;
         return packet;
@@ -429,7 +434,7 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
             checkNewReplica();
         else if (event_fd == remote_query_timeout.getDescriptor())
         {
-            return ReplicaLocation{0, 0, true};
+            return ReplicaLocation{0, 0, 0, true};
         }
         else if (fd_to_replica_location.contains(event_fd))
         {
@@ -547,6 +552,8 @@ Packet HedgedConnections::receivePacketFromReplica(const ReplicaLocation & repli
             break;
 
         case Protocol::Server::Exception:
+            hedged_connections_factory.incrementRemoteErrorCountForConnection(replica_location.index_in_pool);
+            [[fallthrough]];
         default:
             /// Check case when we receive Exception before first not empty data packet
             /// or positive progress. It may happen if max_parallel_replicas > 1 and
@@ -588,38 +595,38 @@ void HedgedConnections::disableChangingReplica(const ReplicaLocation & replica_l
 
 void HedgedConnections::startNewReplica()
 {
-    Connection * connection = nullptr;
-    HedgedConnectionsFactory::State state = hedged_connections_factory.startNewConnection(connection);
+    HedgedConnectionsFactory::ConnectionWithIndexPtr connection_out = std::make_shared<HedgedConnectionsFactory::ConnectionWithIndex>();
+    HedgedConnectionsFactory::State state = hedged_connections_factory.startNewConnection(connection_out);
 
     /// Check if we need to add hedged_connections_factory file descriptor to epoll.
     if (state == HedgedConnectionsFactory::State::NOT_READY && hedged_connections_factory.numberOfProcessingReplicas() == 1)
         epoll.add(hedged_connections_factory.getFileDescriptor());
 
-    processNewReplicaState(state, connection);
+    processNewReplicaState(state, connection_out);
 }
 
 void HedgedConnections::checkNewReplica()
 {
-    Connection * connection = nullptr;
-    HedgedConnectionsFactory::State state = hedged_connections_factory.waitForReadyConnections(connection);
+    HedgedConnectionsFactory::ConnectionWithIndexPtr connection_out = std::make_shared<HedgedConnectionsFactory::ConnectionWithIndex>();
+    HedgedConnectionsFactory::State state = hedged_connections_factory.waitForReadyConnections(connection_out);
 
     if (cancelled)
     {
         /// Do not start new connection if query is already canceled.
-        if (connection)
-            connection->disconnect();
+        if (connection_out->connection)
+            connection_out->connection->disconnect();
 
         state = HedgedConnectionsFactory::State::CANNOT_CHOOSE;
     }
 
-    processNewReplicaState(state, connection);
+    processNewReplicaState(state, connection_out);
 
     /// Check if we don't need to listen hedged_connections_factory file descriptor in epoll anymore.
     if (hedged_connections_factory.numberOfProcessingReplicas() == 0)
         epoll.remove(hedged_connections_factory.getFileDescriptor());
 }
 
-void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State state, Connection * connection)
+void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State state, HedgedConnectionsFactory::ConnectionWithIndexPtr connection_with_index)
 {
     switch (state)
     {
@@ -628,16 +635,16 @@ void HedgedConnections::processNewReplicaState(HedgedConnectionsFactory::State s
             size_t offset = offsets_queue.front();
             offsets_queue.pop();
 
-            offset_states[offset].replicas.emplace_back(connection);
+            offset_states[offset].replicas.emplace_back(connection_with_index->connection);
             ++offset_states[offset].active_connection_count;
             offset_states[offset].next_replica_in_process = false;
             ++active_connection_count;
 
             ReplicaState & replica = offset_states[offset].replicas.back();
             epoll.add(replica.packet_receiver->getFileDescriptor());
-            fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1};
+            fd_to_replica_location[replica.packet_receiver->getFileDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1, connection_with_index->index_in_pool};
             epoll.add(replica.change_replica_timeout.getDescriptor());
-            timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1};
+            timeout_fd_to_replica_location[replica.change_replica_timeout.getDescriptor()] = ReplicaLocation{offset, offset_states[offset].replicas.size() - 1, connection_with_index->index_in_pool};
 
             pipeline_for_new_replicas.run(replica);
             break;
@@ -690,6 +697,15 @@ void HedgedConnections::setAsyncCallback(AsyncCallback async_callback)
             if (replica.connection)
                 replica.connection->setAsyncCallback(async_callback);
         }
+    }
+}
+
+void HedgedConnections::incrementRemoteErrorCountForActiveConnections()
+{
+    for (const auto & pair : fd_to_replica_location)
+    {
+        const auto & location = pair.second;
+        hedged_connections_factory.incrementRemoteErrorCountForConnection(location.index_in_pool);
     }
 }
 
