@@ -91,6 +91,8 @@ public:
 
     void incrementRemoteErrorCountForConnection(size_t index_in_pool);
 
+    void incrementSlowdownCountForConnection(size_t index_in_pool);
+
     ~HedgedConnectionsFactory();
 
 private:

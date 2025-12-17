@@ -450,6 +450,7 @@ HedgedConnections::ReplicaLocation HedgedConnections::getReadyReplicaLocation(As
             offset_states[location.offset].next_replica_in_process = true;
             offsets_queue.push(static_cast<int>(location.offset));
             ProfileEvents::increment(ProfileEvents::HedgedRequestsChangeReplica);
+            hedged_connections_factory.incrementSlowdownCountForConnection(location.index_in_pool);
             startNewReplica();
         }
         else
