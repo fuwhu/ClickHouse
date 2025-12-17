@@ -227,6 +227,7 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     GetPriorityForLoadBalancing::Func priority_func_)
     : RemoteQueryExecutor(query_, header_, context_, scalars_, external_tables_, stage_, std::move(query_plan_), extension_, priority_func_)
 {
+    connection_pool = pool;
     create_connections = [this, pool, throttler](AsyncCallback async_callback)->std::unique_ptr<IConnections>
     {
         const Settings & current_settings = context->getSettingsRef();
@@ -504,7 +505,7 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::read()
             return ReadResult(Block());
     }
 
-    while (true)
+    while(true)
     {
         LockAndBlocker lock(was_cancelled_mutex);
         if (was_cancelled)
@@ -541,58 +542,69 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::readAsync()
 
     while (true)
     {
-        LockAndBlocker lock(was_cancelled_mutex);
-        if (was_cancelled)
-            return ReadResult(Block());
+        try {
+            LockAndBlocker lock(was_cancelled_mutex);
+            if (was_cancelled)
+                return ReadResult(Block());
 
-        if (packet_in_progress)
-        {
-            chassert(read_context->readPacketTypeSeparately());
-            chassert(read_context->hasReadTillPacketType());
+            if (packet_in_progress)
+            {
+                chassert(read_context->readPacketTypeSeparately());
+                chassert(read_context->hasReadTillPacketType());
 
-            /// packet type is handled already, read and parse packet itself
-            if (!read_context->hasReadPacket() && !read_context->read())
+                /// packet type is handled already, read and parse packet itself
+                if (!read_context->hasReadPacket() && !read_context->read())
+                    return ReadResult(read_context->getFileDescriptor());
+
+                packet_in_progress = false;
+                auto read_result = processPacket(read_context->getPacket());
+                if (read_result.getType() == ReadResult::Type::Data || read_result.getType() == ReadResult::Type::ParallelReplicasToken)
+                    return read_result;
+
+                if (got_duplicated_part_uuids)
+                    break;
+            }
+
+            read_context->resume();
+
+            if (isReplicaUnavailable() || needToSkipUnavailableShard())
+            {
+                /// We need to tell the coordinator not to wait for this replica.
+                /// But at this point it may lead to an incomplete result set, because
+                /// this replica committed to read some part of there data and then died.
+                if (extension && extension->parallel_reading_coordinator)
+                {
+                    chassert(extension->parallel_reading_coordinator);
+                    extension->parallel_reading_coordinator->markReplicaAsUnavailable(extension->replica_info->number_of_current_replica);
+                }
+
+                return ReadResult(Block());
+            }
+
+            /// Check if packet is not ready yet.
+            if (read_context->isInProgress())
                 return ReadResult(read_context->getFileDescriptor());
 
-            packet_in_progress = false;
+            /// if reading separately packet header and body enabled, try to read packet itself this time
+            if (read_context->readPacketTypeSeparately() && !read_context->hasReadPacket() && !read_context->read())
+                return ReadResult(read_context->getFileDescriptor());
+
             auto read_result = processPacket(read_context->getPacket());
             if (read_result.getType() == ReadResult::Type::Data || read_result.getType() == ReadResult::Type::ParallelReplicasToken)
                 return read_result;
 
             if (got_duplicated_part_uuids)
                 break;
-        }
-
-        read_context->resume();
-
-        if (isReplicaUnavailable() || needToSkipUnavailableShard())
-        {
-            /// We need to tell the coordinator not to wait for this replica.
-            /// But at this point it may lead to an incomplete result set, because
-            /// this replica committed to read some part of there data and then died.
-            if (extension && extension->parallel_reading_coordinator)
+        } catch (Exception & e) {
+            /// TODO : add remote error for sync read as well.
+            if (e.isRemoteException())
             {
-                chassert(extension->parallel_reading_coordinator);
-                extension->parallel_reading_coordinator->markReplicaAsUnavailable(extension->replica_info->number_of_current_replica);
+                if (*connected_index != -1)
+                    connection_pool->addRemoteError(connected_index);
             }
 
-            return ReadResult(Block());
+            throw;
         }
-
-        /// Check if packet is not ready yet.
-        if (read_context->isInProgress())
-            return ReadResult(read_context->getFileDescriptor());
-
-        /// if reading separately packet header and body enabled, try to read packet itself this time
-        if (read_context->readPacketTypeSeparately() && !read_context->hasReadPacket() && !read_context->read())
-            return ReadResult(read_context->getFileDescriptor());
-
-        auto read_result = processPacket(read_context->getPacket());
-        if (read_result.getType() == ReadResult::Type::Data || read_result.getType() == ReadResult::Type::ParallelReplicasToken)
-            return read_result;
-
-        if (got_duplicated_part_uuids)
-            break;
     }
 
     return restartQueryWithoutDuplicatedUUIDs();

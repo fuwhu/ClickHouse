@@ -31,6 +31,7 @@ ColumnsDescription StorageSystemClusters::getColumnsDescription()
         {"default_database", std::make_shared<DataTypeString>(), "The default database name."},
         {"errors_count", std::make_shared<DataTypeUInt32>(), "The number of times this host failed to reach replica."},
         {"slowdowns_count", std::make_shared<DataTypeUInt32>(), "The number of slowdowns that led to changing replica when establishing a connection with hedged requests."},
+        {"remote_error_count", std::make_shared<DataTypeUInt32>(), "The number of times this host remote query failed to reach replica."},
         {"estimated_recovery_time", std::make_shared<DataTypeUInt32>(), "Seconds remaining until the replica error count is zeroed and it is considered to be back to normal."},
         {"database_shard_name", std::make_shared<DataTypeString>(), "The name of the `Replicated` database shard (for clusters that belong to a `Replicated` database)."},
         {"database_replica_name", std::make_shared<DataTypeString>(), "The name of the `Replicated` database replica (for clusters that belong to a `Replicated` database)."},
@@ -126,6 +127,8 @@ void StorageSystemClusters::writeCluster(MutableColumns & res_columns, const std
                 res_columns[res_index++]->insert(pool_status[replica_index].error_count);
             if (columns_mask[src_index++])
                 res_columns[res_index++]->insert(pool_status[replica_index].slowdown_count);
+            if (columns_mask[src_index++])
+                res_columns[res_index++]->insert(pool_status[replica_index].remote_error_count);
             if (columns_mask[src_index++])
                 res_columns[res_index++]->insert(pool_status[replica_index].estimated_recovery_time.count());
             if (columns_mask[src_index++])

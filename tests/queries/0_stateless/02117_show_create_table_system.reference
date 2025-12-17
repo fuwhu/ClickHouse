@@ -50,6 +50,7 @@ CREATE TABLE system.clusters
     `default_database` String,
     `errors_count` UInt32,
     `slowdowns_count` UInt32,
+    `remote_error_count` UInt32,
     `estimated_recovery_time` UInt32,
     `database_shard_name` String,
     `database_replica_name` String,

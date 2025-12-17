@@ -13,6 +13,8 @@
 
 #include <IO/ConnectionTimeouts.h>
 
+#include <algorithm>
+
 
 namespace DB
 {
@@ -39,8 +41,9 @@ ConnectionPoolWithFailover::ConnectionPoolWithFailover(
         ConnectionPoolPtrs nested_pools_,
         LoadBalancing load_balancing,
         time_t decrease_error_period_,
-        size_t max_error_cap_)
-    : Base(std::move(nested_pools_), decrease_error_period_, max_error_cap_, getLogger("ConnectionPoolWithFailover"))
+        size_t max_error_cap_,
+        time_t decrease_remote_error_period_)
+    : Base(std::move(nested_pools_), decrease_error_period_, max_error_cap_, decrease_remote_error_period_, getLogger("ConnectionPoolWithFailover"))
     , get_priority_load_balancing(load_balancing)
 {
     const std::string & local_hostname = getFQDNOrHostName();
@@ -91,7 +94,7 @@ IConnectionPool::Entry ConnectionPoolWithFailover::get(const ConnectionTimeouts 
 
 ConnectionPoolWithFailover::Status ConnectionPoolWithFailover::getStatus() const
 {
-    const auto [states, pools, error_decrease_time] = getPoolExtendedStates();
+    const auto [states, pools, error_decrease_time, remote_error_decrease_time] = getPoolExtendedStates();
     // NOTE: to avoid data races do not touch any data of ConnectionPoolWithFailover or PoolWithFailoverBase in the code below.
 
     assert(states.size() == pools.size());
@@ -99,20 +102,25 @@ ConnectionPoolWithFailover::Status ConnectionPoolWithFailover::getStatus() const
     ConnectionPoolWithFailover::Status result;
     result.reserve(states.size());
     const time_t since_last_error_decrease = time(nullptr) - error_decrease_time;
+    const time_t since_last_remote_error_decrease_time = time(nullptr) - remote_error_decrease_time;
     /// Update error_count and slowdown_count in states to return actual information.
     auto updated_states = states;
     auto updated_error_decrease_time = error_decrease_time;
-    Base::updateErrorCounts(updated_states, updated_error_decrease_time);
+    auto updated_remote_error_decrease_time = remote_error_decrease_time;
+    Base::updateErrorCounts(updated_states, updated_error_decrease_time, updated_remote_error_decrease_time);
     for (size_t i = 0; i < states.size(); ++i)
     {
         const auto rounds_to_zero_errors = states[i].error_count ? bitScanReverse(states[i].error_count) + 1 : 0;
         const auto rounds_to_zero_slowdowns = states[i].slowdown_count ? bitScanReverse(states[i].slowdown_count) + 1 : 0;
-        const auto seconds_to_zero_errors = std::max(static_cast<time_t>(0), std::max(rounds_to_zero_errors, rounds_to_zero_slowdowns) * decrease_error_period - since_last_error_decrease);
+        const auto rounds_to_zero_remote_error_count = states[i].remote_error_count ? bitScanReverse(states[i].remote_error_count) + 1 : 0;
+        const auto seconds_to_zero_errors = std::max({static_cast<time_t>(0), std::max(rounds_to_zero_errors, rounds_to_zero_slowdowns) * decrease_error_period - since_last_error_decrease,
+        rounds_to_zero_remote_error_count * decrease_remote_error_period - since_last_remote_error_decrease_time});
 
         result.emplace_back(NestedPoolStatus{
             pools[i],
             updated_states[i].error_count,
             updated_states[i].slowdown_count,
+            updated_states[i].remote_error_count,
             std::chrono::seconds{seconds_to_zero_errors}
         });
     }

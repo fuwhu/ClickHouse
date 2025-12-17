@@ -45,6 +45,8 @@ static constexpr auto SHOW_CHARS_ON_SYNTAX_ERROR = ptrdiff_t(160);
 static constexpr auto DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD = 60;
 /// replica error max cap, this is to prevent replica from accumulating too many errors and taking too long to recover.
 static constexpr auto DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT = 1000;
+/// this period should be longer than connection error period cause some remote exceptions (like disk recovery) cost too long.
+static constexpr auto DBMS_CONNECTION_POOL_WITH_REMOTE_EXCEPTION_DEFAULT_DECREASE_ERROR_PERIOD = 120; 
 
 /// The boundary on which the blocks for asynchronous file operations should be aligned.
 static constexpr auto DEFAULT_AIO_FILE_BLOCK_SIZE = 4096;

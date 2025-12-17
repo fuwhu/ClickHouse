@@ -3785,6 +3785,12 @@ See also:
 - [distributed_replica_error_half_life](#distributed_replica_error_half_life)
 - [distributed_replica_max_ignored_errors](#distributed_replica_max_ignored_errors)
 )", 0) \
+    DECLARE(UInt64, distributed_replica_remote_error_half_life, DBMS_CONNECTION_POOL_WITH_REMOTE_EXCEPTION_DEFAULT_DECREASE_ERROR_PERIOD, R"(
+- Type: unsigned int
+- Default value: 120
+
+Time period reduces replica remote error counter by 2 times.
+)", 0) \
     DECLARE(UInt64, distributed_replica_max_ignored_errors, 0, R"(
 - Type: unsigned int
 - Default value: 0

@@ -39,7 +39,8 @@ public:
             ConnectionPoolPtrs nested_pools_,
             LoadBalancing load_balancing,
             time_t decrease_error_period_ = DBMS_CONNECTION_POOL_WITH_FAILOVER_DEFAULT_DECREASE_ERROR_PERIOD,
-            size_t max_error_cap = DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT);
+            size_t max_error_cap = DBMS_CONNECTION_POOL_WITH_FAILOVER_MAX_ERROR_COUNT,
+            time_t decrease_remote_error_period = DBMS_CONNECTION_POOL_WITH_REMOTE_EXCEPTION_DEFAULT_DECREASE_ERROR_PERIOD);
 
     using Entry = IConnectionPool::Entry;
     using PoolWithFailoverBase<IConnectionPool>::getValidTryResult;
@@ -90,6 +91,7 @@ public:
         const Base::NestedPoolPtr pool;
         size_t error_count = 0;
         size_t slowdown_count = 0;
+        size_t remote_error_count = 0;
         std::chrono::seconds estimated_recovery_time;
     };
 
@@ -103,6 +105,11 @@ public:
     void updateSharedError(std::vector<ShuffledPool> & shuffled_pools)
     {
         Base::updateSharedErrorCounts(shuffled_pools);
+    }
+
+    void addRemoteError(std::shared_ptr<int> index)
+    {
+        Base::addRemoteErrorCounts(index);
     }
 
     void incrementErrorCount(ConnectionPoolPtr pool)

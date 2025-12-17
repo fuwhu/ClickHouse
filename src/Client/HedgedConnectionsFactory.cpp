@@ -61,7 +61,7 @@ HedgedConnectionsFactory::~HedgedConnectionsFactory()
     pool->updateSharedError(shuffled_pools);
 }
 
-std::vector<Connection *> HedgedConnectionsFactory::getManyConnections(PoolMode pool_mode, AsyncCallback async_callback)
+std::vector<HedgedConnectionsFactory::ConnectionWithIndexPtr> HedgedConnectionsFactory::getManyConnections(PoolMode pool_mode, AsyncCallback async_callback)
 {
     size_t min_entries = skip_unavailable_shards ? 0 : 1;
 
@@ -86,13 +86,13 @@ std::vector<Connection *> HedgedConnectionsFactory::getManyConnections(PoolMode 
         }
     }
 
-    std::vector<Connection *> connections;
+    std::vector<ConnectionWithIndexPtr> connections;
     connections.reserve(max_entries);
-    Connection * connection = nullptr;
 
     /// Try to start establishing connections with max_entries replicas.
     for (size_t i = 0; i != max_entries; ++i)
     {
+        ConnectionWithIndexPtr connection = std::make_shared<ConnectionWithIndex>();
         ++requested_connections_count;
         State state = startNewConnectionImpl(connection);
         if (state == State::READY)
@@ -107,6 +107,7 @@ std::vector<Connection *> HedgedConnectionsFactory::getManyConnections(PoolMode 
     /// TODO: connection as soon as we got it, not even waiting for the others.
     while (connections.size() < max_entries)
     {
+        ConnectionWithIndexPtr connection = std::make_shared<ConnectionWithIndex>();
         /// Set blocking = true to avoid busy-waiting here.
         auto state = waitForReadyConnectionsImpl(/*blocking = */true, connection, async_callback);
         if (state == State::READY)
@@ -132,7 +133,7 @@ std::vector<Connection *> HedgedConnectionsFactory::getManyConnections(PoolMode 
     return connections;
 }
 
-HedgedConnectionsFactory::State HedgedConnectionsFactory::startNewConnection(Connection *& connection_out)
+HedgedConnectionsFactory::State HedgedConnectionsFactory::startNewConnection(ConnectionWithIndexPtr & connection_out)
 {
     ++requested_connections_count;
     State state = startNewConnectionImpl(connection_out);
@@ -143,13 +144,13 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::startNewConnection(Con
     return state;
 }
 
-HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnections(Connection *& connection_out)
+HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnections(ConnectionWithIndexPtr & connection_out)
 {
     AsyncCallback async_callback = {};
     return waitForReadyConnectionsImpl(false, connection_out, async_callback);
 }
 
-HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnectionsImpl(bool blocking, Connection *& connection_out, AsyncCallback & async_callback)
+HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnectionsImpl(bool blocking, ConnectionWithIndexPtr & connection_out, AsyncCallback & async_callback)
 {
     State state = processEpollEvents(blocking, connection_out, async_callback);
     if (state != State::CANNOT_CHOOSE)
@@ -162,7 +163,7 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::waitForReadyConnection
     if (!fallback_to_stale_replicas)
         return State::CANNOT_CHOOSE;
 
-    return setBestUsableReplica(connection_out);
+    return setBestUsableReplica(connection_out->connection);
 }
 
 int HedgedConnectionsFactory::getNextIndex()
@@ -198,24 +199,30 @@ int HedgedConnectionsFactory::getNextIndex()
     return next_index;
 }
 
-HedgedConnectionsFactory::State HedgedConnectionsFactory::startNewConnectionImpl(Connection *& connection_out)
+HedgedConnectionsFactory::State HedgedConnectionsFactory::startNewConnectionImpl(ConnectionWithIndexPtr & connection_out)
 {
     int index;
     State state;
+    Connection * connection = nullptr;
     do
     {
         index = getNextIndex();
         if (index == -1)
             return State::CANNOT_CHOOSE;
 
-        state = resumeConnectionEstablisher(index, connection_out);
+        state = resumeConnectionEstablisher(index, connection);
     }
     while (state == State::CANNOT_CHOOSE);
+
+    assert(connection_out);
+
+    connection_out->connection = connection;
+    connection_out->index_in_pool = shuffled_pools[index].index;
 
     return state;
 }
 
-HedgedConnectionsFactory::State HedgedConnectionsFactory::processEpollEvents(bool blocking, Connection *& connection_out, AsyncCallback & async_callback)
+HedgedConnectionsFactory::State HedgedConnectionsFactory::processEpollEvents(bool blocking, ConnectionWithIndexPtr & connection_out, AsyncCallback & async_callback)
 {
     int event_fd;
     while (!epoll.empty())
@@ -228,7 +235,10 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processEpollEvents(boo
         if (fd_to_replica_index.contains(event_fd))
         {
             int index = fd_to_replica_index[event_fd];
-            State state = resumeConnectionEstablisher(index, connection_out);
+            Connection * connection = nullptr;
+            State state = resumeConnectionEstablisher(index, connection);
+            connection_out->connection = connection;
+            connection_out->index_in_pool = shuffled_pools[index].index;
             if (state == State::NOT_READY)
                 continue;
 
@@ -425,6 +435,12 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::setBestUsableReplica(C
 bool HedgedConnectionsFactory::isTwoLevelAggregationIncompatible(Connection * connection)
 {
     return connection->getServerRevision(timeouts) < DBMS_MIN_REVISION_WITH_CURRENT_AGGREGATION_VARIANT_SELECTION_METHOD;
+}
+
+void HedgedConnectionsFactory::incrementRemoteErrorCountForConnection(size_t index_in_pool)
+{
+    auto index = std::make_shared<int>(index_in_pool);
+    pool->addRemoteError(index);
 }
 
 }
