@@ -253,6 +253,7 @@ HedgedConnectionsFactory::State HedgedConnectionsFactory::processEpollEvents(boo
         {
             int index = timeout_fd_to_replica_index[event_fd];
             replicas[index].change_replica_timeout.reset();
+            ++shuffled_pools[index].slowdown_count;
             ProfileEvents::increment(ProfileEvents::HedgedRequestsChangeReplica);
         }
         else
