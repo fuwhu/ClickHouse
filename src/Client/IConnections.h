@@ -75,6 +75,9 @@ public:
     virtual ~IConnections() = default;
 
     virtual void setAsyncCallback(AsyncCallback) {}
+
+    /// Current replica index in ConnectionPoolWithFailover. -1 if unknown.
+    virtual int getCurrentReplicaIndexInPool() const { return -1; }
 };
 
 }

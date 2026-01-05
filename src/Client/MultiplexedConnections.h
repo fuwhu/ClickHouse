@@ -25,7 +25,7 @@ public:
     MultiplexedConnections(std::shared_ptr<Connection> connection_, ContextPtr context_, const ThrottlerPtr & throttler_);
 
     /// Accepts a vector of connections to replicas of one shard already taken from pool.
-    MultiplexedConnections(std::vector<IConnectionPool::Entry> && connections, ContextPtr context_, const ThrottlerPtr & throttler_);
+    MultiplexedConnections(std::vector<IConnectionPool::Entry> && connections, ContextPtr context_, const ThrottlerPtr & throttler_, std::vector<int> replica_indexes_in_pool_ = {});
 
     void sendScalarsData(Scalars & data) override;
     void sendExternalTablesData(std::vector<ExternalTablesData> & data) override;
@@ -67,6 +67,8 @@ public:
 
     void setAsyncCallback(AsyncCallback async_callback) override;
 
+    int getCurrentReplicaIndexInPool() const override { return current_replica_index_in_pool; }
+
 private:
     Packet receivePacketUnlocked(AsyncCallback async_callback) override;
 
@@ -80,6 +82,7 @@ private:
     {
         Connection * connection = nullptr;
         ConnectionPool::Entry pool_entry;
+        int index_in_pool = -1;
     };
 
     /// Get a replica where you can read the data.
@@ -99,6 +102,7 @@ private:
 
     /// Connection that received last block.
     Connection * current_connection = nullptr;
+    int current_replica_index_in_pool = -1;
     /// Shared connection, may be empty. Used to keep object alive before draining.
     std::shared_ptr<Connection> connection_ptr;
 
