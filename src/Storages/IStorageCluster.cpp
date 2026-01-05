@@ -218,6 +218,7 @@ void ReadFromCluster::initializePipeline(QueryPipelineBuilder & pipeline, const 
         IConnections::ReplicaInfo replica_info{ .number_of_current_replica = replica_index++ };
 
         auto remote_query_executor = std::make_shared<RemoteQueryExecutor>(
+            shard_info.pool,
             std::vector<IConnectionPool::Entry>{try_results.front()},
             query_to_send->formatWithSecretsOneLine(),
             getOutputHeader(),

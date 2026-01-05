@@ -18,6 +18,7 @@
 #include <Interpreters/Cluster.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/InternalTextLogsQueue.h>
+#include <unordered_map>
 #include <IO/ConnectionTimeouts.h>
 #include <Client/ConnectionEstablisher.h>
 #include <Client/MultiplexedConnections.h>
@@ -192,6 +193,7 @@ RemoteQueryExecutor::RemoteQueryExecutor(
 }
 
 RemoteQueryExecutor::RemoteQueryExecutor(
+    const ConnectionPoolWithFailoverPtr & pool,
     std::vector<IConnectionPool::Entry> && connections_,
     const String & query_,
     const Block & header_,
@@ -204,9 +206,11 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     std::optional<Extension> extension_)
     : RemoteQueryExecutor(query_, header_, context_, scalars_, external_tables_, stage_, std::move(query_plan_), extension_)
 {
-    create_connections = [this, connections_, throttler, extension_](AsyncCallback) mutable
+    connection_pool = pool;
+    create_connections = [this, pool, connections_, throttler, extension_](AsyncCallback) mutable
     {
-        auto res = std::make_unique<MultiplexedConnections>(std::move(connections_), context, throttler);
+        auto replica_indexes_in_pool = buildReplicaIndexesInPool(pool, connections_);
+        auto res = std::make_unique<MultiplexedConnections>(std::move(connections_), context, throttler, std::move(replica_indexes_in_pool));
         if (extension_ && extension_->replica_info)
             res->setReplicaInfo(*extension_->replica_info);
         return res;
@@ -273,7 +277,9 @@ RemoteQueryExecutor::RemoteQueryExecutor(
                 timeouts, current_settings, pool_mode, std::move(async_callback), skip_unavailable_endpoints, priority_func);
         }
 
-        auto res = std::make_unique<MultiplexedConnections>(std::move(connection_entries), context, throttler);
+        auto replica_indexes_in_pool = buildReplicaIndexesInPool(pool, connection_entries);
+
+        auto res = std::make_unique<MultiplexedConnections>(std::move(connection_entries), context, throttler, std::move(replica_indexes_in_pool));
         if (extension && extension->replica_info)
             res->setReplicaInfo(*extension->replica_info);
         return res;
@@ -511,14 +517,30 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::read()
         if (was_cancelled)
             return ReadResult(Block());
 
-        auto packet = connections->receivePacket();
-        auto anything = processPacket(std::move(packet));
+        try
+        {
+            auto packet = connections->receivePacket();
+            auto anything = processPacket(std::move(packet));
 
-        if (anything.getType() == ReadResult::Type::Data || anything.getType() == ReadResult::Type::ParallelReplicasToken)
-            return anything;
+            if (anything.getType() == ReadResult::Type::Data || anything.getType() == ReadResult::Type::ParallelReplicasToken)
+                return anything;
 
-        if (got_duplicated_part_uuids)
-            break;
+            if (got_duplicated_part_uuids)
+                break;
+        }
+        catch (Exception & e)
+        {
+            if (e.isRemoteException())
+            {
+                int idx = connections ? connections->getCurrentReplicaIndexInPool() : -1;
+                if (idx != -1 && connection_pool)
+                {
+                    *connected_index = idx;
+                    connection_pool->addRemoteError(connected_index);
+                }
+            }
+            throw;
+        }
     }
 
     return restartQueryWithoutDuplicatedUUIDs();
@@ -599,6 +621,7 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::readAsync()
             /// TODO : add remote error for sync read as well.
             if (e.isRemoteException())
             {
+                *connected_index = connections ? connections->getCurrentReplicaIndexInPool() : -1;
                 if (*connected_index != -1)
                     connection_pool->addRemoteError(connected_index);
             }
@@ -1050,4 +1073,32 @@ bool RemoteQueryExecutor::processParallelReplicaPacketIfAny()
 
     return false;
 }
+
+std::vector<int> RemoteQueryExecutor::buildReplicaIndexesInPool(
+    const ConnectionPoolWithFailoverPtr & pool,
+    const std::vector<IConnectionPool::Entry> & entries)
+{
+    std::vector<int> replica_indexes;
+    if (!pool || entries.empty())
+        return replica_indexes;
+
+    std::unordered_map<String, int> index_by_address;
+    const auto pool_status = pool->getStatus();
+    index_by_address.reserve(pool_status.size());
+    for (size_t i = 0; i < pool_status.size(); ++i)
+    {
+        const auto & pool_ptr = pool_status[i].pool;
+        index_by_address.emplace(pool_ptr->getHost() + ":" + std::to_string(pool_ptr->getPort()), static_cast<int>(i));
+    }
+
+    replica_indexes.reserve(entries.size());
+    for (const auto & entry : entries)
+    {
+        auto it = index_by_address.find(entry->getHost() + ":" + std::to_string(entry->getPort()));
+        replica_indexes.push_back(it == index_by_address.end() ? -1 : it->second);
+    }
+
+    return replica_indexes;
+}
+
 }

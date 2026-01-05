@@ -92,8 +92,9 @@ public:
         QueryProcessingStage::Enum stage_ = QueryProcessingStage::Complete,
         std::optional<Extension> extension_ = std::nullopt);
 
-    /// Accepts several connections already taken from pool.
+    /// Accepts several connections already taken from pool, and the pool itself for error accounting.
     RemoteQueryExecutor(
+        const ConnectionPoolWithFailoverPtr & pool,
         std::vector<IConnectionPool::Entry> && connections_,
         const String & query_,
         const Block & header_,
@@ -361,6 +362,9 @@ private:
 
     /// Process packet for read and return data block if possible.
     ReadResult processPacket(Packet packet);
+
+    std::vector<int> buildReplicaIndexesInPool(
+        const ConnectionPoolWithFailoverPtr & pool, const std::vector<IConnectionPool::Entry> & entries);
 };
 
 }

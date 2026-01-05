@@ -62,7 +62,7 @@ MultiplexedConnections::MultiplexedConnections(
 }
 
 MultiplexedConnections::MultiplexedConnections(
-    std::vector<IConnectionPool::Entry> && connections, ContextPtr context_, const ThrottlerPtr & throttler)
+    std::vector<IConnectionPool::Entry> && connections, ContextPtr context_, const ThrottlerPtr & throttler, std::vector<int> replica_indexes_in_pool_)
     : context(std::move(context_)), settings(context->getSettingsRef())
 {
     /// If we didn't get any connections from pool and getMany() did not throw exceptions, this means that
@@ -70,14 +70,20 @@ MultiplexedConnections::MultiplexedConnections(
     if (connections.empty())
         return;
 
+    if (!replica_indexes_in_pool_.empty() && replica_indexes_in_pool_.size() != connections.size())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "replica_indexes_in_pool size does not match connections size");
+
     replica_states.reserve(connections.size());
-    for (auto & connection : connections)
+    for (size_t index = 0; index < connections.size(); ++index)
     {
+        auto & connection = connections[index];
         connection->setThrottler(throttler);
 
         ReplicaState replica_state;
         replica_state.connection = &*connection;
         replica_state.pool_entry = std::move(connection);
+        if (!replica_indexes_in_pool_.empty())
+            replica_state.index_in_pool = replica_indexes_in_pool_[index];
 
         replica_states.push_back(std::move(replica_state));
     }
@@ -356,6 +362,7 @@ UInt64 MultiplexedConnections::receivePacketTypeUnlocked(AsyncCallback async_cal
 
     ReplicaState & state = getReplicaForReading();
     current_connection = state.connection;
+    current_replica_index_in_pool = state.index_in_pool;
     if (current_connection == nullptr)
         throw Exception(ErrorCodes::NO_AVAILABLE_REPLICA, "No available replica");
 
@@ -386,6 +393,7 @@ Packet MultiplexedConnections::receivePacketUnlocked(AsyncCallback async_callbac
 
     ReplicaState & state = getReplicaForReading();
     current_connection = state.connection;
+    current_replica_index_in_pool = state.index_in_pool;
     if (current_connection == nullptr)
         throw Exception(ErrorCodes::NO_AVAILABLE_REPLICA, "No available replica");
 
