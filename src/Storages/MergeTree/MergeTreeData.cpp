@@ -304,6 +304,7 @@ namespace ErrorCodes
     extern const int LIMIT_EXCEEDED;
     extern const int CANNOT_FORGET_PARTITION;
     extern const int DATA_TYPE_CANNOT_BE_USED_IN_KEY;
+    extern const int DUPLICATE_COLUMN;
 }
 
 static void checkSuspiciousIndices(const ASTFunction * index_function)
@@ -8120,6 +8121,26 @@ void MergeTreeData::checkColumnFilenamesForCollision(const ColumnsDescription & 
 {
     std::unordered_map<String, std::pair<String, String>> stream_name_to_full_name;
     auto columns_list = Nested::collect(columns.getAllPhysical());
+    const auto & implicit_columns_map = getImplicitColumnsMap();
+    auto names = columns_list.getNames();
+    /// Prevent duplicate column names between the modified column and mapv2.
+    for (const auto & item : implicit_columns_map)
+    {
+        const auto & real_implicit_columns = item.second;
+        for (const auto & column_name : real_implicit_columns)
+        {
+            String compare_column_name;
+            if (settings[MergeTreeSetting::replace_long_file_name_to_hash] && column_name.size() > settings[MergeTreeSetting::max_file_name_length])
+                compare_column_name = sipHash128String(column_name);
+            else
+                compare_column_name = column_name;
+            
+            if (std::find(names.begin(), names.end(), compare_column_name) != names.end())
+            {
+                throw Exception(ErrorCodes::DUPLICATE_COLUMN, "Table has collision between implicit column {} and physical column {}", column_name, compare_column_name);
+            }
+        }
+    }
 
     for (const auto & column : columns_list)
     {

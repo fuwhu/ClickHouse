@@ -23,7 +23,7 @@ WHERE table = 'test_mapv2';
 
 ALTER TABLE test_mapv2 ADD COLUMN test_col UInt32;
 
-ALTER TABLE test_mapv2 RENAME COLUMN test_col TO f8fc46b1b59c6e8a8fb40c5951717f83;
+ALTER TABLE test_mapv2 RENAME COLUMN test_col TO f8fc46b1b59c6e8a8fb40c5951717f83; -- { serverError DUPLICATE_COLUMN }
 
 ALTER TABLE test_mapv2 ADD COLUMN f8fc46b1b59c6e8a8fb40c5951717f83 UInt32; -- { serverError DUPLICATE_COLUMN }
 
