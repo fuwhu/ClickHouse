@@ -750,10 +750,12 @@ void MergeTreeDataPartWriterWide::fillDataChecksums(MergeTreeDataPartChecksums &
         const auto & full_stream_name = stream_name_to_full_name.at(stream_name);
         if (stream_name != full_stream_name)
         {
-            checksums_to_remove.insert(full_stream_name + stream->data_file_extension);
-            checksums_to_remove.insert(full_stream_name + stream->marks_file_extension);
+            if (stream_name_to_full_name.find(full_stream_name) == stream_name_to_full_name.end())
+            {
+                checksums_to_remove.insert(full_stream_name + stream->data_file_extension);
+                checksums_to_remove.insert(full_stream_name + stream->marks_file_extension);
+            }
         }
-
         stream->preFinalize();
         stream->addToChecksums(checksums);
     }
