@@ -1,4 +1,5 @@
 ### Table of Contents
+**[ClickHouse release v25.5.10.1-bili-1.0.0, 2025-12-22](#256)**<br/>
 **[ClickHouse release v25.5, 2025-05-22](#255)**<br/>
 **[ClickHouse release v25.4, 2025-04-22](#254)**<br/>
 **[ClickHouse release v25.3 LTS, 2025-03-20](#253)**<br/>
@@ -14,6 +15,27 @@
 **[Changelog for 2017](https://clickhouse.com/docs/whats-new/changelog/2017/)**<br/>
 
 # 2025 Changelog
+
+### <a id="256"></a> ClickHouse release 25.5.10.1-bili-1.0.0, 2025-12-22
+
+#### Added changes from bilibili
+* Add bili version. [#522](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/522) 
+* Function windowFunnel support Array. [#525](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/525)
+* Bloom filter indexes support more data types. [#526](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/526)
+* Add DataPartsReceive service. [#523](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/523)
+* Add function mapExtractKeyMultiLike. [#532](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/532)
+* Add MapV2. [#531](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/531)
+* Add replica control switch. [#533](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/533)
+* Add remote query timeout. [#534](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/534)
+* Add remote error count. [#664](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/664)
+* TTL strategy for parts mover. [#536](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/536)
+* Add function tokenLike. [#538](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/538)
+* Add BidirectionalDictionary. [#539](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/539)
+* Add BSI. [#541](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/541)
+* Too long column name. [#542](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/542)
+* Block number cleaner. [#544](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/544)
+* Unique engine. [#631](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/631)
+* ck-on-iceberg. [#653](https://git.bilibili.co/datacenter/clickhouse/-/merge_requests/653)
 
 ### <a id="255"></a> ClickHouse release 25.5, 2025-05-22. [Presentation](https://presentations.clickhouse.com/2025-release-25.5/), [Video](https://www.youtube.com/watch?v=wxicecqZOuw)
 
