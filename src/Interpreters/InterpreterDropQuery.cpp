@@ -6,6 +6,7 @@
 #include <Interpreters/InterpreterDropQuery.h>
 #include <Interpreters/ExternalDictionariesLoader.h>
 #include <Interpreters/QueryLog.h>
+#include <Interpreters/MetaCentralization/DDLCentralized.h>
 #include <IO/SharedThreadPools.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Parsers/ASTDropQuery.h>
@@ -48,6 +49,8 @@ namespace ErrorCodes
     extern const int INCORRECT_QUERY;
     extern const int TABLE_IS_READ_ONLY;
     extern const int TABLE_NOT_EMPTY;
+    extern const int METADATA_CENTRALIZATION_DDL_DISABLED;
+    extern const int QUERY_IS_PROHIBITED;
 }
 
 namespace ActionLocks
@@ -63,6 +66,71 @@ static DatabasePtr tryGetDatabase(const String & database_name, bool if_exists)
 
 InterpreterDropQuery::InterpreterDropQuery(const ASTPtr & query_ptr_, ContextMutablePtr context_) : WithMutableContext(context_), query_ptr(query_ptr_)
 {
+}
+
+bool InterpreterDropQuery::tryExecuteMetadataCentralizedDrop(ASTDropQuery & drop, bool is_table)
+{
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (!metadata_manager)
+    {
+        LOG_DEBUG(getLogger("InterpreterDropQuery"), "Metadata centralization manager is disabled");
+        return false;
+    }
+
+    auto centralization_config = metadata_manager->getConfig();
+
+    String database_name = drop.getDatabase();
+    if (is_table && database_name.empty())
+        database_name = getContext()->getCurrentDatabase();
+
+    const String table_name = is_table ? drop.getTable() : "";
+    const String entity_description = is_table
+        ? fmt::format("table {}.{}", backQuoteIfNeed(database_name), backQuoteIfNeed(table_name))
+        : fmt::format("database {}", backQuoteIfNeed(database_name));
+
+    if (metadata_manager->isSystemDatabase(database_name))
+    {
+        LOG_DEBUG(
+            getLogger("InterpreterDropQuery"),
+            "Skipping metadata centralization for {} (is_system_database=true)",
+            entity_description);
+        return false;
+    }
+
+    if (drop.kind == ASTDropQuery::Kind::Detach)
+        throw Exception(
+            ErrorCodes::NOT_IMPLEMENTED,
+            "Cannot execute DETACH operation for {}. DETACH operation is not implemented for metadata centralization",
+            entity_description);
+
+    if (!drop.cluster.empty())
+        throw Exception(
+            ErrorCodes::INCORRECT_QUERY,
+            "Cannot execute ON CLUSTER DDL for {}. Distributed DDL operations are not supported when metadata centralization is enabled",
+            entity_description);
+
+    if (!centralization_config.isDDLAllowed())
+        throw Exception(
+            ErrorCodes::METADATA_CENTRALIZATION_DDL_DISABLED,
+            "Cannot drop {}. DDL operations are currently restricted by the metadata centralization policy. "
+            "Please check your metadata centralization configuration",
+            entity_description);
+    
+    if (getContext()->getSettingsRef()[Setting::database_atomic_wait_for_drop_and_detach_synchronously])
+        drop.sync = true;
+
+    if (is_table)
+    {
+        auto ddl_centralized = std::make_unique<DDLCentralized>(getContext());
+        ddl_centralized->executeDropTable(database_name, table_name, drop.if_exists, drop.sync);
+        return true;
+    }
+    else
+    {
+        auto ddl_centralized = std::make_unique<DDLCentralized>(getContext());
+        ddl_centralized->executeDropDatabase(database_name, drop.if_exists, drop.sync);
+        return true;
+    }
 }
 
 BlockIO InterpreterDropQuery::execute()
@@ -81,6 +149,13 @@ BlockIO InterpreterDropQuery::execute()
 BlockIO InterpreterDropQuery::executeSingleDropQuery(const ASTPtr & drop_query_ptr)
 {
     auto & drop = drop_query_ptr->as<ASTDropQuery &>();
+
+    if (drop.table && (drop.kind == ASTDropQuery::Kind::Drop || drop.kind == ASTDropQuery::Kind::Detach))
+    {
+        if (tryExecuteMetadataCentralizedDrop(drop, /*is_table=*/true))
+            return {};
+    }
+
     if (!drop.cluster.empty() && drop.table && !drop.if_empty && !maybeRemoveOnCluster(current_query_ptr, getContext()))
     {
         DDLQueryOnClusterParams params;
@@ -93,6 +168,13 @@ BlockIO InterpreterDropQuery::executeSingleDropQuery(const ASTPtr & drop_query_p
 
     if (drop.table)
         return executeToTable(drop);
+
+    if (drop.database && (drop.kind == ASTDropQuery::Kind::Drop || drop.kind == ASTDropQuery::Kind::Detach))
+    {
+        if (tryExecuteMetadataCentralizedDrop(drop, /*is_table=*/false))
+            return {};
+    }
+
     if (drop.database && !drop.cluster.empty() && !maybeRemoveOnCluster(current_query_ptr, getContext()))
     {
         DDLQueryOnClusterParams params;

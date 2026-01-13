@@ -143,6 +143,8 @@ class S3SettingsByEndpoint;
 class AzureSettingsByEndpoint;
 class IDatabase;
 class DDLWorker;
+class MetadataCentralizationManager;
+using MetadataCentralizationManagerPtr = std::shared_ptr<MetadataCentralizationManager>;
 class ITableFunction;
 using TableFunctionPtr = std::shared_ptr<ITableFunction>;
 class Block;
@@ -1340,6 +1342,9 @@ public:
     bool hasDistributedDDL() const;
     void setDDLWorker(std::unique_ptr<DDLWorker> ddl_worker, const LoadTaskPtrs & startup_after);
     DDLWorker & getDDLWorker() const;
+
+    void setMetadataCentralizationManager(MetadataCentralizationManagerPtr manager);
+    MetadataCentralizationManagerPtr getMetadataCentralizationManager() const;
 
     std::map<String, std::shared_ptr<Cluster>> getClusters() const;
     std::shared_ptr<Cluster> getCluster(const std::string & cluster_name) const;

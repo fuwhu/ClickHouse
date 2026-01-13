@@ -114,6 +114,7 @@
 #include <Common/logger_useful.h>
 #include <Common/RemoteHostFilter.h>
 #include <Common/HTTPHeaderFilter.h>
+#include "Interpreters/MetaCentralization/MetadataCentralizationManager.h"
 #include <Interpreters/SystemLog.h>
 #include <Interpreters/InterpreterSelectQueryAnalyzer.h>
 #include <Interpreters/AsynchronousInsertQueue.h>
@@ -126,6 +127,7 @@
 #include <Interpreters/Lemmatizers.h>
 #include <Interpreters/ClusterDiscovery.h>
 #include <Interpreters/TransactionLog.h>
+#include <Interpreters/MetaCentralization/MetadataConfig.h>
 #include <filesystem>
 #include <re2/re2.h>
 #include <Storages/StorageView.h>
@@ -357,6 +359,7 @@ struct ContextSharedPart : boost::noncopyable
     mutable std::mutex storage_policies_mutex;
     /// Separate mutex for re-initialization of zookeeper session. This operation could take a long time and must not interfere with another operations.
     mutable std::mutex zookeeper_mutex;
+    mutable std::mutex metadata_centralization_mutex;
 
     mutable zkutil::ZooKeeperPtr zookeeper TSA_GUARDED_BY(zookeeper_mutex);                 /// Client for ZooKeeper.
     ConfigurationPtr zookeeper_config TSA_GUARDED_BY(zookeeper_mutex);                      /// Stores zookeeper configs
@@ -506,6 +509,8 @@ struct ContextSharedPart : boost::noncopyable
     MultiVersion<Macros> macros;                            /// Substitutions extracted from config.
     std::unique_ptr<DDLWorker> ddl_worker TSA_GUARDED_BY(mutex); /// Process ddl commands from zk.
     LoadTaskPtr ddl_worker_startup_task;                         /// To postpone `ddl_worker->startup()` after all tables startup
+    mutable MetadataCentralizationManagerPtr metadata_centralization_manager TSA_GUARDED_BY(metadata_centralization_mutex); /// Manager for metadata centralization
+    // mutable std::shared_ptr<MetadataCentralizationManager> metadata_centralization_manager;
     /// Rules for selecting the compression settings, depending on the size of the part.
     mutable std::unique_ptr<CompressionCodecSelector> compression_codec_selector TSA_GUARDED_BY(mutex);
     /// Storage disk chooser for MergeTree engines
@@ -862,6 +867,9 @@ struct ContextSharedPart : boost::noncopyable
 
         LOG_TRACE(log, "Shutting down AccessControl");
         access_control->shutdown();
+
+        if (metadata_centralization_manager)
+            metadata_centralization_manager->shutdown();
 
         {
             std::lock_guard lock(mutex);
@@ -4157,6 +4165,18 @@ DDLWorker & Context::getDDLWorker() const
         throw Exception(ErrorCodes::NO_ELEMENTS_IN_CONFIG, "There is no DistributedDDL configuration in server config");
 
     throw Exception(ErrorCodes::NO_ELEMENTS_IN_CONFIG, "DDL background thread is not initialized");
+}
+
+void Context::setMetadataCentralizationManager(MetadataCentralizationManagerPtr manager)
+{
+    std::lock_guard lock(shared->metadata_centralization_mutex);
+    shared->metadata_centralization_manager = std::move(manager);
+}
+
+MetadataCentralizationManagerPtr Context::getMetadataCentralizationManager() const
+{
+    std::lock_guard lock(shared->metadata_centralization_mutex);
+    return shared->metadata_centralization_manager;
 }
 
 zkutil::ZooKeeperPtr Context::getZooKeeper() const

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <IO/S3Settings.h>
+#include "base/types.h"
 #include "config.h"
 
 #if USE_AWS_S3
@@ -39,6 +40,8 @@ private:
 
     LoggerPtr log = getLogger("ReadBufferFromS3");
 
+    String etag;
+
 public:
     ReadBufferFromS3(
         std::shared_ptr<const S3::Client> client_ptr_,
@@ -75,6 +78,8 @@ public:
     size_t readBigAt(char * to, size_t n, size_t range_begin, const std::function<bool(size_t)> & progress_callback) const override;
 
     bool supportsReadAt() override { return true; }
+
+    String getETag() const { return etag; }
 
 private:
     std::unique_ptr<S3::ReadBufferFromGetObjectResult> initialize(size_t attempt);

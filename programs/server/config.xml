@@ -1469,14 +1469,14 @@
       -->
     <!--
     <compression>
-        <!- - Set of variants. Checked in order. Last matching case wins. If nothing matches, lz4 will be used. - ->
+        <!-- Set of variants. Checked in order. Last matching case wins. If nothing matches, lz4 will be used. -->
         <case>
 
-            <!- - Conditions. All must be satisfied. Some conditions may be omitted. - ->
-            <min_part_size>10000000000</min_part_size>        <!- - Min part size in bytes. - ->
-            <min_part_size_ratio>0.01</min_part_size_ratio>   <!- - Min size of part relative to whole table size. - ->
+            <!-- Conditions. All must be satisfied. Some conditions may be omitted. -->
+            <min_part_size>10000000000</min_part_size>        <!-- Min part size in bytes. -->
+            <min_part_size_ratio>0.01</min_part_size_ratio>   <!-- Min size of part relative to whole table size. -->
 
-            <!- - What compression method to use. - ->
+            <!-- What compression method to use. -->
             <method>zstd</method>
         </case>
     </compression>
@@ -1808,4 +1808,67 @@
 
     <!-- If set true ClickHouse will wait for running queries finish before shutdown. -->
     <!-- <shutdown_wait_unfinished_queries>false</shutdown_wait_unfinished_queries> -->
+
+    <!-- Metadata Centralization Configuration
+         This feature allows ClickHouse to centralize metadata storage in a remote object storage (Boss).
+         All metadata changes (DDL operations) are synchronized across nodes through the centralized manifest.
+    -->
+    <!--
+    <metadata_centralization>
+        <!-- Enable metadata centralization feature -->
+        <enable>false</enable>
+
+        <!-- Allow DDL operations when metadata centralization is enabled -->
+        <enable_ddl>true</enable_ddl>
+
+        <!-- Boss service endpoint (S3-compatible object storage) -->
+        <endpoint>http://boss-service:9000</endpoint>
+
+        <!-- Access credentials for Boss service -->
+        <access_key_id>your_access_key</access_key_id>
+        <secret_access_key>your_secret_key</secret_access_key>
+
+        <!-- Region for Boss service -->
+        <region>uat</region>
+
+        <!-- ZooKeeper path for distributed locks -->
+        <lock_path>/clickhouse/metadata_centralization/locks</lock_path>
+
+        <lock_key>meta_centralized_</lock_key>
+
+        <!-- Distributed lock timeout in milliseconds (for ZooKeeper locks) -->
+        <dist_lock_timeout_ms>30000</dist_lock_timeout_ms>
+
+        <!-- Local lock timeout in milliseconds (for preventing conflicts between DDL tasks, sync tasks, and update tasks) -->
+        <local_lock_timeout_ms>30000</local_lock_timeout_ms>
+
+        <!-- Interval between synchronization of metadata changes with Boss service in seconds -->
+        <sync_interval_seconds>60</sync_interval_seconds>
+
+        <!-- Interval between checking for boss service is available in seconds -->
+        <recovery_interval_seconds>60</recovery_interval_seconds>
+
+        <!-- ZooKeeper cleanup markers path -->
+        <cleanup_markers_path>/clickhouse/metadata_centralization/cleanup_markers</cleanup_markers_path>
+
+        <!-- History cleanup check interval in seconds (default 1 hour) -->
+        <cleanup_interval_seconds>3600</cleanup_interval_seconds>
+
+        <!-- Number of days to retain history files (default 3 days) -->
+        <cleanup_retention_days>3</cleanup_retention_days>
+
+        <!-- Name of the cluster to which the metadata belongs -->
+        <cluster_name>default_cluster</cluster_name>
+
+        <!-- Distributed DDL task timeout in seconds (default 20 seconds) -->
+        <distributed_ddl_task_timeout>20</distributed_ddl_task_timeout>
+
+        <!-- Maximum number of redirects for Boss service (default 10) -->
+        <boss_max_redirects>10</boss_max_redirects>
+
+        <!-- Maximum number of retries for Boss service (default 3) -->
+        <boss_retry_attempts>3</boss_retry_attempts>
+
+    </metadata_centralization>
+    -->
 </clickhouse>

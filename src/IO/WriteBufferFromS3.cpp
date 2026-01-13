@@ -666,7 +666,8 @@ void WriteBufferFromS3::completeMultipartUpload()
 
         if (outcome.IsSuccess())
         {
-            LOG_TRACE(limited_log, "Multipart upload has completed. {}, Parts: {}", getShortLogDetails(), multipart_tags.size());
+            etag = outcome.GetResult().GetETag();
+            LOG_TRACE(limited_log, "Multipart upload has completed. {}, Parts: {}, etag {}", getShortLogDetails(), multipart_tags.size(), etag);
             return;
         }
 
@@ -750,7 +751,8 @@ void WriteBufferFromS3::makeSinglepartUpload(WriteBufferFromS3::PartData && data
 
             if (outcome.IsSuccess())
             {
-                LOG_TRACE(limited_log, "Single part upload has completed. {}, size {}", getShortLogDetails(), content_length);
+                etag = outcome.GetResult().GetETag();
+                LOG_TRACE(limited_log, "Single part upload has completed. {}, size {}, etag {}", getShortLogDetails(), content_length, etag);
                 return;
             }
 
