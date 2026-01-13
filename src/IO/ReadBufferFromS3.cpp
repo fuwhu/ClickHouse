@@ -403,6 +403,8 @@ std::unique_ptr<S3::ReadBufferFromGetObjectResult> ReadBufferFromS3::initialize(
 
     auto read_result = sendRequest(attempt, offset, read_until_position ? std::make_optional(read_until_position - 1) : std::nullopt);
 
+    etag = read_result.GetETag();
+    
     size_t buffer_size = use_external_buffer ? 0 : read_settings.remote_fs_buffer_size;
     return std::make_unique<S3::ReadBufferFromGetObjectResult>(std::move(read_result), buffer_size);
 }

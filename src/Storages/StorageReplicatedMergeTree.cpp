@@ -111,6 +111,7 @@
 #include <Backups/RestorerFromBackup.h>
 
 #include <Common/scope_guard_safe.h>
+#include <Interpreters/MetaCentralization/MetadataCentralizationManager.h>
 #include <IO/SharedThreadPools.h>
 
 #include <boost/algorithm/string/join.hpp>
@@ -583,10 +584,11 @@ StorageReplicatedMergeTree::StorageReplicatedMergeTree(
     has_metadata_in_zookeeper = true;
 
     if (!getDataPartsForInternalUsage().empty())
-        throw Exception(ErrorCodes::INCORRECT_DATA,
-                        "Data directory for table already contains data parts - probably it was unclean DROP table "
-                        "or manual intervention. You must either clear directory by hand "
-                        "or use ATTACH TABLE instead of CREATE TABLE if you need to use that parts.");
+        throw Exception(
+            ErrorCodes::INCORRECT_DATA,
+            "Data directory for table already contains data parts - probably it was unclean DROP table "
+            "or manual intervention. You must either clear directory by hand "
+            "or use ATTACH TABLE instead of CREATE TABLE if you need to use that parts.");
 
     try
     {
@@ -1655,13 +1657,35 @@ bool StorageReplicatedMergeTree::checkTableStructureAttempt(
     Coordination::Stat metadata_stat;
     String metadata_str = zookeeper->get(fs::path(zookeeper_prefix) / "metadata", &metadata_stat);
     auto metadata_from_zk = ReplicatedMergeTreeTableMetadata::parse(metadata_str);
-    bool is_metadata_equal = old_metadata.checkEquals(metadata_from_zk, metadata_snapshot->getColumns(), getStorageID().getNameForLogs(), getContext(), /*check_index_granularity*/ true, strict_check, log.load());
 
     if (metadata_version)
         *metadata_version = metadata_stat.version;
 
     Coordination::Stat columns_stat;
     auto columns_from_zk = ColumnsDescription::parse(zookeeper->get(fs::path(zookeeper_prefix) / "columns", &columns_stat));
+
+    // Check if metadata centralization is enabled
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (metadata_manager)
+    {
+        LOG_DEBUG(log, "Metadata centralization enabled, skipping strict table structure check. "
+                    "Metadata will be synchronized by syncMetadataFromBoss");
+
+        const ColumnsDescription & old_columns = metadata_snapshot->getColumns();
+        if (columns_from_zk == old_columns)
+        {
+            bool is_metadata_equal = old_metadata.checkEquals(metadata_from_zk, metadata_snapshot->getColumns(),
+                                                            getStorageID().getNameForLogs(), getContext(),
+                                                            /*check_index_granularity*/ true, strict_check, log.load());
+            if (is_metadata_equal)
+                return true;
+        }
+
+        LOG_WARNING(log, "Table structure differs from ZooKeeper, will be updated by metadata centralization");
+        return false;
+    }
+
+    bool is_metadata_equal = old_metadata.checkEquals(metadata_from_zk, metadata_snapshot->getColumns(), getStorageID().getNameForLogs(), getContext(), /*check_index_granularity*/ true, strict_check, log.load());
 
     const ColumnsDescription & old_columns = metadata_snapshot->getColumns();
     if (columns_from_zk == old_columns && is_metadata_equal)

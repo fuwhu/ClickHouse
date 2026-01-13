@@ -59,6 +59,7 @@
 #include <Interpreters/GinFilter.h>
 #include <Interpreters/parseColumnsListForTableFunction.h>
 #include <Interpreters/TemporaryReplaceTableName.h>
+#include <Interpreters/MetaCentralization/DDLCentralized.h>
 
 #include <Access/Common/AccessRightsElement.h>
 
@@ -181,6 +182,8 @@ namespace ErrorCodes
     extern const int TOO_MANY_TABLES;
     extern const int TOO_MANY_DATABASES;
     extern const int THERE_IS_NO_COLUMN;
+    extern const int METADATA_CENTRALIZATION_DDL_DISABLED;
+    extern const int QUERY_IS_PROHIBITED;
 }
 
 namespace fs = std::filesystem;
@@ -194,6 +197,69 @@ InterpreterCreateQuery::InterpreterCreateQuery(const ASTPtr & query_ptr_, Contex
 BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
 {
     String database_name = create.getDatabase();
+
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (metadata_manager)
+    {
+        auto centralization_config = metadata_manager->getConfig();
+
+        const bool should_skip_centralization = create.attach || metadata_manager->isSystemDatabase(database_name);
+
+        if (!should_skip_centralization)
+        {
+            if (!create.storage || !create.storage->engine)
+            {
+                if (!create.storage)
+                {
+                    auto storage_ast = std::make_shared<ASTStorage>();
+                    create.set(create.storage, storage_ast);
+                }
+
+                auto engine_ast = std::make_shared<ASTFunction>();
+                engine_ast->name = "Atomic";
+                engine_ast->no_empty_args = true;
+                create.storage->set(create.storage->engine, engine_ast);
+            }
+
+            if (create.storage->engine->name == "Atomic")
+            {
+                if (!create.cluster.empty())
+                    throw Exception(
+                        ErrorCodes::INCORRECT_QUERY,
+                        "Cannot execute ON CLUSTER DDL for database '{}'. Distributed DDL operations are not supported when metadata centralization is enabled",
+                        database_name);
+
+                if (centralization_config.isDDLAllowed())
+                {
+                    auto centralized_ddl_executor = std::make_unique<DDLCentralized>(getContext());
+                    centralized_ddl_executor->executeCreateDatabase(create);
+                    return {};
+                }
+                else
+                    throw Exception(
+                        ErrorCodes::METADATA_CENTRALIZATION_DDL_DISABLED,
+                        "Cannot create database '{}'. DDL operations are currently restricted by the metadata centralization policy. "
+                        "Please check your metadata centralization configuration",
+                        database_name);
+            }
+            else
+            {
+                throw Exception(
+                    ErrorCodes::NOT_IMPLEMENTED,
+                    "Database engine '{}' is not supported when metadata centralization is enabled. "
+                    "Only the Atomic engine is supported.",
+                    create.storage->engine->name);
+            }
+        }
+        else
+            LOG_DEBUG(
+                getLogger("InterpreterCreateQuery"),
+                "Skipping metadata centralization for database '{}' (attach={}, is_system_database=false)",
+                database_name,
+                create.attach);
+    }
+    else
+        LOG_DEBUG(getLogger("InterpreterCreateQuery"), "Metadata centralization manager is disabled");
 
     auto guard = DatabaseCatalog::instance().getDDLGuard(database_name, "");
 
@@ -556,6 +622,62 @@ ASTPtr InterpreterCreateQuery::formatProjections(const ProjectionsDescription & 
         res->children.push_back(projection.definition_ast->clone());
 
     return res;
+}
+
+StorageInMemoryMetadata InterpreterCreateQuery::getMetadataFromCreateQuery(
+      ASTCreateQuery & create,
+      ContextMutablePtr context_)
+{
+    StorageInMemoryMetadata metadata;
+
+    ASTPtr query_ptr = create.shared_from_this();
+    InterpreterCreateQuery interpreter(query_ptr, context_);
+
+    LoadingStrictnessLevel mode = LoadingStrictnessLevel::CREATE;
+    auto properties = interpreter.getTablePropertiesAndNormalizeCreateQuery(create, mode);
+
+    metadata.setColumns(properties.columns);
+    metadata.setSecondaryIndices(properties.indices);
+    metadata.setConstraints(properties.constraints);
+    metadata.setProjections(std::move(properties.projections));
+
+    if (create.storage)
+    {
+        const ASTStorage & storage = *create.storage;
+
+        if (storage.partition_by)
+            metadata.partition_key = KeyDescription::getKeyFromAST(
+                storage.partition_by->ptr(), metadata.columns, context_);
+
+        if (storage.order_by)
+            metadata.sorting_key = KeyDescription::getKeyFromAST(
+                storage.order_by->ptr(), metadata.columns, context_);
+
+        if (storage.primary_key)
+            metadata.primary_key = KeyDescription::getKeyFromAST(
+                storage.primary_key->ptr(), metadata.columns, context_);
+        else if (metadata.sorting_key.definition_ast) {
+            metadata.primary_key = KeyDescription::getKeyFromAST(
+                metadata.sorting_key.definition_ast, metadata.columns, context_);
+            metadata.primary_key.definition_ast = nullptr;
+        }
+
+        if (storage.sample_by)
+            metadata.sampling_key = KeyDescription::getKeyFromAST(
+                storage.sample_by->ptr(), metadata.columns, context_);
+
+        if (storage.ttl_table)
+            metadata.setTableTTLs(TTLTableDescription::getTTLForTableFromAST(
+                storage.ttl_table->ptr(), metadata.columns, context_, metadata.primary_key, false));
+
+        if (storage.settings)
+            metadata.setSettingsChanges(storage.settings->ptr());
+    }
+
+    if (create.comment)
+        metadata.setComment(create.comment->as<ASTLiteral &>().value.safeGet<String>());
+
+    return metadata;
 }
 
 DataTypePtr InterpreterCreateQuery::getColumnType(
@@ -1521,6 +1643,65 @@ BlockIO InterpreterCreateQuery::createTable(ASTCreateQuery & create)
     String current_database = getContext()->getCurrentDatabase();
     auto database_name = create.database ? create.getDatabase() : current_database;
 
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (metadata_manager)
+    {
+        auto centralization_config = metadata_manager->getConfig();
+
+        const bool should_skip_centralization = create.attach || create.temporary || metadata_manager->isSystemDatabase(database_name);
+
+        if (!should_skip_centralization)
+        {
+            if (!create.cluster.empty())
+                throw Exception(
+                    ErrorCodes::INCORRECT_QUERY,
+                    "Cannot execute ON CLUSTER DDL for table {}.{}. Distributed DDL operations are not supported when metadata "
+                    "centralization is enabled",
+                    backQuoteIfNeed(database_name),
+                    backQuoteIfNeed(create.getTable()));
+
+            if (create.is_materialized_view)
+                throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Materialized views are not supported with metadata centralization.");
+
+            if (!create.storage->engine)
+                setDefaultTableEngine(*create.storage, getContext()->getSettingsRef()[Setting::default_table_engine].value);
+
+            /// Throw an exception if the table engine is not Distributed or MergeTreeFamily (MergeTree, ReplicatedMergeTree, ReplicatedAggregatingMergeTree, etc.)
+            String engine_name = create.storage->engine->name;
+            if (!engine_name.ends_with("MergeTree") && engine_name != "Distributed")
+                throw Exception(
+                    ErrorCodes::NOT_IMPLEMENTED,
+                    "Table engine {} is not supported with metadata centralization. Only Distributed and MergeTree family engines are "
+                    "allowed.",
+                    engine_name);
+
+            if (centralization_config.isDDLAllowed())
+            {
+                DDLCentralizedPtr ddl_centralized = std::make_unique<DDLCentralized>(getContext());
+                getTablePropertiesAndNormalizeCreateQuery(create, LoadingStrictnessLevel::CREATE);
+                ddl_centralized->executeCreateTable(create);
+                return {};
+            }
+            else
+                throw Exception(
+                    ErrorCodes::METADATA_CENTRALIZATION_DDL_DISABLED,
+                    "Cannot create table {}.{}. DDL operations are currently restricted by the metadata centralization policy. "
+                    "Please check your metadata centralization configuration",
+                    backQuoteIfNeed(database_name),
+                    backQuoteIfNeed(create.getTable()));
+        }
+        else
+            LOG_DEBUG(
+                getLogger("InterpreterCreateQuery"),
+                "Skipping metadata centralization for table {}.{} (attach={}, temporary={}, is_system_database=false)",
+                backQuoteIfNeed(database_name),
+                backQuoteIfNeed(create.getTable()),
+                create.attach,
+                create.temporary);
+    }
+    else
+        LOG_DEBUG(getLogger("InterpreterCreateQuery"), "Metadata centralization manager is disabled");
+
     bool is_secondary_query = getContext()->getZooKeeperMetadataTransaction() && !getContext()->getZooKeeperMetadataTransaction()->isInitialQuery();
     auto mode = getLoadingStrictnessLevel(create.attach, /*force_attach*/ false, /*has_force_restore_data_flag*/ false, is_secondary_query || is_restore_from_backup);
 
@@ -2341,6 +2522,28 @@ BlockIO InterpreterCreateQuery::execute()
     create.if_not_exists |= getContext()->getSettingsRef()[Setting::create_if_not_exists];
 
     bool is_create_database = create.database && !create.table;
+
+    if (is_create_database && !create.cluster.empty())
+    {
+        MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+        if (metadata_manager)
+        {
+            auto centralization_config = metadata_manager->getConfig();
+
+            String database_name = create.getDatabase();
+            const bool should_skip_centralization = create.attach || metadata_manager->isSystemDatabase(database_name);
+
+            if (!should_skip_centralization)
+            {
+                throw Exception(
+                    ErrorCodes::INCORRECT_QUERY,
+                    "Cannot execute ON CLUSTER DDL for database '{}'. Distributed DDL operations are not supported when "
+                    "metadata centralization is enabled",
+                    database_name);
+            }
+        }
+    }
+
     if (!create.cluster.empty() && !maybeRemoveOnCluster(query_ptr, getContext()))
     {
         if (create.attach_as_replicated.has_value())

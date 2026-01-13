@@ -73,6 +73,8 @@
 #include <Interpreters/loadMetadata.h>
 #include <Interpreters/registerInterpreters.h>
 #include <Interpreters/JIT/CompiledExpressionCache.h>
+#include <Interpreters/MetaCentralization/MetadataCentralizationManager.h>
+#include <Interpreters/MetaCentralization/MetadataConfig.h>
 #include <Access/AccessControl.h>
 #include <Access/ContextAccess.h>
 #include <Access/User.h>
@@ -97,6 +99,7 @@
 #include <Common/Config/ConfigReloader.h>
 #include <Server/HTTPHandlerFactory.h>
 #include <Common/ReplicasReconnector.h>
+#include "Interpreters/Context_fwd.h"
 #include "MetricsTransmitter.h"
 #include <Common/StatusFile.h>
 #include <Server/TCPHandlerFactory.h>
@@ -409,6 +412,7 @@ namespace ErrorCodes
     extern const int NETWORK_ERROR;
     extern const int CORRUPTED_DATA;
     extern const int BAD_ARGUMENTS;
+    extern const int NO_ZOOKEEPER;
 }
 
 
@@ -2429,6 +2433,56 @@ try
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "default_database cannot be empty");
     global_context->setCurrentDatabaseNameInGlobalContext(default_database);
 
+    /// Metadata centralization can be enabled only when metadata_centralization.enable = true and async_load_databases = false.
+    if (config().getBool("metadata_centralization.enable", false))
+    {
+        if (server_settings[ServerSetting::async_load_databases])
+            throw Exception(ErrorCodes::LOGICAL_ERROR,
+                "Metadata centralization cannot be enabled when async_load_databases is true");
+
+        try
+        {
+            const auto & meta_config = MetadataCentralizationConfig::fromConfig(config());
+
+            LOG_INFO(log, "Initializing metadata centralization");
+
+            if (has_zookeeper)
+            {
+                try
+                {
+                    global_context->getZooKeeper();
+                    LOG_INFO(log, "ZooKeeper connection established");
+                }
+                catch (...)
+                {
+                    LOG_ERROR(log, "Failed to connect to ZooKeeper");
+                }
+            } 
+            else
+            {
+                LOG_ERROR(log, "ZooKeeper is not configured, but metadata centralization is enabled");
+                throw Exception(ErrorCodes::NO_ZOOKEEPER, "ZooKeeper is not configured, but metadata centralization is enabled");
+            }
+
+            auto meta_manager = std::make_shared<MetadataCentralizationManager>(meta_config, global_context);
+            global_context->setMetadataCentralizationManager(meta_manager);
+
+            LOG_INFO(log, "Metadata centralization initialized successfully");
+
+        }
+        catch (...)
+        {
+            tryLogCurrentException(log, "Failed to initialize metadata centralization");
+
+            if (config().getBool("metadata_centralization.fail_on_init_error", true))
+            {
+                throw;
+            }
+
+            LOG_WARNING(log, "Metadata centralization initialization failed, continuing with local metadata");
+        }
+    }
+
     LOG_INFO(log, "Loading metadata from {}", path_str);
 
     LoadTaskPtrs load_system_metadata_tasks;
@@ -2497,6 +2551,11 @@ try
         tryLogCurrentException(log, "Caught exception while loading metadata");
         throw;
     }
+
+    // set async_load_databases = false 
+    auto meta_manager = global_context->getMetadataCentralizationManager();
+    if (meta_manager)
+        meta_manager->initializeOnStartup();
 
     bool found_stop_flag = false;
 
@@ -2685,6 +2744,10 @@ try
 
             global_context->setServerCompletelyStarted();
             LOG_INFO(log, "Ready for connections.");
+
+            /// Start metadata synchronization task if metadata centralization is enabled
+            if (meta_manager)
+                meta_manager->startTasks();
         }
 
         startup_watch.stop();

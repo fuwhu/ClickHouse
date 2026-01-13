@@ -51,6 +51,8 @@ public:
     std::string getFileName() const override { return key; }
     void sync() override { next(); }
 
+    const String & getETag() const { return etag; }
+
 private:
     /// Receives response from the server after sending all data.
     void finalizeImpl() override;
@@ -118,6 +120,8 @@ private:
     std::unique_ptr<TaskTracker> task_tracker;
 
     BlobStorageLogWriterPtr blob_log;
+
+    String etag;
 };
 
 }

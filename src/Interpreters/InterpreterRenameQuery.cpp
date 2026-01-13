@@ -9,6 +9,7 @@
 #include <Interpreters/QueryLog.h>
 #include <Access/Common/AccessRightsElement.h>
 #include <Common/typeid_cast.h>
+#include "Interpreters/MetaCentralization/MetadataCentralizationManager.h"
 #include <Core/Settings.h>
 #include <Databases/DatabaseReplicated.h>
 
@@ -36,6 +37,35 @@ InterpreterRenameQuery::InterpreterRenameQuery(const ASTPtr & query_ptr_, Contex
 BlockIO InterpreterRenameQuery::execute()
 {
     const auto & rename = query_ptr->as<const ASTRenameQuery &>();
+
+    auto & database_catalog = DatabaseCatalog::instance();
+
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (metadata_manager)
+    {
+        auto centralization_config = metadata_manager->getConfig();
+
+        for (const auto & elem : rename.getElements())
+        {
+            String database_name = elem.from.database ? elem.from.getDatabase() : getContext()->getCurrentDatabase();
+
+            if (!metadata_manager->isSystemDatabase(database_name))
+            {
+                throw Exception(
+                    ErrorCodes::NOT_IMPLEMENTED,
+                    "Cannot rename database {}. RENAME operation is not implemented for metadata centralization",
+                    database_name);
+            }
+            else
+                LOG_DEBUG(
+                    getLogger("InterpreterRenameQuery"),
+                    "Skipping metadata centralization for rename database {} (is_system_database=false)",
+                    backQuoteIfNeed(database_name));
+        }
+    }
+    else
+        LOG_DEBUG(getLogger("InterpreterRenameQuery"), "Metadata centralization manager is disabled");
+
 
     if (!rename.cluster.empty())
     {
@@ -69,8 +99,6 @@ BlockIO InterpreterRenameQuery::execute()
         table_guards[from];
         table_guards[to];
     }
-
-    auto & database_catalog = DatabaseCatalog::instance();
 
     /// Must do it in consistent order.
     for (auto & table_guard : table_guards)

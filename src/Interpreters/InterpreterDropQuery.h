@@ -48,5 +48,9 @@ private:
     BlockIO executeToDictionary(const String & database_name, const String & dictionary_name, ASTDropQuery::Kind kind, bool if_exists, bool is_temporary, bool no_ddl_lock);
 
     BlockIO executeToTemporaryTable(const String & table_name, ASTDropQuery::Kind kind);
+
+    /// Try to execute drop operation using metadata centralization.
+    /// Returns true if the operation was handled by metadata centralization, false otherwise.
+    bool tryExecuteMetadataCentralizedDrop(ASTDropQuery & drop, bool is_table);
 };
 }

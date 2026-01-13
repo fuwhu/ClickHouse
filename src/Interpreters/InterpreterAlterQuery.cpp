@@ -1,6 +1,7 @@
 #include <Interpreters/ApplyWithSubqueryVisitor.h>
 #include <Interpreters/InterpreterAlterQuery.h>
 #include <Interpreters/InterpreterFactory.h>
+#include <Interpreters/MetaCentralization/DDLCentralized.h>
 
 #include <Access/Common/AccessRightsElement.h>
 #include <Common/typeid_cast.h>
@@ -8,7 +9,9 @@
 #include <Core/ServerSettings.h>
 #include <Databases/DatabaseFactory.h>
 #include <Databases/DatabaseReplicated.h>
+#include <Databases/DatabasesCommon.h>
 #include <Databases/IDatabase.h>
+#include <IO/WriteBufferFromString.h>
 #include <Interpreters/AddDefaultDatabaseVisitor.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/DatabaseCatalog.h>
@@ -41,6 +44,7 @@ namespace Setting
     extern const SettingsBool allow_experimental_statistics;
     extern const SettingsBool fsync_metadata;
     extern const SettingsSeconds lock_acquire_timeout;
+    extern const SettingsBool materialize_ttl_after_modify;
 }
 
 namespace ServerSetting
@@ -58,6 +62,7 @@ namespace ErrorCodes
     extern const int UNKNOWN_TABLE;
     extern const int UNKNOWN_DATABASE;
     extern const int QUERY_IS_PROHIBITED;
+    extern const int METADATA_CENTRALIZATION_DDL_DISABLED;
 }
 
 InterpreterAlterQuery::InterpreterAlterQuery(const ASTPtr & query_ptr_, ContextPtr context_) : WithContext(context_), query_ptr(query_ptr_)
@@ -83,6 +88,90 @@ BlockIO InterpreterAlterQuery::execute()
 
 BlockIO InterpreterAlterQuery::executeToTable(const ASTAlterQuery & alter)
 {
+    MetadataCentralizationManagerPtr metadata_manager = getContext()->getMetadataCentralizationManager();
+    if (metadata_manager)
+    {
+        auto centralization_config = metadata_manager->getConfig();
+
+        String database_name = !alter.getDatabase().empty() ? alter.getDatabase() : getContext()->getCurrentDatabase();
+        if (!alter.getDatabase().empty())
+            query_ptr->as<ASTAlterQuery &>().setDatabase(database_name);
+
+        if (!metadata_manager->isSystemDatabase(database_name))
+        {
+            if (!alter.cluster.empty())
+                throw Exception(
+                    ErrorCodes::INCORRECT_QUERY,
+                    "Cannot execute ON CLUSTER DDL for table {}.{}. Distributed DDL operations are not supported when metadata "
+                    "centralization is enabled",
+                    backQuoteIfNeed(database_name),
+                    backQuoteIfNeed(alter.getTable()));
+
+            if (centralization_config.isDDLAllowed())
+            {
+                getContext()->checkAccess(getRequiredAccess());
+
+                AlterCommands alter_commands;
+                for (const auto & child : alter.command_list->children)
+                {
+                    auto * command_ast = child->as<ASTAlterCommand>();
+                    if (auto alter_command = AlterCommand::parse(command_ast))
+                    {
+                        if (command_ast->type != ASTAlterCommand::ADD_COLUMN && command_ast->type != ASTAlterCommand::ADD_INDEX
+                            && command_ast->type != ASTAlterCommand::ADD_PROJECTION && command_ast->type != ASTAlterCommand::MODIFY_SETTING
+                            && command_ast->type != ASTAlterCommand::MODIFY_TTL)
+                        {
+                            throw Exception(
+                                ErrorCodes::NOT_IMPLEMENTED,
+                                "Cannot execute ALTER operation of type '{}' when metadata centralization is enabled. "
+                                "Only ADD COLUMN, ADD INDEX, ADD PROJECTION, MODIFY SETTING and MODIFY TTL operations are supported.",
+                                command_ast->type);
+                        }
+
+                        if (command_ast->type == ASTAlterCommand::MODIFY_TTL
+                            && getContext()->getSettingsRef()[Setting::materialize_ttl_after_modify])
+                            throw Exception(
+                                ErrorCodes::INCORRECT_QUERY,
+                                "MODIFY TTL operations that trigger mutations are not supported when metadata centralization is "
+                                "enabled.");
+
+                        alter_commands.emplace_back(std::move(*alter_command));
+                    }
+                }
+
+                if (!alter_commands.empty())
+                {
+                    DDLCentralizedPtr ddl_centralized = std::make_unique<DDLCentralized>(getContext());
+                    ddl_centralized->executeAlterTable(database_name, alter.getTable(), alter_commands);
+                    return {};
+                }
+                else
+                {
+                    LOG_WARNING(
+                        getLogger("InterpreterAlterQuery"),
+                        "Metadata centralization: no alter commands found for table {}.{}",
+                        backQuoteIfNeed(database_name),
+                        backQuoteIfNeed(alter.getTable()));
+                }
+            }
+            else
+                throw Exception(
+                    ErrorCodes::METADATA_CENTRALIZATION_DDL_DISABLED,
+                    "Cannot alter table {}.{}. DDL operations are currently restricted by the metadata centralization policy. "
+                    "Please check your metadata centralization configuration",
+                    backQuoteIfNeed(database_name),
+                    backQuoteIfNeed(alter.getTable()));
+        }
+        else
+            LOG_DEBUG(
+                getLogger("InterpreterAlterQuery"),
+                "Skipping metadata centralization for table {}.{} (is_system_database=false)",
+                backQuoteIfNeed(database_name),
+                backQuoteIfNeed(alter.getTable()));
+    }
+    else
+        LOG_DEBUG(getLogger("InterpreterAlterQuery"), "Metadata centralization manager is disabled");
+
     ASTSelectWithUnionQuery * modify_query = nullptr;
 
     for (auto & child : alter.command_list->children)

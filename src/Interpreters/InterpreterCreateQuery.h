@@ -40,6 +40,7 @@ public:
     static ASTPtr formatIndices(const IndicesDescription & indices);
     static ASTPtr formatConstraints(const ConstraintsDescription & constraints);
     static ASTPtr formatProjections(const ProjectionsDescription & projections);
+    static StorageInMemoryMetadata getMetadataFromCreateQuery(ASTCreateQuery & create, ContextMutablePtr context_);
 
     void setForceRestoreData(bool has_force_restore_data_flag_)
     {
