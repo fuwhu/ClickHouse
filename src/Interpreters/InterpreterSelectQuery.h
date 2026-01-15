@@ -231,6 +231,8 @@ private:
 
     /// List of columns to read to execute the query.
     Names required_columns;
+    RequiredWhereColumns required_where_columns;
+    Names required_group_by_columns;
     /// Structure of query source (table, subquery, etc).
     Block source_header;
 

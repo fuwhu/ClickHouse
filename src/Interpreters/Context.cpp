@@ -2193,7 +2193,9 @@ bool Context::hasScalar(const String & name) const
 void Context::addQueryAccessInfo(
     const String & quoted_database_name,
     const String & full_quoted_table_name,
-    const Names & column_names)
+    const Names & column_names,
+    const std::map<std::string, std::set<std::string>> & where_column_names,
+    const Names & group_by_column_names)
 {
     if (isGlobalContext())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Global context cannot have query access info");
@@ -2204,6 +2206,31 @@ void Context::addQueryAccessInfo(
 
     for (const auto & column_name : column_names)
         query_access_info->columns.emplace(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+
+    auto equality_it = where_column_names.find("equality");
+    if (equality_it != where_column_names.end())
+    {
+        for (const auto & column_name : equality_it->second)
+            query_access_info->where_columns["equality"].insert(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+    }
+
+    auto range_it = where_column_names.find("range");
+    if (range_it != where_column_names.end())
+    {
+        for (const auto & column_name : range_it->second)
+            query_access_info->where_columns["range"].insert(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+    }
+
+    auto other_it = where_column_names.find("other");
+    if (other_it != where_column_names.end())
+    {
+        for (const auto & column_name : other_it->second)
+            query_access_info->where_columns["other"].insert(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+    }
+
+    for (const auto & column_name : group_by_column_names)
+        query_access_info->group_by_columns.emplace(full_quoted_table_name + "." + backQuoteIfNeed(column_name));
+
 }
 
 void Context::addQueryAccessInfo(const Names & partition_names)

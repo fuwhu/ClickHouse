@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <ostream>
 #include <optional>
 
@@ -33,6 +34,8 @@ struct RequiredSourceColumnsData
     NameSet complex_aliases; /// aliases to functions results: they are not required cause calculated by query itself
     NameSet masked_columns;  /// columns names masked by function aliases: we still need them in required columns
     NameSet array_join_columns; /// Tech debt: we exclude ArrayJoin columns from general logic cause they have own logic outside
+    std::map<String, std::set<String>> where_columns;
+    std::set<String> group_by_columns;
 
     bool has_table_join = false;
     bool has_array_join = false;
@@ -41,6 +44,8 @@ struct RequiredSourceColumnsData
     void addColumnIdentifier(const ASTIdentifier & node);
     bool addArrayJoinAliasIfAny(const IAST & ast);
     void addArrayJoinIdentifier(const ASTIdentifier & node);
+    void addWhereCondition(const String & type, const String & column);
+    void addGroupByColumn(const String & column);
 
     NameSet requiredColumns() const;
     size_t nameInclusion(const String & name) const;

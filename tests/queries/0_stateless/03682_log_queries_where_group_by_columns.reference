@@ -1,0 +1,85 @@
+1	alice	1	20
+1	alice	1	20
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1
+1
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	1	20
+1	alice	1	20
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1
+1
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+1	alice	20	2024-05-27	north
+2	bob	25	2024-05-28	south
+3	charlie	20	2024-05-29	north
+03682_where_group_by_columns_000	{}	[]
+03682_where_group_by_columns_001	{}	[]
+03682_where_group_by_columns_002	{}	[]
+03682_where_group_by_columns_003	{}	[]
+03682_where_group_by_columns_004	{}	[]
+03682_where_group_by_columns_005	{}	[]
+03682_where_group_by_columns_006	{'equality':['test_where_group_by_columns.left.age','test_where_group_by_columns.left.id'],'range':['test_where_group_by_columns.left.age','test_where_group_by_columns.left.log_date'],'other':['test_where_group_by_columns.left.name']}	['test_where_group_by_columns.left.id','test_where_group_by_columns.left.name']
+03682_where_group_by_columns_007	{}	[]
+03682_where_group_by_columns_008	{'range':['test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name']}	[]
+03682_where_group_by_columns_009	{}	[]
+03682_where_group_by_columns_010	{'range':['test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name']}	['test_where_group_by_columns.left.age','test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name','test_where_group_by_columns.left.region']
+03682_where_group_by_columns_011	{}	[]
+03682_where_group_by_columns_012	{'equality':['test_where_group_by_columns.left.age'],'range':['test_where_group_by_columns.left.log_date','test_where_group_by_columns.right.age']}	['test_where_group_by_columns.left.id','test_where_group_by_columns.left.name']
+03682_where_group_by_columns_013	{}	[]
+03682_where_group_by_columns_014	{}	[]
+03682_where_group_by_columns_015	{}	[]
+03682_where_group_by_columns_016	{}	[]
+03682_where_group_by_columns_017	{}	[]
+03682_where_group_by_columns_018	{'equality':['test_where_group_by_columns.left.age','test_where_group_by_columns.left.id'],'range':['test_where_group_by_columns.left.age','test_where_group_by_columns.left.log_date'],'other':['test_where_group_by_columns.left.name']}	['test_where_group_by_columns.left.id','test_where_group_by_columns.left.name']
+03682_where_group_by_columns_018	{'equality':['test_where_group_by_columns.left_all.age','test_where_group_by_columns.left_all.id'],'range':['test_where_group_by_columns.left_all.age','test_where_group_by_columns.left_all.log_date'],'other':['test_where_group_by_columns.left_all.name']}	['test_where_group_by_columns.left_all.id','test_where_group_by_columns.left_all.name']
+03682_where_group_by_columns_019	{}	[]
+03682_where_group_by_columns_019	{}	[]
+03682_where_group_by_columns_020	{'range':['test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name']}	[]
+03682_where_group_by_columns_020	{'range':['test_where_group_by_columns.left_all.id','test_where_group_by_columns.left_all.log_date','test_where_group_by_columns.left_all.name']}	[]
+03682_where_group_by_columns_021	{}	[]
+03682_where_group_by_columns_021	{}	[]
+03682_where_group_by_columns_022	{'range':['test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name']}	['test_where_group_by_columns.left.age','test_where_group_by_columns.left.id','test_where_group_by_columns.left.log_date','test_where_group_by_columns.left.name','test_where_group_by_columns.left.region']
+03682_where_group_by_columns_022	{'range':['test_where_group_by_columns.left_all.id','test_where_group_by_columns.left_all.log_date','test_where_group_by_columns.left_all.name']}	['test_where_group_by_columns.left_all.age','test_where_group_by_columns.left_all.id','test_where_group_by_columns.left_all.log_date','test_where_group_by_columns.left_all.name','test_where_group_by_columns.left_all.region']
+03682_where_group_by_columns_023	{}	[]
+03682_where_group_by_columns_023	{}	[]
+03682_where_group_by_columns_024	{'equality':['test_where_group_by_columns.left.age'],'range':['test_where_group_by_columns.left.log_date']}	['test_where_group_by_columns.left.id','test_where_group_by_columns.left.name']
+03682_where_group_by_columns_024	{'range':['test_where_group_by_columns.right.age']}	[]
+03682_where_group_by_columns_024	{'equality':['test_where_group_by_columns.left_all.age'],'range':['test_where_group_by_columns.left_all.log_date','test_where_group_by_columns.right_all.age']}	['test_where_group_by_columns.left_all.id','test_where_group_by_columns.left_all.name']
+03682_where_group_by_columns_025	{}	[]
+03682_where_group_by_columns_025	{}	[]
+03682_where_group_by_columns_025	{}	[]
+03682_where_group_by_columns_026	{}	[]
+03682_where_group_by_columns_026	{}	[]
+03682_where_group_by_columns_027	{}	[]
+03682_where_group_by_columns_027	{}	[]
+03682_where_group_by_columns_028	{}	[]
