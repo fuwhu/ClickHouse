@@ -544,7 +544,7 @@ Chain buildPushingToViewsChain(
                 context->getQueryContext()->addQueryAccessInfo(
                     backQuoteIfNeed(view_id.getDatabaseName()),
                     views_data->views.back().runtime_stats->target_name,
-                    /*column_names=*/ {});
+                    /*column_names=*/ {}, /*where_column_names=*/ {}, /*group_by_column_names=*/{});
 
                 context->getQueryContext()->addViewAccessInfo(view_id.getFullTableName());
             }

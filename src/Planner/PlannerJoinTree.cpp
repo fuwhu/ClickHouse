@@ -1200,7 +1200,7 @@ JoinTreeQueryPlan buildQueryPlanForTableExpression(QueryTreeNodePtr table_expres
                     query_context->getQueryContext()->addQueryAccessInfo(
                         backQuoteIfNeed(local_storage_id.getDatabaseName()),
                         local_storage_id.getFullTableName(),
-                        columns_names);
+                        columns_names, /*where_column_names=*/ {}, /*group_by_column_names=*/{});
                 }
             }
 
@@ -1262,6 +1262,7 @@ JoinTreeQueryPlan buildQueryPlanForTableExpression(QueryTreeNodePtr table_expres
 
             auto subquery_options = select_query_options.subquery();
             Planner subquery_planner(table_expression, subquery_options, subquery_planner_context);
+
             /// Propagate storage limits to subquery
             subquery_planner.addStorageLimits(*select_query_info.storage_limits);
             subquery_planner.buildQueryPlanIfNeeded();
