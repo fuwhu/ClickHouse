@@ -60,7 +60,7 @@ done
 
 echo "Running clickhouse-test..."
 
-./tests/clickhouse-test -j 40 create alter group \
+./tests/clickhouse-test -j 40 create alter group 01600_log_queries_with_extensive_info 03682_log_queries_where_group_by_columns \
     --skip s3 \
     02228_merge_tree_insert_memory_usage \
     02285_executable_user_defined_function_group_by \

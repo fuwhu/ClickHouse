@@ -45,6 +45,16 @@ void RequiredSourceColumnsData::addArrayJoinIdentifier(const ASTIdentifier & nod
     array_join_columns.insert(node.name());
 }
 
+void RequiredSourceColumnsData::addWhereCondition(const String & type, const String & column)
+{
+    where_columns[type].insert(column);
+}
+
+void RequiredSourceColumnsData::addGroupByColumn(const String & column)
+{
+    group_by_columns.insert(column);
+}
+
 size_t RequiredSourceColumnsData::nameInclusion(const String & name) const
 {
     auto it = required_names.find(name);

@@ -885,6 +885,8 @@ InterpreterSelectQuery::InterpreterSelectQuery(
         }
 
         required_columns = syntax_analyzer_result->requiredSourceColumns();
+        required_where_columns = syntax_analyzer_result->required_where_columns;
+        required_group_by_columns = syntax_analyzer_result->required_group_by_columns;
 
         if (storage)
         {
@@ -2737,7 +2739,9 @@ void InterpreterSelectQuery::executeFetchColumns(QueryProcessingStage::Enum proc
             context->getQueryContext()->addQueryAccessInfo(
                 backQuoteIfNeed(local_storage_id.getDatabaseName()),
                 local_storage_id.getFullTableName(),
-                required_columns);
+                required_columns,
+                required_where_columns,
+                required_group_by_columns);
         }
 
         /// Create step which reads from empty source if storage has no data.

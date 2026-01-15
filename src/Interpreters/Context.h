@@ -440,6 +440,8 @@ public:
             databases = rhs.databases;
             tables = rhs.tables;
             columns = rhs.columns;
+            where_columns = rhs.where_columns;
+            group_by_columns = rhs.group_by_columns;
             partitions = rhs.partitions;
             projections = rhs.projections;
             views = rhs.views;
@@ -460,6 +462,8 @@ public:
             std::swap(databases, rhs.databases);
             std::swap(tables, rhs.tables);
             std::swap(columns, rhs.columns);
+            std::swap(where_columns, rhs.where_columns);
+            std::swap(group_by_columns, rhs.group_by_columns);
             std::swap(partitions, rhs.partitions);
             std::swap(projections, rhs.projections);
             std::swap(views, rhs.views);
@@ -470,6 +474,8 @@ public:
         std::set<std::string> databases TSA_GUARDED_BY(mutex){};
         std::set<std::string> tables TSA_GUARDED_BY(mutex){};
         std::set<std::string> columns TSA_GUARDED_BY(mutex){};
+        std::map<std::string, std::set<std::string>> where_columns TSA_GUARDED_BY(mutex){};
+        std::set<std::string> group_by_columns TSA_GUARDED_BY(mutex){};
         std::set<std::string> partitions TSA_GUARDED_BY(mutex){};
         std::set<std::string> projections TSA_GUARDED_BY(mutex){};
         std::set<std::string> views TSA_GUARDED_BY(mutex){};
@@ -925,7 +931,9 @@ public:
     void addQueryAccessInfo(
         const String & quoted_database_name,
         const String & full_quoted_table_name,
-        const Names & column_names);
+        const Names & column_names,
+        const std::map<std::string, std::set<std::string>> & where_column_names,
+        const Names & group_by_column_names);
 
     void addQueryAccessInfo(const Names & partition_names);
     void addViewAccessInfo(const String & view_name);
