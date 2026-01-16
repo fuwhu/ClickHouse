@@ -87,8 +87,7 @@ public:
     /// Check access right, validate definer statement and replace `CURRENT USER` with actual name.
     static void processSQLSecurityOption(
         ContextPtr context_, ASTSQLSecurity & sql_security, bool is_materialized_view = false, bool skip_check_permissions = false);
-
-private:
+    
     struct TableProperties
     {
         ColumnsDescription columns;
@@ -98,11 +97,14 @@ private:
         bool columns_inferred_from_select_query = false;
     };
 
+    /// Calculate list of columns, constraints, indices, etc... of table. Rewrite query in canonical way.
+    TableProperties getTablePropertiesAndNormalizeCreateQuery(ASTCreateQuery & create, LoadingStrictnessLevel mode) const;
+
+private:
+    
     BlockIO createDatabase(ASTCreateQuery & create);
     BlockIO createTable(ASTCreateQuery & create);
 
-    /// Calculate list of columns, constraints, indices, etc... of table. Rewrite query in canonical way.
-    TableProperties getTablePropertiesAndNormalizeCreateQuery(ASTCreateQuery & create, LoadingStrictnessLevel mode) const;
     void validateTableStructure(const ASTCreateQuery & create, const TableProperties & properties) const;
     void validateMaterializedViewColumnsAndEngine(const ASTCreateQuery & create, const TableProperties & properties, const DatabasePtr & database);
     void setEngine(ASTCreateQuery & create) const;

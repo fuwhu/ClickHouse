@@ -240,6 +240,27 @@ class TableCreator:
         logger.info(f"Creating ReplicatedMergeTree table {database}.{table}")
         node.query(query)
 
+    @staticmethod
+    def create_system_distributed_table(node, database: str, table: str, logic_cluster: str) -> None:
+        """Create a system distributed table."""
+        query = f"""
+            CREATE TABLE {database}.{table}
+            AS system.query_log
+            ENGINE = Distributed('{logic_cluster}', system, query_log, rand())
+        """
+        logger.info(f"Creating System Distributed table {database}.{table}")
+        node.query(query)
+
+    @staticmethod
+    def create_as_table(node, database: str, local_table: str, dest_table: str) -> None:
+        """Create a MergeTree table."""
+        query = f"""
+            CREATE TABLE {database}.{dest_table}
+            AS {database}.{local_table}
+        """
+        logger.info(f"Creating MergeTree table {database}.{dest_table}")
+        node.query(query)
+
 
 @pytest.fixture(scope="module")
 def cluster():
@@ -414,15 +435,21 @@ def test_mergetree_table_operations(cluster):
 
     result = node3.query("SELECT count() FROM test_db_v1.test_tb_v1")
     assert "6" in result, f"Expected 6 rows, got {result}"
+
+    # 12. Create as table
+    creator.create_as_table(node1, "test_db_v1", "test_tb_v1_local", "test_tb_v1_as_local")
+    helper.wait_for_sync()
+    helper.verify_table_count(cluster, "test_db_v1", 3)
     
-    # 12. Drop tables
+    # 13. Drop tables
     logger.info("Dropping tables")
     node1.query("DROP TABLE IF EXISTS test_db_v1.test_tb_v1_local SYNC")
     node1.query("DROP TABLE IF EXISTS test_db_v1.test_tb_v1 SYNC")
+    node1.query("DROP TABLE IF EXISTS test_db_v1.test_tb_v1_as_local SYNC")
     helper.wait_for_sync()
     
     helper.verify_tables_dropped(
-        cluster, "test_db_v1", ["test_tb_v1_local", "test_tb_v1"]
+        cluster, "test_db_v1", ["test_tb_v1_local", "test_tb_v1", "test_tb_v1_as_local"]
     )
     
     logger.info("MergeTree table operations test completed successfully")
@@ -580,8 +607,15 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.wait_for_sync()
     
     helper.verify_table_count(cluster, "test_db_v2", 3)
+
+    # 12. Create system distiributed table
+    creator.create_system_distributed_table(node1, "test_db_v2", "query_log_all", "test_meta_cetra_admin")
+
+    helper.wait_for_sync()
     
-    # 12. Drop database
+    helper.verify_table_count(cluster, "test_db_v2", 4)
+    
+    # 13. Drop database
     logger.info("Dropping database test_db_v2")
     node1.query("DROP DATABASE IF EXISTS test_db_v2 sync")
     helper.wait_for_sync()

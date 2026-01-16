@@ -755,6 +755,22 @@ DDLCentralized::TableUploadInfo DDLCentralized::prepareTableForUpload(
     const String & table_name,
     ASTCreateQuery & create)
 {
+    if (!create.as_table.empty())
+    {
+        ContextMutablePtr mutable_context = std::const_pointer_cast<Context>(getContext());
+        InterpreterCreateQuery(create.shared_from_this(), mutable_context)
+            .getTablePropertiesAndNormalizeCreateQuery(create, LoadingStrictnessLevel::CREATE);
+        
+        /// Throw an exception if the table engine is not Distributed or MergeTreeFamily (MergeTree, ReplicatedMergeTree, ReplicatedAggregatingMergeTree, etc.)
+        String engine_name = create.storage->engine->name;
+        if (!engine_name.ends_with("MergeTree") && engine_name != "Distributed")
+            throw Exception(
+                ErrorCodes::NOT_IMPLEMENTED,
+                "Table engine {} is not supported with metadata centralization. Only Distributed and MergeTree family engines are "
+                "allowed.",
+                engine_name);
+    }
+
     auto database = DatabaseCatalog::instance().getDatabase(database_name);
     UUID database_uuid = database->getUUID();
 

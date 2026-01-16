@@ -284,6 +284,39 @@ def test_alter_table_modify_ttl_with_mutation_fails(cluster):
     assert "MODIFY TTL operations that trigger mutations are not supported when metadata centralization is enabled" in str(exc_info.value)
     logger.info("ALTER TABLE MODIFY TTL WITH MUTATION correctly rejected")
 
+def test_create_lazy_database_fails(cluster):
+    """Test that CREATE Lazy DATABASE is not supported."""
+    node1 = cluster.instances["node1"]
+
+    with pytest.raises(QueryRuntimeException) as exc_info:
+        node1.query("CREATE DATABASE testlazy ENGINE = Lazy(5)")
+
+    assert "NOT_IMPLEMENTED" in str(exc_info.value) and "Code: 48" in str(exc_info.value)
+    assert "Database engine 'Lazy' is not supported when metadata centralization is enabled. Only the Atomic engine is supported" in str(exc_info.value)
+    logger.info("CREATE Lazy DATABASE correctly rejected")
+
+def test_create_materialized_view_fails(cluster):
+    """Test that CREATE MATERIALIZED VIEW is not supported."""
+    node1 = cluster.instances["node1"]
+
+    with pytest.raises(QueryRuntimeException) as exc_info:
+        node1.query("CREATE MATERIALIZED VIEW IF NOT EXISTS test_db_v1.test_tb_v1_mv ENGINE = SummingMergeTree PARTITION BY dt ORDER BY name SETTINGS index_granularity = 8192, storage_policy = 'hot_and_cold' AS SELECT toDate(dt) as dt, name, count() AS visit, sum(id) AS sum_id FROM test_db_v1.test_tb_v1 GROUP BY dt,name")
+
+    assert "NOT_IMPLEMENTED" in str(exc_info.value) and "Code: 48" in str(exc_info.value)
+    assert "Materialized views are not supported with metadata centralization" in str(exc_info.value)
+    logger.info("CREATE MATERIALIZED VIEW correctly rejected")
+
+def test_create_dictionary_fails(cluster):
+    """Test that CREATE DICTIONARY is not supported."""
+    
+    node1 = cluster.instances["node1"]
+
+    with pytest.raises(QueryRuntimeException) as exc_info:
+        node1.query("CREATE DICTIONARY test_db_v1.dict_app_id (`app_id` Int64 DEFAULT 0, `app_name` String DEFAULT '') PRIMARY KEY app_id SOURCE(MYSQL(PORT 3802 USER 'test_user' PASSWORD 'xxxxx' REPLICA (HOST 'xxx.com.co' PRIORITY 1) DB 'db_v1' TABLE 'table_v1' INVALIDATE_QUERY 'select max(mtime)')) LIFETIME(MIN 3600 MAX 4000) LAYOUT(HASHED())")
+
+    assert "NOT_IMPLEMENTED" in str(exc_info.value) and "Code: 48" in str(exc_info.value)
+    assert "CREATE TABLE queries without an explicit column list or CREATE TABLE AS are not supported when metadata centralization is enabled" in str(exc_info.value)
+    logger.info("CREATE TABLE DICTIONARY correctly rejected")
 
 # ==================== Allowed Operations Tests ====================
 
