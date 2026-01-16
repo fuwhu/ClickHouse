@@ -1663,22 +1663,32 @@ BlockIO InterpreterCreateQuery::createTable(ASTCreateQuery & create)
             if (create.is_materialized_view)
                 throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Materialized views are not supported with metadata centralization.");
 
-            if (!create.storage->engine)
-                setDefaultTableEngine(*create.storage, getContext()->getSettingsRef()[Setting::default_table_engine].value);
-
-            /// Throw an exception if the table engine is not Distributed or MergeTreeFamily (MergeTree, ReplicatedMergeTree, ReplicatedAggregatingMergeTree, etc.)
-            String engine_name = create.storage->engine->name;
-            if (!engine_name.ends_with("MergeTree") && engine_name != "Distributed")
+            if (create.columns_list || !create.as_table.empty())
+            {
+                if (create.columns_list)
+                    getTablePropertiesAndNormalizeCreateQuery(create, LoadingStrictnessLevel::CREATE);
+            }
+            else
                 throw Exception(
                     ErrorCodes::NOT_IMPLEMENTED,
-                    "Table engine {} is not supported with metadata centralization. Only Distributed and MergeTree family engines are "
-                    "allowed.",
-                    engine_name);
+                    "CREATE TABLE queries without an explicit column list or CREATE TABLE AS are not supported when metadata centralization is enabled."
+                );
+
+            if (create.storage && create.storage->engine)
+            {
+                /// Throw an exception if the table engine is not Distributed or MergeTreeFamily (MergeTree, ReplicatedMergeTree, ReplicatedAggregatingMergeTree, etc.)
+                String engine_name = create.storage->engine->name;
+                if (!engine_name.ends_with("MergeTree") && engine_name != "Distributed")
+                    throw Exception(
+                        ErrorCodes::NOT_IMPLEMENTED,
+                        "Table engine {} is not supported with metadata centralization. Only Distributed and MergeTree family engines are "
+                        "allowed.",
+                        engine_name);
+            }
 
             if (centralization_config.isDDLAllowed())
             {
                 DDLCentralizedPtr ddl_centralized = std::make_unique<DDLCentralized>(getContext());
-                getTablePropertiesAndNormalizeCreateQuery(create, LoadingStrictnessLevel::CREATE);
                 ddl_centralized->executeCreateTable(create);
                 return {};
             }
