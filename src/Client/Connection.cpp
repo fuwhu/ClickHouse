@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <memory>
+#include <string_view>
 #include <Poco/Net/NetException.h>
 #include <Core/Defines.h>
 #include <Core/Settings.h>
@@ -866,27 +867,40 @@ void Connection::sendQuery(
     if (settings)
     {
         std::optional<Settings> modified_settings;
-        const Settings * settings_to_send = settings;
-        if (!settings_from_server.empty())
+
+        auto reset_setting = [&](std::string_view name)
         {
-            /// Don't send settings that we got from the server in the first place.
-            modified_settings.emplace(*settings);
-            for (const SettingChange & change : settings_from_server)
-            {
-                Field value;
-                if (settings->tryGet(change.name, value) && value == change.value)
-                {
-                    // Mark as unchanged so it's not sent.
-                    modified_settings->setDefaultValue(change.name);
-                    chassert(!modified_settings->isChanged(change.name));
-                }
+            if (!modified_settings) {
+                modified_settings.emplace(*settings);
             }
-            settings_to_send = &*modified_settings;
+            modified_settings->setDefaultValue(name);
+        };
+
+        /// allow_experimental_analyzer appeared in 22.10, older servers treat it as unknown.
+        if (settings->isChanged("allow_experimental_analyzer")
+                && (server_version_major < 22 || (server_version_major == 22 && server_version_minor < 10)))
+        {
+            reset_setting("allow_experimental_analyzer");
         }
 
-        auto settings_format = (server_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS) ? SettingsWriteFormat::STRINGS_WITH_FLAGS
-                                                                                                          : SettingsWriteFormat::BINARY;
-        settings_to_send->write(*out, settings_format);
+        /// Don't send settings that we got from the server in the first place.
+        for (const SettingChange & change : settings_from_server)
+        {
+            Field value;
+            if (settings->tryGet(change.name, value) && value == change.value)
+            {
+                // Mark as unchanged so it's not sent.
+                reset_setting(change.name);
+                chassert(!modified_settings->isChanged(change.name));
+            }
+        }
+
+        const Settings & settings_to_send = modified_settings ? *modified_settings : *settings;
+
+        auto settings_format = (server_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS) 
+                ? SettingsWriteFormat::STRINGS_WITH_FLAGS : SettingsWriteFormat::BINARY;
+
+        settings_to_send.write(*out, settings_format);
     }
     else
         writeStringBinary("" /* empty string is a marker of the end of settings */, *out);
