@@ -769,7 +769,7 @@ void UniqueEngineDataWriter::flushToTempFiles(const MutableDataPartPtr & data_pa
 
     if (disk->existsFile(deleted_keys_path))
     {
-        disk->createHardLink(deleted_keys_path, temp_dir_to_write);
+        disk->copyFile(deleted_keys_path, *disk, (temp_dir_to_write / DELETED_KEYS_FILE_NAME), ReadSettings{});
     }
 
     auto out = disk->writeFile(temp_dir_to_write / DELETED_KEYS_FILE_NAME, DBMS_DEFAULT_BUFFER_SIZE, WriteMode::Append);
