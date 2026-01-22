@@ -207,8 +207,8 @@ void MetadataCentralizationManager::initializeOnStartup()
 
     try
     {
-        /// Throw an exception and refuse to start the server if metadata centralization is enabled,
-        /// manifest.json is missing locally, and a local Atomic database exists.
+        /// Throw exception if metadata centralization is enabled while local manifest.json does not exist,
+        /// and some non-system database exists in local server.
         if (!manifest_synchronizer->localManifestExists())
         {
             auto & catalog = DatabaseCatalog::instance();
@@ -216,11 +216,11 @@ void MetadataCentralizationManager::initializeOnStartup()
 
             for (const auto & [database_name, db] : databases)
             {
-                if (db->getEngineName() == "Atomic" && !isSystemDatabase(database_name))
+                if (!isSystemDatabase(database_name))
                 {
                     throw Exception(
                         ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR,
-                        "Can not start server with metadata centralization enabled : missing local manifest.json while atomic database {} exists in local server.",
+                        "Can not start server with metadata centralization enabled while local manifest.json is missing and non-system database {} exists in local server.",
                         database_name);
                 }
             }
