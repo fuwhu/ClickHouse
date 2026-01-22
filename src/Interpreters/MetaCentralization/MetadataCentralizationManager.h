@@ -133,7 +133,7 @@ private:
 
     LoggerPtr log;
 
-    std::unordered_set<String> system_databases = {"system", "default", "INFORMATION_SCHEMA", "information_schema"};
+    std::unordered_set<String> system_databases = {"system", "default", "INFORMATION_SCHEMA", "information_schema", "_temporary_and_external_tables"};
 };
 
 using MetadataCentralizationManagerPtr = std::shared_ptr<MetadataCentralizationManager>;
