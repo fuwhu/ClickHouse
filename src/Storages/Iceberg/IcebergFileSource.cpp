@@ -801,28 +801,6 @@ IcebergFileSource::splitIcebergFile(IcebergFilePtr iceberg_file, size_t request_
     }
 #endif
 
-// #if USE_PARQUET
-//     if (auto * old_parquet_file = dynamic_cast<IcebergParquetFile *>(iceberg_file.get()))
-//     {
-//         auto * new_parquet_file = dynamic_cast<IcebergParquetFile *>(new_file.get());
-//         auto & old_row_groups = old_parquet_file->row_groups_to_read;
-
-//         if (request_splits > old_row_groups.size())
-//             throw Exception(ErrorCodes::LOGICAL_ERROR, "Can not split Iceberg file because request splits size is greater than Parquet row groups size");
-
-//         auto new_row_groups = ParquetRowGroupsInformation();
-//         std::move(old_row_groups.end() - request_splits, old_row_groups.end(), std::back_inserter(new_row_groups));
-
-//         while (request_splits)
-//         {
-//             old_row_groups.pop_back();
-//             request_splits--;
-//         }
-
-//         new_parquet_file->row_groups_to_read = new_row_groups;
-//     }
-// #endif
-
     std::vector<IcebergFilePtr> result;
     result.push_back(std::move(iceberg_file));
     result.push_back(std::move(new_file));
@@ -1135,18 +1113,18 @@ Pipe IcebergFileSource::spreadFilesOrSplitsAmongStreamsWithOrder(
 }
 
 Pipe IcebergFileSource::spreadFilesAmongStreamsWithOrder(
-        std::unique_ptr<std::vector<IcebergFilePtr>> & files,
-        FileComparator & comparator,
-        FileOverlapChecker & overlap_checker,
-        ReadType & read_type,
-        const ContextPtr & local_context,
-        ColumnsDescription & columns_description,
-        IcebergTableMetaWithUri & table_meta,
-        Block & source_block,
-        std::shared_ptr<KeyCondition> & key_condition,
-        bool & need_file_column,
-        unsigned & num_streams,
-        IcebergExpression & filter_expression)
+    std::unique_ptr<std::vector<IcebergFilePtr>> & files,
+    FileComparator & comparator,
+    FileOverlapChecker & overlap_checker,
+    ReadType & read_type,
+    const ContextPtr & local_context,
+    ColumnsDescription & columns_description,
+    IcebergTableMetaWithUri & table_meta,
+    Block & source_block,
+    std::shared_ptr<KeyCondition> & key_condition,
+    bool & need_file_column,
+    unsigned & num_streams,
+    IcebergExpression & filter_expression)
 {
     size_t total_file_cnt = files->size();
     Pipes pipes;
@@ -1158,74 +1136,48 @@ Pipe IcebergFileSource::spreadFilesAmongStreamsWithOrder(
         else
             throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Currently, only ORC format is supported, format {} is not supported yet.", file->getFormatName());
     }
-    
     std::sort(files->begin(), files->end(), comparator);
 
     LOG_DEBUG(&Poco::Logger::get("IcebergFileSource"), "Start to spread {} files with size {} among expected {} streams with order.", total_file_cnt, total_file_size, num_streams);
 
     std::vector<std::vector<IcebergFilePtr>> streams;
     streams.resize(num_streams);
-    int stream_id = 0;
-    int begin = -1;
     int end = streams.size();
-    int step = 1;
 
     std::vector<UInt64> streams_size(num_streams, 0);
 
     while (!files->empty())
     {
+        int chosen = -1;
+        int min_size = INT_MAX;
         IcebergFilePtr & file = files->back();
-        
-        if (streams[stream_id].empty() || !overlap_checker(streams[stream_id].back(), file))
-        {
-            streams_size[stream_id] += file->getFileLength();
-            streams[stream_id].emplace_back(std::move(file));
-            files->pop_back();
 
-            if (step == 1 && stream_id == end - 1)
+        for (int i = 0; i < end; ++i)
+        {
+            if (streams[i].empty() || !overlap_checker(streams[i].back(), file))
             {
-                step *= -1;
-                stream_id = end;
+                if (streams[i].size() < static_cast<size_t>(min_size))
+                {
+                    min_size = streams[i].size();
+                    chosen = i;
+                }
             }
-            else if (step == -1 && stream_id == 0)
-            {
-                step *= -1;
-                stream_id = begin;
-            }
-            stream_id += step;
+        }
+
+        if (chosen == -1)
+        {
+            streams_size.emplace_back(file->getFileLength());
+            std::vector<IcebergFilePtr> files_to_expand;
+            files_to_expand.emplace_back(std::move(file));
+            streams.emplace_back(std::move(files_to_expand));
+            end++;
+            files->pop_back();
         }
         else
-        {    
-            int original_step = step;
-            int original_stream_id = stream_id;         
-            step = -1; /// prevent missing any suitable stream
-            do
-            {
-                if (step == -1 && stream_id == 0)
-                    step *= -1;
-
-                stream_id += step;
-                if (stream_id >= end)
-                    break;
-            } while (overlap_checker(streams[stream_id].back(), file));
-
-            if (stream_id >= end)
-            {
-                streams_size.emplace_back(file->getFileLength());
-                std::vector<IcebergFilePtr> files_to_expand;
-                files_to_expand.emplace_back(std::move(file));
-                streams.emplace_back(std::move(files_to_expand));
-                end++;
-                files->pop_back();
-            }
-            else
-            {
-                streams_size[stream_id] += file->getFileLength();
-                streams[stream_id].emplace_back(std::move(file));
-                files->pop_back();
-            }
-            step = original_step;
-            stream_id = original_stream_id;
+        {
+            streams_size[chosen] += file->getFileLength();
+            streams[chosen].emplace_back(std::move(file));
+            files->pop_back();
         }
     }
 
