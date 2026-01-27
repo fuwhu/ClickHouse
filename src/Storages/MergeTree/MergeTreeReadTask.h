@@ -87,6 +87,9 @@ struct MergeTreeReadTaskInfo
     size_t approx_size_of_mark = 0;
     /// Cache of the columns prefixes for this part.
     DeserializationPrefixesCachePtr deserialization_prefixes_cache{};
+    /// Snapshot of delete bitmap for UniqueKeyMergeTree merge operations.
+    /// When set, this is used instead of the real-time bitmap from data_part.
+    UniqueDeleteBitmapPtr delete_bitmap_snapshot;
 };
 
 using MergeTreeReadTaskInfoPtr = std::shared_ptr<const MergeTreeReadTaskInfo>;
