@@ -46,6 +46,7 @@ struct RangesInDataPart
     size_t part_starting_offset_in_query;
     MarkRanges ranges;
     MarkRanges exact_ranges;
+    UniqueDeleteBitmapPtr delete_bitmap_snapshot;
 
     RangesInDataPart(
         const DataPartPtr & data_part_,
@@ -59,7 +60,6 @@ struct RangesInDataPart
 
     size_t getMarksCount() const;
     size_t getRowsCount() const;
-    UniqueDeleteBitmapPtr getDataPartUniqueDeleteBitmap() const;
 };
 
 class IMergeTreeDataPart;

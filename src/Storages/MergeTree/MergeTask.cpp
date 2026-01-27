@@ -511,6 +511,15 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
     SerializationInfoByName infos(global_ctx->storage_columns, info_settings);
     global_ctx->alter_conversions.reserve(global_ctx->future_part->parts.size());
 
+    /// Create delete bitmap snapshots for UniqueKeyMergeTree at merge start.
+    /// This ensures consistency between horizontal and vertical merge stages.
+    if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+    {
+        global_ctx->delete_bitmap_snapshots.reserve(global_ctx->future_part->parts.size());
+        for (const auto & part : global_ctx->future_part->parts)
+            global_ctx->delete_bitmap_snapshots.push_back(part->getUniqueDeleteBitmap());
+    }
+
     size_t total_effective_rows_count = 0;
     for (const auto & part : global_ctx->future_part->parts)
     {
@@ -1116,12 +1125,16 @@ MergeTask::VerticalMergeStage::createPipelineForReadingOneColumn(const String & 
     for (size_t part_num = 0; part_num < global_ctx->future_part->parts.size(); ++part_num)
     {
         auto plan_for_part = std::make_unique<QueryPlan>();
+        RangesInDataPart ranges_in_part(global_ctx->future_part->parts[part_num], part_num, 0);
+        if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+            ranges_in_part.delete_bitmap_snapshot = global_ctx->delete_bitmap_snapshots[part_num];
+
         createReadFromPartStep(
             MergeTreeSequentialSourceType::Merge,
             *plan_for_part,
             *global_ctx->data,
             global_ctx->storage_snapshot,
-            RangesInDataPart(global_ctx->future_part->parts[part_num], part_num, 0),
+            std::move(ranges_in_part),
             global_ctx->alter_conversions[part_num],
             global_ctx->merged_part_offsets,
             Names{column_name},
@@ -1865,12 +1878,16 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream() const
             LOG_TRACE(ctx->log, "Part {} is empty", global_ctx->future_part->parts[i]->name);
 
         auto plan_for_part = std::make_unique<QueryPlan>();
+        RangesInDataPart ranges_in_part(global_ctx->future_part->parts[i], i, 0);
+        if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
+            ranges_in_part.delete_bitmap_snapshot = global_ctx->delete_bitmap_snapshots[i];
+
         createReadFromPartStep(
             MergeTreeSequentialSourceType::Merge,
             *plan_for_part,
             *global_ctx->data,
             global_ctx->storage_snapshot,
-            RangesInDataPart(global_ctx->future_part->parts[i], i, 0),
+            std::move(ranges_in_part),
             global_ctx->alter_conversions[i],
             global_ctx->merged_part_offsets,
             merging_column_names,
