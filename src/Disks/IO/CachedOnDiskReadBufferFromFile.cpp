@@ -1208,10 +1208,10 @@ off_t CachedOnDiskReadBufferFromFile::seek(off_t offset, int whence)
             new_pos = file_offset_of_buffer_end - (working_buffer.end() - pos) + offset;
         }
 
-        if (new_pos + (working_buffer.end() - pos) == file_offset_of_buffer_end)
+        if (!working_buffer.empty() && new_pos + (working_buffer.end() - pos) == file_offset_of_buffer_end)
             return new_pos;
 
-        if (file_offset_of_buffer_end - working_buffer.size() <= new_pos && new_pos <= file_offset_of_buffer_end)
+        if (!working_buffer.empty() && file_offset_of_buffer_end - working_buffer.size() <= new_pos && new_pos <= file_offset_of_buffer_end)
         {
             pos = working_buffer.end() - file_offset_of_buffer_end + new_pos;
             chassert(pos >= working_buffer.begin());
@@ -1388,6 +1388,21 @@ size_t CachedOnDiskReadBufferFromFile::readDirect(char * to, size_t offset, size
     while (bytes_copied < n)
     {
         size_t remaining = n - bytes_copied;
+        /// optimization: check if need bigger buffer to compelete predownload
+        /// if remaining is too small, but predownload need a lot of data, using bigger buffer to compelete.
+        const size_t min_efficient_buffer_size = 256 * 1024;  
+        size_t estimated_predownload = estimatePredownloadSize();
+        
+        if (remaining < min_efficient_buffer_size && estimated_predownload > remaining)
+        {
+            /// use bigger buffer to complete predownload and read bytes to user buffer
+            size_t bytes_read = completePredownloadAndReadData(to + bytes_copied, remaining);
+            if (bytes_read > 0)
+            {
+                bytes_copied += bytes_read;
+                continue;  // may be cross file segements
+            }
+        }
         
         ReadBuffer temp_buf(to + bytes_copied, remaining);
         
@@ -1455,4 +1470,76 @@ size_t CachedOnDiskReadBufferFromFile::readDirect(char * to, size_t offset, size
     
     return bytes_copied;
 }
+size_t CachedOnDiskReadBufferFromFile::estimatePredownloadSize()
+{
+    if (!initialized)
+        initialize();
+
+    if (file_segments->empty())
+        return 0;
+    
+    auto & file_segment = file_segments->front();
+    auto state = file_segment.state();
+    
+    /// only state EMPTY and PARTIALLY_DOWNLOADED may need predownload
+    if (state != FileSegment::State::EMPTY && state != FileSegment::State::PARTIALLY_DOWNLOADED)
+        return 0;
+    
+    size_t current_write_offset = file_segment.getCurrentWriteOffset();
+    
+    /// if cache already contains the request position, do not need predownload anymore.
+    if (current_write_offset >= file_offset_of_buffer_end)
+        return 0;
+    
+    return file_offset_of_buffer_end - current_write_offset;
+}
+
+size_t CachedOnDiskReadBufferFromFile::completePredownloadAndReadData(char * to, size_t max_size)
+{
+    size_t predownload_size = estimatePredownloadSize();
+    if (predownload_size == 0)
+        return 0;  
+    
+    LOG_TEST(log, "readDirect: predownload {} bytes and read up to {} bytes with large buffer",
+             predownload_size, max_size);
+    
+    /// use big enough buffer to predownload + user data
+    const size_t large_buffer_size = std::min(
+        settings.remote_fs_buffer_size, 
+        predownload_size + max_size
+    );
+    
+    Memory<> large_memory(large_buffer_size);
+    ReadBuffer large_buf(large_memory.data(), large_buffer_size);
+    
+    size_t bytes_read = 0;
+    size_t predownload_offset = 0;
+    
+    {
+        SwapHelper swap_guard(*this, large_buf);
+        
+        if (nextImpl())
+        {
+            /// finish predownload, maybe some user data has been read in buffer
+            predownload_offset = nextimpl_working_buffer_offset;
+            size_t available_data = working_buffer.size() - predownload_offset;
+            
+            bytes_read = std::min(available_data, max_size);
+            
+            if (bytes_read > 0)
+            {
+                /// copy the available data to user buffer
+                ::memcpy(to, large_memory.data() + predownload_offset, bytes_read);
+            }
+        }
+    }
+    
+    // reset offset
+    nextimpl_working_buffer_offset = 0;
+    
+    LOG_TEST(log, "readDirect: completePredownloadAndReadData copied {} bytes to user buffer", bytes_read);
+    
+    return bytes_read;
+}
+
 }
