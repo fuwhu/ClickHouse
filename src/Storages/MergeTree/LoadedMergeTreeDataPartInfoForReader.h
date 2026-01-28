@@ -11,10 +11,11 @@ class LoadedMergeTreeDataPartInfoForReader final : public IMergeTreeDataPartInfo
 {
 public:
     LoadedMergeTreeDataPartInfoForReader(
-        MergeTreeData::DataPartPtr data_part_, AlterConversionsPtr alter_conversions_)
+        MergeTreeData::DataPartPtr data_part_, AlterConversionsPtr alter_conversions_, UniqueDeleteBitmapPtr delete_bitmap_snapshot_ = nullptr)
         : IMergeTreeDataPartInfoForReader(data_part_->storage.getContext())
         , data_part(std::move(data_part_))
         , alter_conversions(std::move(alter_conversions_))
+        , delete_bitmap_snapshot(std::move(delete_bitmap_snapshot_))
     {
     }
 
@@ -69,12 +70,16 @@ public:
 
     UniqueDeleteBitmapPtr getUniqueDeleteBitmap() const override
     {
-        return isUniqueEngineTable() ? data_part->getUniqueDeleteBitmap() : nullptr;
+        if (!isUniqueEngineTable())
+            return nullptr;
+
+        return delete_bitmap_snapshot ? delete_bitmap_snapshot : data_part->getUniqueDeleteBitmap();
     }
 
 private:
     MergeTreeData::DataPartPtr data_part;
     AlterConversionsPtr alter_conversions;
+    UniqueDeleteBitmapPtr delete_bitmap_snapshot;
 };
 
 }

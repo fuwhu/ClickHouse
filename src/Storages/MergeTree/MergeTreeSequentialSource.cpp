@@ -59,12 +59,6 @@ public:
 
     size_t getCurrentRow() const { return current_row; }
 
-    void setUniqueDeleteBitmap(UniqueDeleteBitmapPtr unique_delete_bitmap_)
-    {
-        if (unique_delete_bitmap_)
-            unique_delete_bitmap = std::move(unique_delete_bitmap_);
-    }
-
 protected:
     Chunk generate() override;
 
@@ -82,7 +76,6 @@ private:
 
     MergeTreeReadTask::Readers readers;
     MergeTreeReadersChain readers_chain;
-    UniqueDeleteBitmapPtr unique_delete_bitmap;
 
     /// Should read using direct IO
     bool read_with_direct_io;
@@ -322,7 +315,6 @@ Pipe createMergeTreeSequentialSource(
     RangesInDataPart data_part,
     AlterConversionsPtr alter_conversions,
     MergedPartOffsetsPtr merged_part_offsets,
-    UniqueDeleteBitmapPtr unique_delete_bitmap,
     Names columns_to_read,
     std::optional<MarkRanges> mark_ranges,
     std::shared_ptr<std::atomic<size_t>> filtered_rows_count,
@@ -338,6 +330,7 @@ Pipe createMergeTreeSequentialSource(
     info->part_starting_offset_in_query = data_part.part_starting_offset_in_query;
     info->const_virtual_fields.emplace("_part_index", info->part_index_in_query);
     info->const_virtual_fields.emplace("_part_starting_offset", info->part_starting_offset_in_query);
+    info->delete_bitmap_snapshot = std::move(data_part.delete_bitmap_snapshot);
 
     /// The part might have some rows masked by lightweight deletes
     const bool need_to_filter_deleted_rows = apply_deleted_mask && info->hasLightweightDelete();
@@ -367,8 +360,6 @@ Pipe createMergeTreeSequentialSource(
         std::move(mark_ranges),
         read_with_direct_io,
         prefetch);
-
-    column_part_source->setUniqueDeleteBitmap(unique_delete_bitmap);
 
     Pipe pipe(std::move(column_part_source));
 
@@ -465,7 +456,6 @@ public:
             data_part,
             alter_conversions,
             merged_part_offsets,
-            data_part.getDataPartUniqueDeleteBitmap(),
             // storage.getPartIfExists(data_part.data_part, {MergeTreeDataPartState::Active}),
             columns_to_read,
             std::move(mark_ranges),
