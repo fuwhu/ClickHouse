@@ -10,7 +10,6 @@
 #include <Interpreters/FilesystemCacheLog.h>
 #include <Interpreters/Cache/FileSegment.h>
 #include <Interpreters/Cache/UserInfo.h>
-#include "Disks/IO/IReadBufferFromRemote.h"
 
 
 namespace CurrentMetrics
@@ -22,7 +21,6 @@ namespace DB
 {
 
 class CachedOnDiskReadBufferFromFile : public ReadBufferFromFileBase
-// class CachedOnDiskReadBufferFromFile : public IReadBufferFromRemote
 {
 public:
     using ImplementationBufferCreator = std::function<std::unique_ptr<ReadBufferFromFileBase>()>;
@@ -130,6 +128,12 @@ private:
 
     bool nextFileSegmentsBatch();
 
+    size_t estimatePredownloadSize();
+
+    /// use bigger buffer to complete predownload and then read bytes to user buffer if necessary
+    /// return the bytes of reading to user buffer
+    size_t completePredownloadAndReadData(char * to, size_t max_size);
+    
     LoggerPtr log;
     FileCacheKey cache_key;
     String source_file_path;
