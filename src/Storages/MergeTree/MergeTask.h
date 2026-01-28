@@ -236,6 +236,10 @@ private:
 
         scope_guard temporary_directory_lock;
 
+        /// Snapshot of delete bitmaps for UniqueKeyMergeTree.
+        /// Ensures consistency between horizontal and vertical merge stages.
+        std::vector<UniqueDeleteBitmapPtr> delete_bitmap_snapshots;
+
         UInt64 prev_elapsed_ms{0};
 
         // will throw an exception if merge was cancelled in any way.
