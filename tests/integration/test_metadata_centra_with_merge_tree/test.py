@@ -9,13 +9,76 @@ Tests cover:
 """
 import logging
 import time
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import pytest
 
 from helpers.cluster import ClickHouseCluster
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class MetricsHelper:
+    """Helper class for metrics verification."""
+
+    @staticmethod
+    def wait_for_sync(timeout: float = 3.0) -> None:
+        """Wait for metadata synchronization."""
+        time.sleep(timeout)
+        logger.debug(f"Waited {timeout}s for metadata sync")
+
+    @staticmethod
+    def get_metrics(node, metric_names: List[str]) -> Dict[str, int]:
+        """Get metrics values from system.metrics."""
+        metrics = {}
+        for metric_name in metric_names:
+            query = f"SELECT value FROM system.metrics WHERE metric = '{metric_name}'"
+            result = node.query(query).strip()
+            metrics[metric_name] = int(result) if result else 0
+        return metrics
+
+    @staticmethod
+    def verify_metrics(node, expected_values: Dict[str, int], node_name: str = None) -> None:
+        """Verify metrics values on a single node."""
+        if node_name is None:
+            node_name = node.name
+
+        actual_metrics = MetricsHelper.get_metrics(node, list(expected_values.keys()))
+
+        for metric_name, expected_value in expected_values.items():
+            actual_value = actual_metrics.get(metric_name, -1)
+            assert actual_value == expected_value, (
+                f"Metric {metric_name} mismatch on {node_name}: "
+                f"expected {expected_value}, got {actual_value}"
+            )
+            logger.info(f"✓ {node_name}: {metric_name} = {actual_value}")
+
+    @staticmethod
+    def verify_metrics_consistency(cluster, node_names: List[str], expected_values: Dict[str, int]) -> None:
+        """Verify metrics consistency across multiple nodes."""
+        for node_name in node_names:
+            node = cluster.instances[node_name]
+            MetricsHelper.verify_metrics(node, expected_values, node_name)
+
+    @staticmethod
+    def wait_and_verify_metrics(node, expected_values: Dict[str, int],
+                                max_retries: int = 5, retry_interval: float = 1.0,
+                                node_name: str = None) -> None:
+        """Wait and verify metrics with retries."""
+        if node_name is None:
+            node_name = node.name
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                MetricsHelper.verify_metrics(node, expected_values, node_name)
+                logger.info(f"✓ Metrics verified on {node_name} (attempt {attempt}/{max_retries})")
+                return
+            except AssertionError as e:
+                if attempt == max_retries:
+                    logger.error(f"✗ Metrics verification failed on {node_name} after {max_retries} attempts")
+                    raise
+                logger.warning(f"Metrics not ready on {node_name}, retrying... (attempt {attempt}/{max_retries})")
+                time.sleep(retry_interval)
 
 
 class MetadataTestHelper:
@@ -266,15 +329,24 @@ class TableCreator:
 def cluster():
     """Fixture to create and manage ClickHouse cluster for testing."""
     cluster = ClickHouseCluster(__file__)
-        
+
     # Configuration for 2 shards with 2 replicas each
+    # node1 uses special config to initialize Boss manifest
+    cluster.add_instance(
+        "node1",
+        main_configs=["configs/config.d/metadata_centra_node1.xml"],
+        macros={"replica": "replica1", "shard": "shard1", "layer": "test"},
+        with_minio=True,
+        with_zookeeper=True,
+    )
+
+    # Other nodes use default config (initialize_boss_manifest=false)
     node_configs = [
-        ("node1", "replica1", "shard1"),
         ("node2", "replica2", "shard1"),
         ("node3", "replica1", "shard2"),
         ("node4", "replica2", "shard2"),
     ]
-    
+
     for node_name, replica, shard in node_configs:
         cluster.add_instance(
             node_name,
@@ -283,12 +355,36 @@ def cluster():
             with_minio=True,
             with_zookeeper=True,
         )
-    
+
     try:
         logger.info("Starting cluster...")
+        logger.info("Starting node1 first to initialize Boss manifest...")
+
+        # Start node1 first to initialize Boss manifest
         cluster.start()
-        logger.info("Cluster started")
+
+        # Wait for node1 to initialize
+        logger.info("Waiting for node1 to initialize Boss manifest...")
+        MetricsHelper.wait_for_sync()
+
+        node1 = cluster.instances["node1"]
+        node2 = cluster.instances["node2"]
         
+        # Verify node1 metrics after initialization
+        logger.info("Verifying node1 initial metrics...")
+        expected_initial_metrics = {
+            "MetaCentraBossManifestVersion": 1,
+            "MetaCentraBossDatabaseCount": 0,
+            "MetaCentraBossTableCount": 0,
+            "MetaCentraLocalManifestVersion": 1,
+            "MetaCentraLocalDatabaseCount": 0,
+            "MetaCentraLocalTableCount": 0,
+            "MetaCentraSyncFromBossStatus": 0,
+        }
+        MetricsHelper.verify_metrics(node1, expected_initial_metrics, "node1")
+
+        logger.info("Cluster initialization and metrics verification completed")
+
         yield cluster
     finally:
         cluster.shutdown()
@@ -311,6 +407,18 @@ def test_mergetree_table_operations(cluster):
     helper.wait_for_sync()
     helper.verify_database_exists(cluster, "test_db_v1")
     helper.verify_minio_object_count(cluster, minio, 2)
+
+    all_nodes = ["node1", "node2", "node3", "node4"]
+    expected_after_create_database_metrics = {
+        "MetaCentraBossManifestVersion": 2,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 0,
+        "MetaCentraLocalManifestVersion": 2,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 0,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_database_metrics)
     
     # 2. Create MergeTree and Distributed tables
     creator.create_mergetree_table(node1, "test_db_v1", "test_tb_v1_local")
@@ -328,6 +436,17 @@ def test_mergetree_table_operations(cluster):
         cluster, "test_db_v1", "test_tb_v1", initial_columns
     )
     helper.verify_minio_object_count(cluster, minio, 4)
+
+    expected_after_create_table_metrics = {
+        "MetaCentraBossManifestVersion": 4,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 4,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_table_metrics)
     
     # 3. ALTER: Add column
     logger.info("Adding column 'name' to tables")
@@ -344,6 +463,17 @@ def test_mergetree_table_operations(cluster):
         cluster, "test_db_v1", "test_tb_v1", updated_columns
     )
     helper.verify_minio_object_count(cluster, minio, 6)
+
+    expected_after_add_column_metrics = {
+        "MetaCentraBossManifestVersion": 6,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 6,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_column_metrics)
     
     # 4. Insert data
     logger.info("Inserting test data")
@@ -376,6 +506,17 @@ def test_mergetree_table_operations(cluster):
     helper.verify_indexes(
         cluster, "test_db_v1", "test_tb_v1_local", ["idx1", "idx2", "idx3"]
     )
+
+    expected_after_add_index_metrics = {
+        "MetaCentraBossManifestVersion": 9,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 9,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_index_metrics)
     
     # 6. Insert more data
     node1.query("INSERT INTO test_db_v1.test_tb_v1_local VALUES (5, now() - 120, 'Rachel')")
@@ -387,6 +528,17 @@ def test_mergetree_table_operations(cluster):
     )
     helper.wait_for_sync()
     helper.verify_ttl(cluster, "test_db_v1", "test_tb_v1_local", "toIntervalDay(15)")
+
+    expected_after_modify_ttl_metrics = {
+        "MetaCentraBossManifestVersion": 10,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 10,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_modify_ttl_metrics)
     
     # 8. Insert more data
     node2.query("INSERT INTO test_db_v1.test_tb_v1_local VALUES (6, now() - 120, 'Ross')")
@@ -414,6 +566,17 @@ def test_mergetree_table_operations(cluster):
     helper.verify_projections(
         cluster, "test_db_v1", "test_tb_v1_local", ["normal_p1", "agg_p1"]
     )
+
+    expected_after_add_projection_metrics = {
+        "MetaCentraBossManifestVersion": 12,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 12,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_projection_metrics)
     
     # 10. ALTER: Modify table settings
     logger.info("Modifying table settings")
@@ -430,6 +593,17 @@ def test_mergetree_table_operations(cluster):
         cluster, "test_db_v1", "test_tb_v1_local", expected_setting
     )
 
+    expected_after_modify_setting_metrics = {
+        "MetaCentraBossManifestVersion": 13,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 13,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_modify_setting_metrics)
+
     # 11. Insert more data
     node3.query("INSERT INTO test_db_v1.test_tb_v1_local VALUES (7, now() - 120, 'Phoebe')")
 
@@ -440,6 +614,17 @@ def test_mergetree_table_operations(cluster):
     creator.create_as_table(node1, "test_db_v1", "test_tb_v1_local", "test_tb_v1_as_local")
     helper.wait_for_sync()
     helper.verify_table_count(cluster, "test_db_v1", 3)
+
+    expected_after_create_table_as_metrics = {
+        "MetaCentraBossManifestVersion": 14,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 3,
+        "MetaCentraLocalManifestVersion": 14,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 3,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_table_as_metrics)
     
     # 13. Drop tables
     logger.info("Dropping tables")
@@ -451,6 +636,17 @@ def test_mergetree_table_operations(cluster):
     helper.verify_tables_dropped(
         cluster, "test_db_v1", ["test_tb_v1_local", "test_tb_v1", "test_tb_v1_as_local"]
     )
+
+    expected_after_drop_table_metrics = {
+        "MetaCentraBossManifestVersion": 17,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 0,
+        "MetaCentraLocalManifestVersion": 17,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 0,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_drop_table_metrics)
     
     logger.info("MergeTree table operations test completed successfully")
 
@@ -468,6 +664,18 @@ def test_replicated_mergetree_table_operations(cluster):
     node1.query("CREATE DATABASE IF NOT EXISTS test_db_v2")
     helper.wait_for_sync()
     helper.verify_database_exists(cluster, "test_db_v2")
+
+    all_nodes = ["node1", "node2", "node3", "node4"]
+    expected_after_create_database_metrics = {
+        "MetaCentraBossManifestVersion": 19,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 0,
+        "MetaCentraLocalManifestVersion": 19,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 0,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_database_metrics)
     
     # 2. Create ReplicatedMergeTree and Distributed tables
     creator.create_replicated_table(node1, "test_db_v2", "test_tb_rp_v1_local")
@@ -483,6 +691,17 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.verify_metadata_consistency(
         cluster, "test_db_v2", "test_tb_rp_v1", initial_columns
     )
+
+    expected_after_create_table_metrics = {
+        "MetaCentraBossManifestVersion": 21,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 21,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_table_metrics)
     
     # 3. ALTER: Add column
     logger.info("Adding column 'name' to replicated tables")
@@ -497,6 +716,17 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.verify_metadata_consistency(
         cluster, "test_db_v2", "test_tb_rp_v1", updated_columns
     )
+
+    expected_after_add_column_metrics = {
+        "MetaCentraBossManifestVersion": 23,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 23,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_column_metrics)
     
     # 4. Insert data
     logger.info("Inserting data and testing replication")
@@ -535,6 +765,17 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.verify_indexes(
         cluster, "test_db_v2", "test_tb_rp_v1_local", ["idx1", "idx2"]
     )
+
+    expected_after_add_index_metrics = {
+        "MetaCentraBossManifestVersion": 25,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 25,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_index_metrics)
     
     # 6. Insert more data
     node1.query("INSERT INTO test_db_v2.test_tb_rp_v1 VALUES (5, now() - 120, 'Rachel')")
@@ -552,6 +793,17 @@ def test_replicated_mergetree_table_operations(cluster):
     )
     helper.wait_for_sync()
     helper.verify_ttl(cluster, "test_db_v2", "test_tb_rp_v1_local", "toIntervalDay(15)")
+
+    expected_after_modify_ttl_metrics = {
+        "MetaCentraBossManifestVersion": 26,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 26,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_modify_ttl_metrics)
     
     # 8. ALTER: Add projections
     logger.info("Adding projections to replicated table")
@@ -574,6 +826,17 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.verify_projections(
         cluster, "test_db_v2", "test_tb_rp_v1_local", ["normal_p1", "agg_p1"]
     )
+
+    expected_after_add_projection_metrics = {
+        "MetaCentraBossManifestVersion": 28,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 28,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_add_projection_metrics)
     
     # 9. ALTER: Modify table settings
     logger.info("Modifying replicated table settings")
@@ -590,6 +853,17 @@ def test_replicated_mergetree_table_operations(cluster):
     helper.verify_table_settings(
         cluster, "test_db_v2", "test_tb_rp_v1_local", expected_setting
     )
+
+    expected_after_modify_setting_metrics = {
+        "MetaCentraBossManifestVersion": 29,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 2,
+        "MetaCentraLocalManifestVersion": 29,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 2,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_modify_setting_metrics)
     
     # 10. Insert final data and verify
     node3.query("INSERT INTO test_db_v2.test_tb_rp_v1 VALUES (6, now() - 120, 'Ross')")
@@ -608,6 +882,17 @@ def test_replicated_mergetree_table_operations(cluster):
     
     helper.verify_table_count(cluster, "test_db_v2", 3)
 
+    expected_after_create_table_v2_metrics = {
+        "MetaCentraBossManifestVersion": 30,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 3,
+        "MetaCentraLocalManifestVersion": 30,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 3,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_table_v2_metrics)
+
     # 12. Create system distiributed table
     creator.create_system_distributed_table(node1, "test_db_v2", "query_log_all", "test_meta_cetra_admin")
 
@@ -615,12 +900,34 @@ def test_replicated_mergetree_table_operations(cluster):
     
     helper.verify_table_count(cluster, "test_db_v2", 4)
     
+    expected_after_create_table_v3_metrics = {
+        "MetaCentraBossManifestVersion": 31,
+        "MetaCentraBossDatabaseCount": 1,
+        "MetaCentraBossTableCount": 4,
+        "MetaCentraLocalManifestVersion": 31,
+        "MetaCentraLocalDatabaseCount": 1,
+        "MetaCentraLocalTableCount": 4,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_create_table_v3_metrics)
+    
     # 13. Drop database
     logger.info("Dropping database test_db_v2")
     node1.query("DROP DATABASE IF EXISTS test_db_v2 sync")
     helper.wait_for_sync()
     
     helper.verify_database_dropped(cluster, "test_db_v2")
+
+    expected_after_drop_database_metrics = {
+        "MetaCentraBossManifestVersion": 32,
+        "MetaCentraBossDatabaseCount": 0,
+        "MetaCentraBossTableCount": 0,
+        "MetaCentraLocalManifestVersion": 32,
+        "MetaCentraLocalDatabaseCount": 0,
+        "MetaCentraLocalTableCount": 0,
+        "MetaCentraSyncFromBossStatus": 0,
+    }
+    MetricsHelper.verify_metrics_consistency(cluster, all_nodes, expected_after_drop_database_metrics)
     
     logger.info("ReplicatedMergeTree table operations test completed successfully")
 

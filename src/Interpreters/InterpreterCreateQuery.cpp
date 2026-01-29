@@ -203,7 +203,8 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
     {
         auto centralization_config = metadata_manager->getConfig();
 
-        const bool should_skip_centralization = create.attach || metadata_manager->isSystemDatabase(database_name);
+        bool is_system_database = metadata_manager->isSystemDatabase(database_name);
+        const bool should_skip_centralization = create.attach || is_system_database;
 
         if (!should_skip_centralization)
         {
@@ -254,9 +255,10 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
         else
             LOG_DEBUG(
                 getLogger("InterpreterCreateQuery"),
-                "Skipping metadata centralization for database '{}' (attach={}, is_system_database=false)",
+                "Skipping metadata centralization for database '{}' (attach={}, is_system_database={})",
                 database_name,
-                create.attach);
+                create.attach,
+                is_system_database);
     }
     else
         LOG_DEBUG(getLogger("InterpreterCreateQuery"), "Metadata centralization manager is disabled");

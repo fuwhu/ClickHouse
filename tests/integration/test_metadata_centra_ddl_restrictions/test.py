@@ -13,6 +13,7 @@ And allowed operations:
 import logging
 import time
 import pytest
+from typing import List, Dict
 
 from helpers.client import QueryRuntimeException
 from helpers.cluster import ClickHouseCluster
@@ -21,34 +22,140 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class MetricsHelper:
+    """Helper class for metrics verification."""
+
+    @staticmethod
+    def wait_for_sync(timeout: float = 3.0) -> None:
+        """Wait for metadata synchronization."""
+        time.sleep(timeout)
+        logger.debug(f"Waited {timeout}s for metadata sync")
+    
+    @staticmethod
+    def verify_metrics_consistency(cluster, node_names: List[str], expected_values: Dict[str, int]) -> None:
+        """Verify metrics consistency across multiple nodes."""
+        for node_name in node_names:
+            node = cluster.instances[node_name]
+            MetricsHelper.verify_metrics(node, expected_values, node_name)
+
+    @staticmethod
+    def get_metrics(node, metric_names: List[str]) -> Dict[str, int]:
+        """Get metrics values from system.metrics."""
+        metrics = {}
+        for metric_name in metric_names:
+            query = f"SELECT value FROM system.metrics WHERE metric = '{metric_name}'"
+            result = node.query(query).strip()
+            metrics[metric_name] = int(result) if result else 0
+        return metrics
+
+    @staticmethod
+    def verify_metrics(node, expected_values: Dict[str, int], node_name: str = None) -> None:
+        """Verify metrics values on a single node."""
+        if node_name is None:
+            node_name = node.name
+
+        actual_metrics = MetricsHelper.get_metrics(node, list(expected_values.keys()))
+
+        for metric_name, expected_value in expected_values.items():
+            actual_value = actual_metrics.get(metric_name, -1)
+            assert actual_value == expected_value, (
+                f"Metric {metric_name} mismatch on {node_name}: "
+                f"expected {expected_value}, got {actual_value}"
+            )
+            logger.info(f"✓ {node_name}: {metric_name} = {actual_value}")
+    @staticmethod
+    def wait_and_verify_metrics(node, expected_values: Dict[str, int],
+                                max_retries: int = 5, retry_interval: float = 1.0,
+                                node_name: str = None) -> None:
+        """Wait and verify metrics with retries."""
+        if node_name is None:
+            node_name = node.name
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                MetricsHelper.verify_metrics(node, expected_values, node_name)
+                logger.info(f"✓ Metrics verified on {node_name} (attempt {attempt}/{max_retries})")
+                return
+            except AssertionError as e:
+                if attempt == max_retries:
+                    logger.error(f"✗ Metrics verification failed on {node_name} after {max_retries} attempts")
+                    raise
+                logger.warning(f"Metrics not ready on {node_name}, retrying... (attempt {attempt}/{max_retries})")
+                time.sleep(retry_interval)
+
+
 @pytest.fixture(scope="module")
 def cluster():
     """Fixture to create and manage ClickHouse cluster for testing."""
     cluster = ClickHouseCluster(__file__)
 
-    node_configs = [
-        ("node1", "replica1", "shard1"),
-        ("node2", "replica2", "shard2"),
-    ]
+    # Configuration for 2 shards with 1 replicas each
+    # node1 uses special config to initialize Boss manifest
+    cluster.add_instance(
+        "node1",
+        main_configs=[
+            "configs/config.d/metadata_centra_node1.xml",
+            "configs/config.d/storage_conf.xml",
+        ],
+        macros={"replica": "replica1", "shard": "shard1", "layer": "test"},
+        with_minio=True,
+        with_zookeeper=True,
+    )
 
-    for node_name, replica, shard in node_configs:
-        cluster.add_instance(
-            node_name,
-            main_configs=[
-                "configs/config.d/metadata_centra.xml",
-                "configs/config.d/storage_conf.xml",
-            ],
-            macros={"replica": replica, "shard": shard, "layer": "test"},
-            with_minio=True,
-            with_zookeeper=True,
-        )
+    # node2 use default config (initialize_boss_manifest=false)
+    cluster.add_instance(
+        "node2",
+        main_configs=[
+            "configs/config.d/metadata_centra.xml",
+            "configs/config.d/storage_conf.xml",
+        ],
+        macros={"replica": "replica1", "shard": "shard2", "layer": "test"},
+        with_minio=True,
+        with_zookeeper=True,
+    )
 
     try:
         logger.info("Starting cluster...")
+
         cluster.start()
-        logger.info("Cluster started")
+
+        node1 = cluster.instances["node1"]
+        node2 = cluster.instances["node2"]
+
+        # Wait for node1 to initialize
+        logger.info("Waiting for node1 to initialize Boss manifest...")
+        MetricsHelper.wait_for_sync()
+
+        # Verify node1 metrics after initialization
+        logger.info("Verifying node1 initial metrics...")
+        expected_initial_metrics = {
+            "MetaCentraBossManifestVersion": 1,
+            "MetaCentraBossDatabaseCount": 0,
+            "MetaCentraBossTableCount": 0,
+            "MetaCentraLocalManifestVersion": 1,
+            "MetaCentraLocalDatabaseCount": 0,
+            "MetaCentraLocalTableCount": 0,
+            "MetaCentraSyncFromBossStatus": 0,
+        }
+        MetricsHelper.verify_metrics(node1, expected_initial_metrics, "node1")
+
+        logger.info("Cluster initialization and metrics verification completed")
+
         yield cluster
     finally:
+        MetricsHelper.wait_for_sync()
+        logger.info("in final state...")
+        expected_in_final_state = {
+            "MetaCentraBossManifestVersion": 69,
+            "MetaCentraBossDatabaseCount": 0,
+            "MetaCentraBossTableCount": 0,
+            "MetaCentraLocalManifestVersion": 69,
+            "MetaCentraLocalDatabaseCount": 0,
+            "MetaCentraLocalTableCount": 0,
+            "MetaCentraSyncFromBossStatus": 0,
+        }
+        MetricsHelper.verify_metrics_consistency(cluster, ["node1", "node2"], expected_in_final_state)
+
         cluster.shutdown()
 
 

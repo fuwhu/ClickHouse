@@ -247,6 +247,7 @@ Poco::JSON::Object::Ptr Manifest::toJSON() const
     Poco::JSON::Object::Ptr obj = new Poco::JSON::Object();
     obj->set("ck_version", ck_version);
     obj->set("last_modified", last_modified);
+    obj->set("version", version);
 
     if (!etag.empty())
         obj->set("etag", etag);
@@ -276,6 +277,9 @@ Manifest Manifest::fromJSON(const Poco::JSON::Object::Ptr & obj)
     Manifest m;
     m.ck_version = obj->getValue<String>("ck_version");
     m.last_modified = obj->getValue<String>("last_modified");
+
+    if (obj->has("version"))
+        m.version = obj->getValue<UInt64>("version");
 
     if (obj->has("etag"))
         m.etag = obj->getValue<String>("etag");
@@ -373,6 +377,14 @@ std::optional<std::reference_wrapper<Database>> Manifest::findDatabase(const Str
             return std::ref(d);
     }
     return std::nullopt;
+}
+
+UInt32 Manifest::getTablesCount() const
+{
+    UInt32 count = 0;
+    for (const auto & db : databases)
+        count += db.tables_count;
+    return count;
 }
 
 void print(const Table & t, std::ostream & os, int indent)

@@ -51,6 +51,10 @@ struct MetadataCentralizationConfig
 
     Int32 boss_retry_attempts = 3;           /// Boss retry attempts
 
+    bool initialize_boss_manifest = false;    /// Allow initialization of Boss manifest if it doesn't exist
+
+    bool initialize_boss_manifest_by_local_metadata = false;  /// Allow initialization from local metadata
+
     /// Parse configuration from Poco config
     static MetadataCentralizationConfig fromConfig(const Poco::Util::AbstractConfiguration & config);
 
