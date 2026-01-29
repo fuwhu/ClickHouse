@@ -163,12 +163,9 @@ bool BossServiceRecoveryTask::tryStartup()
         /// If manifest doesn't exist, initialize it
         if (!has_manifest)
         {
-            LOG_INFO(log, "No manifest found in Boss, initializing");
-            if (!manager->initializeBossManifest())
-            {
-                LOG_ERROR(log, "Failed to initialize Boss manifest");
-                return false;
-            }
+            LOG_ERROR(log, "No manifest found in Boss, Setting Boss service as unavailable.");
+            manager->setBossUnavailable("No Boss manifest exists");
+            return false;
         }
 
         LOG_INFO(log, "Boss service recovered and is now available");

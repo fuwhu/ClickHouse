@@ -150,6 +150,13 @@
     M(CacheDictionaryThreads, "Number of threads in the CacheDictionary thread pool.") \
     M(CacheDictionaryThreadsActive, "Number of threads in the CacheDictionary thread pool running a task.") \
     M(CacheDictionaryThreadsScheduled, "Number of queued or active jobs in the CacheDictionary thread pool.") \
+    M(MetaCentraBossManifestVersion, "Version of the Boss manifest in metadata centralization (incremented on each DDL operation)") \
+    M(MetaCentraBossDatabaseCount, "Number of databases in the Boss manifest in metadata centralization") \
+    M(MetaCentraBossTableCount, "Number of tables in the Boss manifest in metadata centralization") \
+    M(MetaCentraLocalManifestVersion, "Version of the local manifest in metadata centralization") \
+    M(MetaCentraLocalDatabaseCount, "Number of databases in the local cache in metadata centralization") \
+    M(MetaCentraLocalTableCount, "Number of tables in the local cache in metadata centralization") \
+    M(MetaCentraSyncFromBossStatus, "Status of metadata synchronization from Boss (0: success, 1: fetch_manifest_failed, 2: partially_updated, 3: all_updates_failed)") \
     M(ParallelFormattingOutputFormatThreads, "Number of threads in the ParallelFormattingOutputFormatThreads thread pool.") \
     M(ParallelFormattingOutputFormatThreadsActive, "Number of threads in the ParallelFormattingOutputFormatThreads thread pool running a task.") \
     M(ParallelFormattingOutputFormatThreadsScheduled, "Number of queued or active jobs in the ParallelFormattingOutputFormatThreads thread pool.") \

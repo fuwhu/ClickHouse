@@ -56,7 +56,7 @@ public:
 
     /// Initialize manifest in Boss storage if not exists
     /// Returns true if successful, false otherwise
-    bool initializeBossManifest();
+    bool initializeCentralizedMetadata();
 
     /// Get Boss client pointer
     BossClientPtr getBossClientPtr() const;

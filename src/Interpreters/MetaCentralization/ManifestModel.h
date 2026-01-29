@@ -72,6 +72,7 @@ struct Manifest
     String ck_version;         /// ClickHouse version
     String last_modified;      /// Last modification timestamp
     String etag;               /// Entity tag for version control
+    UInt64 version = 0;        /// Manifest version number
     UInt32 databases_count = 0;
     std::vector<Database> databases;
 
@@ -86,6 +87,7 @@ struct Manifest
     void removeDatabase(const String & database_uuid);
     std::optional<std::reference_wrapper<const Database>> findDatabase(const String & database_uuid) const;
     std::optional<std::reference_wrapper<Database>> findDatabase(const String & database_uuid);
+    UInt32 getTablesCount() const;
 };
 
 using ManifestPtr = std::shared_ptr<Manifest>;

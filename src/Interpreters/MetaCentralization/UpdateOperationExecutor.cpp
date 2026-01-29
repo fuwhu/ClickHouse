@@ -16,6 +16,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int METADATA_CENTRALIZATION_BOSS_ERROR;
+    extern const int TOO_MANY_TABLES;
 }
 
 UpdateOperationExecutor::UpdateOperationExecutor(
@@ -161,9 +162,24 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planDro
             auto databases = catalog.getDatabases();
             for (const auto & [db_name, db_ptr] : databases)
             {
-                if (db_ptr && db_ptr->getUUID() == uuid)
+                if (!db_ptr)
+                    continue;
+
+                if (manager->isSystemDatabase(db_ptr->getDatabaseName()))
+                    continue;
+
+                if (db_ptr->getUUID() == uuid)
                 {
                     op.database_name = db_name;
+
+                    UInt32 table_count = 0;
+                    for (auto table_it = db_ptr->getTablesIterator(getContext()); table_it->isValid(); table_it->next())
+                    {
+                        if (!table_it->table())
+                            table_count++;
+                    }
+                    LOG_DEBUG(log, "Database {} has {} tables to drop", db_name, table_count);
+
                     break;
                 }
             }
@@ -185,6 +201,27 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planDro
     {
         if (boss_table_uuids.find(table_uuid) == boss_table_uuids.end())
         {
+            /// Skip tables in databases that are being dropped
+            auto slash_pos = table_key.find('/');
+            if (slash_pos != String::npos)
+            {
+                String db_uuid_str = table_key.substr(0, slash_pos);
+
+                bool db_will_be_dropped = false;
+                for (const auto & drop_db_op : drop_database_ops)
+                {
+                    if (drop_db_op.database_uuid == db_uuid_str)
+                    {
+                        db_will_be_dropped = true;
+                        LOG_DEBUG(log, "Table with UUID {} exists in manager->getManifestCache() but its database {} is being dropped, skipping drop", table_uuid, db_uuid_str);
+                        break;
+                    }
+                }
+
+                if (db_will_be_dropped)
+                    continue;
+            }
+
             Operation op;
             op.type = OperationType::DROP_TABLE;
             op.table_uuid = table_uuid;
@@ -198,20 +235,8 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planDro
             {
                 if (!db_ptr)
                     continue;
-
-                // Skip tables in databases that are being dropped
-                String db_uuid_str = toString(db_ptr->getUUID());
-                bool db_will_be_dropped = false;
-                for (const auto & drop_db_op : drop_database_ops)
-                {
-                    if (drop_db_op.database_uuid == db_uuid_str)
-                    {
-                        db_will_be_dropped = true;
-                        break;
-                    }
-                }
-
-                if (db_will_be_dropped)
+                
+                if (manager->isSystemDatabase(db_ptr->getDatabaseName()))
                     continue;
 
                 for (auto table_it = db_ptr->getTablesIterator(getContext()); table_it->isValid(); table_it->next())

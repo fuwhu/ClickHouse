@@ -406,10 +406,11 @@ void DDLCentralized::modifyManifest(const String & operation_name, Func && modif
         modifier();
 
         manifest->last_modified = getCurrentTimestamp();
+        manifest->version++;
 
         manager->getManifestSynchronizer()->uploadToRemote(manifest);
 
-        LOG_DEBUG(log, "Manifest modified successfully for operation: {}", operation_name);
+        LOG_DEBUG(log, "Manifest modified successfully for operation: {}, new version: {}", operation_name, manifest->version);
     }
     catch (const Exception & e)
     {
@@ -839,6 +840,14 @@ DDLCentralized::DropDatabaseInfo DDLCentralized::validateAndPrepareDropDatabase(
     for (auto it = database->getTablesIterator(table_context); it->isValid(); it->next())
     {
         auto table_ptr = it->table();
+
+        if (!table_ptr)
+            throw Exception(
+                ErrorCodes::LOGICAL_ERROR,
+                "While iterating database {}, found table {} without storage instance",
+                backQuoteIfNeed(it->name()),
+                backQuoteIfNeed(database_name));
+
         StorageID storage_id = table_ptr->getStorageID();
         String table_name = storage_id.table_name;
         UUID table_uuid = database->tryGetTableUUID(table_name);

@@ -44,9 +44,28 @@ void ManifestCache::removeDatabase(const String & uuid)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
 
+    /// Remove all tables belonging to this database from cache
+    /// Table keys are in format: {db_uuid}/{table_name}_{version}.sql
+    /// So we can identify tables by checking if their key starts with "{db_uuid}/"
+    String db_prefix = uuid + "/";
+    std::vector<String> tables_to_remove;
+
+    for (const auto & [table_uuid, table_key] : table_key_map)
+    {
+        if (table_key.starts_with(db_prefix))
+            tables_to_remove.push_back(table_uuid);
+    }
+
+    for (const auto & table_uuid : tables_to_remove)
+    {
+        table_key_map.erase(table_uuid);
+        table_name_map.erase(table_uuid);
+        LOG_DEBUG(log, "Removed table ({}) from cache due to database removal", table_uuid);
+    }
+
     database_key_map.erase(uuid);
     database_name_map.erase(uuid);
-    LOG_DEBUG(log, "Removed database from cache: {}", uuid);
+    LOG_DEBUG(log, "Removed database from cache: {}, removed {} tables", uuid, tables_to_remove.size());
 }
 
 void ManifestCache::removeTable(const String & uuid)

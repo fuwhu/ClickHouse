@@ -1,20 +1,37 @@
 #include <Interpreters/MetaCentralization/MetadataCentralizationManager.h>
 
-#include <Common/DateLUTImpl.h>
-#include <Common/Exception.h>
-#include <Common/config_version.h>
-#include <Common/logger_useful.h>
 #include <Databases/IDatabase.h>
+#include <IO/Boss/BossClient.h>
+#include <IO/WriteBufferFromString.h>
+#include <IO/WriteHelpers.h>
 #include <Interpreters/Context.h>
+#include <Interpreters/DatabaseCatalog.h>
+#include <Interpreters/MetaCentralization/BossServiceRecoveryTask.h>
+#include <Interpreters/MetaCentralization/HistoryCleanupTask.h>
 #include <Interpreters/MetaCentralization/ManifestCache.h>
 #include <Interpreters/MetaCentralization/ManifestModel.h>
 #include <Interpreters/MetaCentralization/ManifestSynchronizer.h>
 #include <Interpreters/MetaCentralization/MetadataApplicator.h>
 #include <Interpreters/MetaCentralization/MetadataSyncTask.h>
-#include <Interpreters/MetaCentralization/BossServiceRecoveryTask.h>
-#include <Interpreters/MetaCentralization/HistoryCleanupTask.h>
 #include <Interpreters/MetaCentralization/UpdateOperationExecutor.h>
-#include <IO/Boss/BossClient.h>
+#include <Parsers/ASTCreateQuery.h>
+#include <Storages/IStorage.h>
+#include <Common/CurrentMetrics.h>
+#include <Common/DateLUTImpl.h>
+#include <Common/Exception.h>
+#include <Common/config_version.h>
+#include <Common/logger_useful.h>
+
+namespace CurrentMetrics
+{
+    extern const Metric MetaCentraBossManifestVersion;
+    extern const Metric MetaCentraBossDatabaseCount;
+    extern const Metric MetaCentraBossTableCount;
+    extern const Metric MetaCentraLocalManifestVersion;
+    extern const Metric MetaCentraLocalDatabaseCount;
+    extern const Metric MetaCentraLocalTableCount;
+    extern const Metric MetaCentraSyncFromBossStatus;
+}
 
 namespace DB
 {
@@ -109,6 +126,13 @@ bool MetadataCentralizationManager::syncMetadataFromBoss(bool drop_sync)
             LOG_DEBUG(log, "Cache not loaded, loading from local disk");
             ManifestPtr local_manifest = manifest_synchronizer->loadFromLocal();
             manifest_cache->load(local_manifest);
+
+            CurrentMetrics::set(CurrentMetrics::MetaCentraBossManifestVersion, boss_manifest->version);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraBossDatabaseCount, boss_manifest->databases_count);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraBossTableCount, boss_manifest->getTablesCount());
+            CurrentMetrics::set(CurrentMetrics::MetaCentraLocalManifestVersion, local_manifest->version);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraLocalDatabaseCount, manifest_cache->getAllDatabases().size());
+            CurrentMetrics::set(CurrentMetrics::MetaCentraLocalTableCount, manifest_cache->getAllTables().size());
         }
 
         if (manifest_cache->isLoaded() && manifest_cache->getEtag() == boss_etag)
@@ -173,13 +197,35 @@ bool MetadataCentralizationManager::syncMetadataFromBoss(bool drop_sync)
             LOG_INFO(log, "All updates successful, updating manifest and persisting to disk");
             manifest_cache->updateManifestWithEtag(boss_manifest, boss_etag);
             manifest_synchronizer->persistToLocal(boss_manifest, boss_etag);
-            LOG_INFO(log, "syncMetadataFromBoss completed successfully, new etag: {}", boss_etag);
+            LOG_INFO(log, "syncMetadataFromBoss completed successfully, new etag: {}, version: {}", boss_etag, boss_manifest->version);
+
+            CurrentMetrics::set(CurrentMetrics::MetaCentraBossManifestVersion, boss_manifest->version);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraLocalManifestVersion, boss_manifest->version);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraSyncFromBossStatus, 0);
         }
         else
         {
-            LOG_WARNING(log, "Partial update success, only manifest_cache mappings updated. Manifest and etag not changed.");
-            LOG_WARNING(log, "Failed: {} database ops, {} table ops", failed_db_ops, failed_table_ops);
+            CurrentMetrics::set(CurrentMetrics::MetaCentraBossManifestVersion, boss_manifest->version);
+
+            if (successful_ops > 0) 
+            {
+                CurrentMetrics::set(CurrentMetrics::MetaCentraSyncFromBossStatus, 2);
+                String uuid = toString(UUIDHelpers::generateV4());
+                LOG_WARNING(log, "Partial update success, manifest persisted to disk with uuid: {}", uuid);
+                LOG_WARNING(log, "Failed: {} database ops, {} table ops", failed_db_ops, failed_table_ops);
+                manifest_synchronizer->persistToLocal(manifest_cache->cloneManifestWithoutEtag(), uuid);
+            }
+            else
+            {
+                CurrentMetrics::set(CurrentMetrics::MetaCentraSyncFromBossStatus, 3);
+                LOG_WARNING(log, "All updates failed, manifest not persisted to disk");
+            }
         }
+
+        CurrentMetrics::set(CurrentMetrics::MetaCentraBossDatabaseCount, boss_manifest->databases_count);
+        CurrentMetrics::set(CurrentMetrics::MetaCentraBossTableCount, boss_manifest->getTablesCount());
+        CurrentMetrics::set(CurrentMetrics::MetaCentraLocalDatabaseCount, manifest_cache->getAllDatabases().size());
+        CurrentMetrics::set(CurrentMetrics::MetaCentraLocalTableCount, manifest_cache->getAllTables().size());
 
         return all_success;
     }
@@ -188,6 +234,7 @@ bool MetadataCentralizationManager::syncMetadataFromBoss(bool drop_sync)
         if (e.code() == ErrorCodes::METADATA_CENTRALIZATION_BOSS_ERROR)
         {
             LOG_ERROR(log, "Boss service error in syncMetadataFromBoss: {}", e.message());
+            CurrentMetrics::set(CurrentMetrics::MetaCentraSyncFromBossStatus, 1);
             setBossUnavailable(e.message());
         }
 
@@ -207,21 +254,34 @@ void MetadataCentralizationManager::initializeOnStartup()
 
     try
     {
-        /// Throw exception if metadata centralization is enabled while local manifest.json does not exist,
-        /// and some non-system database exists in local server.
+        /// Validate startup conditions when local manifest does not exist
+        /// If local manifest is missing and non-system databases exist, we need to ensure proper initialization:
+        /// - If initialize_boss_manifest is disabled, cannot start (no way to initialize)
+        /// - If initialize_boss_manifest is enabled but initialize_boss_manifest_by_local_metadata is disabled,
+        ///   cannot start (would create empty manifest while local data exists, causing data loss)
+        /// - Only when both flags are enabled can we safely initialize from local metadata
         if (!manifest_synchronizer->localManifestExists())
         {
-            auto & catalog = DatabaseCatalog::instance();
-            const auto & databases = catalog.getDatabases();
+            bool should_check_local_databases = !config.initialize_boss_manifest
+                || (config.initialize_boss_manifest && !config.initialize_boss_manifest_by_local_metadata);
 
-            for (const auto & [database_name, db] : databases)
+            if (should_check_local_databases)
             {
-                if (!isSystemDatabase(database_name))
+                auto & catalog = DatabaseCatalog::instance();
+                const auto & databases = catalog.getDatabases();
+
+                for (const auto & [database_name, db] : databases)
                 {
-                    throw Exception(
-                        ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR,
-                        "Can not start server with metadata centralization enabled while local manifest.json is missing and non-system database {} exists in local server.",
-                        database_name);
+                    if (!isSystemDatabase(database_name))
+                    {
+                        throw Exception(
+                            ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR,
+                            "Cannot start server with metadata centralization enabled: local manifest.json is missing "
+                            "and non-system database '{}' exists. Either enable both initialize_boss_manifest and "
+                            "initialize_boss_manifest_by_local_metadata to initialize from local metadata, or ensure "
+                            "manifest exists before starting.",
+                            database_name);
+                    }
                 }
             }
         }
@@ -242,15 +302,30 @@ void MetadataCentralizationManager::initializeOnStartup()
 
         if (!has_manifest)
         {
+            if (!config.initialize_boss_manifest)
+            {
+                LOG_ERROR(log, "No manifest found in Boss and initial_boss_manifest is disabled. Setting Boss service as unavailable.");
+                setBossUnavailable("No Boss manifest exists and initial_boss_manifest configuration is disabled");
+                return;
+            }
+
             LOG_WARNING(log, "No manifest found in Boss, will initialize");
-            if (!initializeBossManifest())
+            if (!initializeCentralizedMetadata())
             {
                 LOG_ERROR(log, "Failed to initialize Boss manifest");
-                return;
+                throw Exception(ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR, "Failed to initialize Boss manifest");
             }
         }
         else
         {
+            if (config.initialize_boss_manifest)
+            {
+                throw Exception(
+                    ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR,
+                    "Cannot start server with metadata centralization enabled: initialize_boss_manifest is enabled, but Boss manifest already exists. "
+                    "Please disable it to continue.");
+            }
+
             LOG_INFO(log, "Syncing metadata from Boss");
             syncMetadataFromBoss();
         }
@@ -320,7 +395,7 @@ const MetadataCentralizationConfig & MetadataCentralizationManager::getConfig() 
     return config;
 }
 
-bool MetadataCentralizationManager::initializeBossManifest()
+bool MetadataCentralizationManager::initializeCentralizedMetadata()
 {
     LOG_INFO(log, "Initializing Boss manifest.json");
 
@@ -337,30 +412,125 @@ bool MetadataCentralizationManager::initializeBossManifest()
 
         LOG_DEBUG(log, "Acquired distributed lock for manifest initialization");
 
-        /// Check if manifest was already created by another node while we were waiting for the lock
-        bool is_service_active = false;
-        bool has_manifest = false;
-        probeBossService(is_service_active, has_manifest);
-
-        if (!is_service_active)
-        {
-            LOG_ERROR(log, "Boss service became unavailable during initialization");
-            setBossUnavailable("Boss service check failed during manifest initialization");
-            return false;
-        }
-
-        if (has_manifest)
-        {
-            LOG_INFO(log, "Manifest was already initialized by another node");
-            return true;
-        }
-
         /// Create new manifest
         ManifestPtr manifest = std::make_shared<Manifest>();
+        manifest->version = 1;
         manifest->ck_version = String(VERSION_STRING) + "-" + String(BILI_VERSION_STRING);
 
         time_t now = time(nullptr);
         manifest->last_modified = DateLUT::instance().timeToString(now);
+
+        /// If initialize_boss_manifest_by_local_metadata is enabled, populate manifest from local databases
+        if (config.initialize_boss_manifest_by_local_metadata)
+        {
+            LOG_INFO(log, "Initializing Boss manifest from local metadata");
+
+            auto & catalog = DatabaseCatalog::instance();
+            const auto & databases = catalog.getDatabases();
+
+            for (const auto & [db_name, db_ptr] : databases)
+            {
+                if (!db_ptr)
+                    throw Exception(ErrorCodes::LOGICAL_ERROR, "Unexpected null database pointer for database {}", db_name);
+
+                String db_engine = db_ptr->getEngineName();
+                LOG_DEBUG(log, "Processing database: {} engine {}", db_name, db_engine);
+
+                if (isSystemDatabase(db_name))
+                {
+                    LOG_DEBUG(log, "Skipping system database: {}", db_name);
+                    continue;
+                }
+
+                if (db_engine != "Atomic")
+                    throw Exception(ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR, "Database {} is not an Atomic database", db_name);
+
+                LOG_INFO(log, "Processing database: {}", db_name);
+
+                /// Create database metadata
+                Database db_metadata;
+                db_metadata.uuid = toString(db_ptr->getUUID());
+                db_metadata.name = db_name;
+                db_metadata.version = 1;
+                db_metadata.last_modified = manifest->last_modified;
+
+                auto db_create_query = db_ptr->getCreateDatabaseQuery();
+                auto & db_create = db_create_query->as<ASTCreateQuery &>();
+                db_create.setDatabase(TABLE_WITH_UUID_NAME_PLACEHOLDER);
+                db_create.attach = true;
+                db_create.if_not_exists = false;
+
+                WriteBufferFromOwnString db_statement_buf;
+                IAST::FormatSettings format_settings(/*one_line=*/false, /*hilite=*/false);
+                db_create.format(db_statement_buf, format_settings);
+                writeChar('\n', db_statement_buf);
+                String db_sql = db_statement_buf.str();
+                if (!db_sql.empty() && db_sql.back() == '\n')
+                    db_sql.pop_back();
+
+                String db_key = fmt::format("{}_{}.sql", db_name, db_metadata.version);
+                db_metadata.key = db_key;
+
+                LOG_DEBUG(log, "Uploading database SQL to Boss: {}", db_key);
+                boss_client_ptr->upload(db_key, db_sql);
+
+                /// Process tables in this database
+                for (auto table_it = db_ptr->getTablesIterator(getContext()); table_it->isValid(); table_it->next())
+                {
+                    const String & table_name = table_it->name();
+                    auto table_ptr = table_it->table();
+
+                    if (!table_ptr)
+                        throw Exception(
+                            ErrorCodes::LOGICAL_ERROR, "While iterating database {}, found table {} without storage instance", db_name, table_name);
+
+                    String tb_engine_name = table_ptr->getName();
+                    LOG_DEBUG(log, "Processing table: {}.{}, engine: {}", db_name, table_name, tb_engine_name);
+
+                    if (!tb_engine_name.ends_with("MergeTree") && tb_engine_name != "Distributed")
+                        throw Exception(ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR, "Table {}.{} is not MergeTree Family or Distributed table", db_name, table_name);
+
+                    Table table_metadata;
+                    table_metadata.uuid = toString(table_ptr->getStorageID().uuid);
+                    table_metadata.name = table_name;
+                    table_metadata.version = 1;
+                    table_metadata.last_modified = manifest->last_modified;
+
+                    auto table_create_query = db_ptr->getCreateTableQuery(table_name, getContext());
+                    auto & table_create = table_create_query->as<ASTCreateQuery &>();
+                    table_create.database.reset();
+                    table_create.setTable(TABLE_WITH_UUID_NAME_PLACEHOLDER);
+                    table_create.attach = true;
+                    table_create.if_not_exists = false;
+
+                    WriteBufferFromOwnString table_statement_buf;
+                    table_create.format(table_statement_buf, format_settings);
+                    writeChar('\n', table_statement_buf);
+                    String table_sql = table_statement_buf.str();
+                    if (!table_sql.empty() && table_sql.back() == '\n')
+                        table_sql.pop_back();
+
+                    String table_key = fmt::format("{}/{}_{}.sql", db_metadata.uuid, table_name, table_metadata.version);
+                    table_metadata.key = table_key;
+
+                    LOG_DEBUG(log, "Uploading table SQL to Boss: {}", table_key);
+                    boss_client_ptr->upload(table_key, table_sql);
+
+                    db_metadata.addTable(table_metadata);
+                }
+
+                db_metadata.tables_count = db_metadata.tables.size();
+
+                manifest->addDatabase(db_metadata);
+
+                LOG_INFO(log, "Added database {} with {} tables to manifest", db_name, db_metadata.tables_count);
+            }
+
+            manifest->databases_count = manifest->databases.size();
+            LOG_INFO(log, "Initialized manifest from local metadata with {} databases", manifest->databases_count);
+        }
+        else
+            LOG_INFO(log, "Creating empty Boss manifest");
 
         LOG_DEBUG(log, "Uploading initial manifest to Boss");
 
@@ -373,7 +543,15 @@ bool MetadataCentralizationManager::initializeBossManifest()
         manifest_cache->updateManifestWithEtag(manifest, etag);
         manifest_cache->load(manifest);
 
-        LOG_INFO(log, "Boss manifest initialization completed");
+        CurrentMetrics::set(CurrentMetrics::MetaCentraBossManifestVersion, manifest->version);
+        CurrentMetrics::set(CurrentMetrics::MetaCentraLocalManifestVersion, manifest->version);
+        CurrentMetrics::set(CurrentMetrics::MetaCentraBossDatabaseCount, manifest->databases_count);
+        CurrentMetrics::set(CurrentMetrics::MetaCentraBossTableCount, manifest->getTablesCount());
+        CurrentMetrics::set(CurrentMetrics::MetaCentraLocalDatabaseCount, manifest_cache->getAllDatabases().size());
+        CurrentMetrics::set(CurrentMetrics::MetaCentraLocalTableCount, manifest_cache->getAllTables().size());
+
+        LOG_INFO(log, "Boss manifest initialization completed, version: {}, databases: {}, tables: {}",
+                 manifest->version, manifest->databases_count, manifest->getTablesCount());
 
         return true;
     }

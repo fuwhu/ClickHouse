@@ -41,6 +41,8 @@ MetadataCentralizationConfig MetadataCentralizationConfig::fromConfig(const Poco
     cfg.distributed_ddl_task_timeout = config.getInt("metadata_centralization.distributed_ddl_task_timeout", 20);
     cfg.boss_max_redirects = config.getInt("metadata_centralization.boss_max_redirects", 10);
     cfg.boss_retry_attempts = config.getInt("metadata_centralization.boss_retry_attempts", 3);
+    cfg.initialize_boss_manifest = config.getBool("metadata_centralization.initialize_boss_manifest", false);
+    cfg.initialize_boss_manifest_by_local_metadata = config.getBool("metadata_centralization.initialize_boss_manifest_by_local_metadata", false);
 
     return cfg;
 }
