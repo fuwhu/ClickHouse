@@ -1026,7 +1026,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempProjectionPart(
 }
 
 void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(
-    Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices)
+    Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices, NamesPtr required_columns)
 {
     if (!metadata_snapshot->hasImplicitColumn() || skip_indices.empty())
         return;
@@ -1056,6 +1056,13 @@ void MergeTreeDataWriter::fillMissingImplicitColumnsForSkipIndices(
     {
         if (block.has(col_name))
             continue;
+
+        if (required_columns)
+        {
+            auto it = std::find(required_columns->begin(), required_columns->end(), col_name);
+            if (it == required_columns->end())
+                continue;
+        }
 
         if (auto implicit_column = extractImplicitColumn(col_name))
         {
