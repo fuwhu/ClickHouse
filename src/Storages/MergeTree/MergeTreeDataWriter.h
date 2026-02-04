@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <Core/Block.h>
 
 #include <IO/WriteBufferFromFile.h>
@@ -39,6 +40,7 @@ struct MergeTreeTemporaryPart
 
 using MergeTreeTemporaryPartPtr = std::unique_ptr<MergeTreeTemporaryPart>;
 using BlocksWithPartition = std::vector<BlockWithPartition>;
+using NamesPtr = std::shared_ptr<Names>;
 
 /** Writes new parts of data to the merge tree.
   */
@@ -97,7 +99,7 @@ public:
         const MergeTreeData::MergingParams & merging_params);
 
     static void fillMissingImplicitColumnsForSkipIndices(
-        Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices);
+        Block & block, const StorageMetadataPtr & metadata_snapshot, const IndicesDescription & skip_indices, NamesPtr required_columns = nullptr);
 
 private:
     MergeTreeTemporaryPartPtr writeTempPartImpl(
