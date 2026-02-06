@@ -310,6 +310,8 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::extractMergingAndGatheringColu
             const auto & column_name = index_columns.front();
             if (storage_columns.contains(column_name))
                 global_ctx->skip_indexes_by_column[column_name].push_back(index);
+            else if (global_ctx->metadata_snapshot->isImplicitColumn(column_name))
+                global_ctx->skip_indexes_by_column[column_name].push_back(index);
             else
                 global_ctx->skip_indexes_by_column[Nested::splitName(column_name).first].push_back(index);
         }
@@ -318,6 +320,8 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::extractMergingAndGatheringColu
             for (const auto & index_column : index_columns)
             {
                 if (storage_columns.contains(index_column))
+                    key_columns.insert(index_column);
+                else if (global_ctx->metadata_snapshot->isImplicitColumn(index_column))
                     key_columns.insert(index_column);
                 /// If we don't have this column in storage columns, it must be a subcolumn of one of the storage columns.
                 else
@@ -1193,8 +1197,7 @@ MergeTask::VerticalMergeStage::createPipelineForReadingOneColumn(const String & 
             indices_expression_dag.addMaterializingOutputActions(/*materialize_sparse=*/ true); /// Const columns cannot be written without materialization.
             auto calculate_indices_expression_step = std::make_unique<ExpressionStep>(
                 merge_column_query_plan.getCurrentHeader(),
-                ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)),
-                global_ctx->metadata_snapshot);
+                ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)));
             merge_column_query_plan.addStep(std::move(calculate_indices_expression_step));
         }
     }
@@ -2036,8 +2039,7 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::createMergedStream() const
         unique_key_expression_dag.addMaterializingOutputActions(/*materialize_sparse=*/ true);
         auto unique_key_expression_step = std::make_unique<ExpressionStep>(
             merge_parts_query_plan.getCurrentHeader(),
-            ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(unique_key_expression_dag)),
-            global_ctx->metadata_snapshot);
+            ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(unique_key_expression_dag)));
         merge_parts_query_plan.addStep(std::move(unique_key_expression_step));
     }
 
