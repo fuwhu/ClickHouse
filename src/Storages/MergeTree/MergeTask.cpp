@@ -1193,7 +1193,8 @@ MergeTask::VerticalMergeStage::createPipelineForReadingOneColumn(const String & 
             indices_expression_dag.addMaterializingOutputActions(/*materialize_sparse=*/ true); /// Const columns cannot be written without materialization.
             auto calculate_indices_expression_step = std::make_unique<ExpressionStep>(
                 merge_column_query_plan.getCurrentHeader(),
-                ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)));
+                ActionsDAG::merge(std::move(extracting_subcolumns_dag), std::move(indices_expression_dag)),
+                global_ctx->metadata_snapshot);
             merge_column_query_plan.addStep(std::move(calculate_indices_expression_step));
         }
     }
