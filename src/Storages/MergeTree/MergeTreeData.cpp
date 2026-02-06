@@ -3491,16 +3491,8 @@ size_t MergeTreeData::clearEmptyParts()
         auto parts = getDataPartsVectorForInternalUsage();
         for (const auto & part : parts)
         {
-            if (merging_params.mode == MergingParams::Unique)
-            {
-                if (part->effective_rows_count != 0)
-                    continue;
-            }
-            else
-            {
-                if (part->rows_count != 0)
-                    continue;
-            }
+            if (part->rows_count != 0)
+                continue;
 
             /// Do not try to drop uncommitted parts. If the newest tx doesn't see it then it probably hasn't been committed yet
             if (!part->version.getCreationTID().isPrehistoric() && !part->version.isVisible(TransactionLog::instance().getLatestSnapshot()))
