@@ -339,7 +339,7 @@ public:
     private:
         friend class MergeTreeData;
 
-        void prepareForUniqueEngineWrite(DataPartsLock * lock = nullptr);
+        void prepareForUniqueEngineWrite();
 
         MergeTreeData & data;
         MergeTreeTransaction * txn;
