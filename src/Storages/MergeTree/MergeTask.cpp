@@ -515,24 +515,26 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
     SerializationInfoByName infos(global_ctx->storage_columns, info_settings);
     global_ctx->alter_conversions.reserve(global_ctx->future_part->parts.size());
 
-    /// Create delete bitmap snapshots for UniqueKeyMergeTree at merge start.
-    /// This ensures consistency between horizontal and vertical merge stages.
     if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
     {
-        global_ctx->delete_bitmap_snapshots.reserve(global_ctx->future_part->parts.size());
-        for (const auto & part : global_ctx->future_part->parts)
+        const auto & source_parts = global_ctx->future_part->parts;
+
+        /// merge_source_parts is used in UniqueEngineDataWriter::prepareForMergeOrMoveResultPart.
+        global_ctx->new_data_part->merge_source_parts.reserve(source_parts.size());
+
+        /// Create delete bitmap snapshots for UniqueKeyMergeTree at merge start.
+        /// This ensures consistency between horizontal and vertical merge stages.
+        global_ctx->delete_bitmap_snapshots.reserve(source_parts.size());
+
+        for (const auto & part : source_parts)
+        {
+            global_ctx->new_data_part->merge_source_parts.push_back(part);
             global_ctx->delete_bitmap_snapshots.push_back(part->getUniqueDeleteBitmap());
+        }
     }
 
-    size_t total_effective_rows_count = 0;
     for (const auto & part : global_ctx->future_part->parts)
     {
-        if (global_ctx->merging_params.mode == MergeTreeData::MergingParams::Unique)
-        {
-            total_effective_rows_count += part->effective_rows_count;
-            global_ctx->new_data_part->merge_source_parts.emplace_back(part);
-        }
-
         global_ctx->new_data_part->ttl_infos.update(part->ttl_infos);
 
         if (global_ctx->metadata_snapshot->hasAnyTTL() && !part->checkAllTTLCalculated(global_ctx->metadata_snapshot))
@@ -558,8 +560,6 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
         global_ctx->alter_conversions.push_back(MergeTreeData::getAlterConversionsForPart(part, mutations_snapshot, global_ctx->context));
     }
-
-    global_ctx->new_data_part->rows_count = total_effective_rows_count;
 
     const auto & local_part_min_ttl = global_ctx->new_data_part->ttl_infos.part_min_ttl;
     if (global_ctx->metadata_snapshot->hasAnyTTL() && local_part_min_ttl && local_part_min_ttl <= global_ctx->time_of_merge)

@@ -77,18 +77,18 @@ UniqueEngineDataWriter::~UniqueEngineDataWriter()
         clearTempDirs();
 }
 
-void UniqueEngineDataWriter::prepare(DataPartsLock * lock)
+void UniqueEngineDataWriter::prepare()
 {
     if (part_to_write->effective_rows_count)
     {
         if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::NORMAL_INSERT)
-            prepareForNewPart(lock);
+            prepareForNewPart();
         else if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
-            prepareForMergeOrMoveResultPart(lock);
+            prepareForMergeOrMoveResultPart();
         else if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::MERGE_BY_FETCH)
-            prepareForMergeByFetchPart(lock);
+            prepareForMergeByFetchPart();
         else
-            prepareForMergeOrMoveResultPart(lock);
+            prepareForMergeOrMoveResultPart();
     }
 
     part_to_write->merge_source_parts.clear();
@@ -512,14 +512,14 @@ void UniqueEngineDataWriter::compareWithActivePart(
     }
 }
 
-void UniqueEngineDataWriter::prepareForNewPart(DataPartsLock * lock, bool is_merge_by_fetch)
+void UniqueEngineDataWriter::prepareForNewPart(bool is_merge_by_fetch)
 {
     DataPartsVector active_parts_range;
     if ((*storage_settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::TABLE)
-        active_parts_range = storage.getDataPartsVectorForInternalUsage({MergeTreeDataPartState::Active}, *lock);
+        active_parts_range = storage.getDataPartsVectorForInternalUsage({MergeTreeDataPartState::Active});
     else if ((*storage_settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::PARTITION)
         active_parts_range
-            = storage.getDataPartsVectorInPartitionForInternalUsage(MergeTreeDataPartState::Active, part_to_write->info.getPartitionId(), lock);
+            = storage.getDataPartsVectorInPartitionForInternalUsage(MergeTreeDataPartState::Active, part_to_write->info.getPartitionId());
     else
         throw Exception(
             ErrorCodes::BAD_ARGUMENTS,
@@ -581,7 +581,7 @@ void UniqueEngineDataWriter::prepareForNewPart(DataPartsLock * lock, bool is_mer
         ms);
 }
 
-void UniqueEngineDataWriter::prepareForMergeOrMoveResultPart(DataPartsLock * lock)
+void UniqueEngineDataWriter::prepareForMergeOrMoveResultPart()
 {
     std::map<String, VersionAndRow> to_update_current;
 
@@ -595,12 +595,12 @@ void UniqueEngineDataWriter::prepareForMergeOrMoveResultPart(DataPartsLock * loc
     if (part_to_write->commit_type == IMergeTreeDataPart::CommitType::EXECUTE_MERGE)
     {
         for (const auto & source_part : part_to_write->merge_source_parts)
-            prepareForDeleteKeys(source_part, to_update_current, is_read_binary, rowid_is_uinit32, unique_key_index_type, lock);
+            prepareForDeleteKeys(source_part, to_update_current, is_read_binary, rowid_is_uinit32, unique_key_index_type);
     }
     else
     {
         const auto & source_part = part_to_write->move_source_part;
-        prepareForDeleteKeys(source_part, to_update_current, is_read_binary, rowid_is_uinit32, unique_key_index_type, lock);
+        prepareForDeleteKeys(source_part, to_update_current, is_read_binary, rowid_is_uinit32, unique_key_index_type);
     }
 
     /// Delete the duplicate rows in part_to_write and cache the updated data in unique_delete_bitmap_map.
@@ -619,8 +619,7 @@ void UniqueEngineDataWriter::prepareForDeleteKeys(
     std::map<String, VersionAndRow> & to_update_current,
     const bool & is_read_binary,
     const bool & rowid_is_uinit32,
-    const UInt64 & unique_key_index_type,
-    DataPartsLock * /*lock*/)
+    const UInt64 & unique_key_index_type)
 {
     const auto & data_part_storage = dynamic_cast<const DataPartStorageOnDiskFull &>(source_part->getDataPartStorage());
     auto disk = data_part_storage.volume->getDisk();
@@ -671,10 +670,10 @@ void UniqueEngineDataWriter::prepareForDeleteKeys(
     }
 }
 
-void UniqueEngineDataWriter::prepareForMergeByFetchPart(DataPartsLock * lock)
+void UniqueEngineDataWriter::prepareForMergeByFetchPart()
 {
     /// TODO ::: optimize to avoid the heavy key search and check in this function.
-    prepareForNewPart(lock, true);
+    prepareForNewPart(true);
 }
 
 void UniqueEngineDataWriter::enrollDataPart(const MutableDataPartPtr & data_part, DeletedKeysPtr deleted_keys)
