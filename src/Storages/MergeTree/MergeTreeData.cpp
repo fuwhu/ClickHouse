@@ -7619,7 +7619,7 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
             for (const auto & part : precommitted_parts)
                 uniq_engine_write_locks.emplace_back(data.lockUniqueEngineForWrite(part->info.getPartitionId()));
 
-            prepareForUniqueEngineWrite(acquired_parts_lock);
+            prepareForUniqueEngineWrite();
         }
 
         auto settings = data.getSettings();
@@ -7743,16 +7743,17 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
     return total_covered_parts;
 }
 
-void MergeTreeData::Transaction::prepareForUniqueEngineWrite(DataPartsLock * lock)
+void MergeTreeData::Transaction::prepareForUniqueEngineWrite()
 {
     for (const auto & pair : unique_engine_data_writers)
     {
         const auto & uniq_engine_data_writer = pair.second;
         const auto & uniq_engine_write_part = uniq_engine_data_writer->getDataPart();
 
+        auto parts_lock = DataPartsLock();
         DataPartPtr covering_part;
         DataPartsVector covered_parts
-            = data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, *lock);
+            = data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, parts_lock);
         if (covering_part)
             continue;
         else
