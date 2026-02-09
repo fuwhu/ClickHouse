@@ -59,7 +59,7 @@ public:
 
     explicit UniqueEngineDataWriter(const MutableDataPartPtr & data_part_);
 
-    void prepare(DataPartsLock * lock = nullptr);
+    void prepare();
 
     void commit();
 
@@ -78,19 +78,18 @@ public:
     MutableDataPartPtr getDataPart() const;
 
 private:
-    void prepareForNewPart(DataPartsLock * lock, bool is_merge_by_fetch = false);
+    void prepareForNewPart(bool is_merge_by_fetch = false);
 
-    void prepareForMergeOrMoveResultPart(DataPartsLock * lock);
+    void prepareForMergeOrMoveResultPart();
 
     void prepareForDeleteKeys(
         DataPartPtr source_part,
         std::map<String, VersionAndRow> & to_update_current,
         const bool & is_read_binary,
         const bool & rowid_is_uinit32,
-        const UInt64 & unique_key_index_type,
-        DataPartsLock * lock);
+        const UInt64 & unique_key_index_type);
 
-    void prepareForMergeByFetchPart(DataPartsLock * lock);
+    void prepareForMergeByFetchPart();
 
     void enrollDataPart(const MutableDataPartPtr & data_part, DeletedKeysPtr deleted_keys = nullptr);
 
