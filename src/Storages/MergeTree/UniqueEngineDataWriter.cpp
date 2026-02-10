@@ -3,7 +3,7 @@
 #include <utility>
 #include <vector>
 #include <Core/Settings.h>
-// #include <Common/ErrorCodes.h>
+#include <Common/ProfileEvents.h>
 #include <Storages/MergeTree/DataPartStorageOnDiskFull.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
@@ -18,6 +18,13 @@ extern const Metric UniqueKeyUpdateThreadsScheduled;
 extern const Metric UniqueKeyBucketLoadThreads;
 extern const Metric UniqueKeyBucketLoadThreadsActive;
 extern const Metric UniqueKeyBucketLoadThreadsScheduled;
+}
+
+namespace ProfileEvents
+{
+extern const Event UniqueMergeTreeDedupComparedParts;
+extern const Event UniqueMergeTreeDedupPartsWithDuplicates;
+extern const Event UniqueMergeTreeDedupElapsedMilliseconds;
 }
 
 namespace DB
@@ -572,13 +579,34 @@ void UniqueEngineDataWriter::prepareForNewPart(bool is_merge_by_fetch)
     else
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid type({}) for unique key index.", unique_key_index_type.toString());
 
-    double ms = total_stopwatch.elapsedMilliseconds();
+    UInt64 elapsed_milliseconds = total_stopwatch.elapsedMilliseconds();
+
+    size_t parts_with_duplicates_count = 0;
+    {
+        std::unordered_set<MutableDataPartPtr> parts_with_duplicates;
+        for (const auto & [data_part, _] : unique_delete_bitmap_map)
+        {
+            if (data_part != part_to_write) /// Exclude the part being written
+                parts_with_duplicates.insert(data_part);
+        }
+        for (const auto & [data_part, _] : unique_deleted_keys_map)
+            parts_with_duplicates.insert(data_part);
+
+        parts_with_duplicates_count = parts_with_duplicates.size();
+    }
+
+    ProfileEvents::increment(ProfileEvents::UniqueMergeTreeDedupComparedParts, parts_to_dedup.size());
+    ProfileEvents::increment(ProfileEvents::UniqueMergeTreeDedupElapsedMilliseconds, elapsed_milliseconds);
+    ProfileEvents::increment(ProfileEvents::UniqueMergeTreeDedupPartsWithDuplicates, parts_with_duplicates_count);
+
     LOG_DEBUG(
         getLogger("UniqueMergeTreeIndex"),
-        "part {} is_merge_by_fetch {} dedup with active parts cost {} ms",
+        "part {} is_merge_by_fetch {} dedup with active parts cost {} milliseconds, compared {} parts, {} parts have duplicates",
         part_to_write->name,
         is_merge_by_fetch,
-        ms);
+        elapsed_milliseconds,
+        parts_to_dedup.size(),
+        parts_with_duplicates_count);
 }
 
 void UniqueEngineDataWriter::prepareForMergeOrMoveResultPart()
