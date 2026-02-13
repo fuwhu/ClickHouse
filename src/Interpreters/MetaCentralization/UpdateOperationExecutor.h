@@ -45,6 +45,8 @@ public:
         String table_uuid;
         String table_name;
         String new_key;
+        UInt32 new_version;
+        String new_last_modified;
         String old_key;
         String sql;
         bool drop_sync = false;

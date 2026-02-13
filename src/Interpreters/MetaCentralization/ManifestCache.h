@@ -18,9 +18,9 @@ public:
     /// Load manifest into cache
     void load(const ManifestPtr & manifest);
 
-    void updateDatabase(const Database & db);
+    void updateDatabase(const Database & db, bool is_create = false);
 
-    void updateTable(const Table & table);
+    void updateTable(const Table & table, bool is_create = false);
 
     void removeDatabase(const String & uuid);
 
@@ -36,8 +36,11 @@ public:
     /// Get all cached databases (UUID -> key mapping)
     std::unordered_map<String, String> getAllDatabases() const;
 
-    /// Update manifest and etag in cache
-    void updateManifestWithEtag(const ManifestPtr & new_manifest, const String & etag);
+    void updateEtag(const String & etag);
+
+    void updateVersion(UInt64 version);
+
+    void updateLastModified(const String & last_modified);
 
     String getEtag() const;
 

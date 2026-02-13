@@ -54,9 +54,11 @@ public:
     /// Initialize metadata on server startup
     void initializeOnStartup();
 
+    /// Generate local manifest, if from_local_metadata is true, use local metadata
+    void generateLocalManifest(bool from_local_metadata = false);
+
     /// Initialize manifest in Boss storage if not exists
-    /// Returns true if successful, false otherwise
-    bool initializeCentralizedMetadata();
+    void initializeCentralizedMetadata();
 
     /// Get Boss client pointer
     BossClientPtr getBossClientPtr() const;

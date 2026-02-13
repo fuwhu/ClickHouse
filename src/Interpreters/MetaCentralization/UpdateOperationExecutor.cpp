@@ -76,6 +76,8 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planDat
             op.database_uuid = boss_db.uuid;
             op.database_name = boss_db.name;
             op.new_key = boss_db.key;
+            op.new_version = boss_db.version;
+            op.new_last_modified = boss_db.last_modified;
             op.db_ptr = &boss_db;
             op.sql = downloadDatabaseSQL(boss_db.key);
             create_db_ops.push_back(op);
@@ -108,6 +110,8 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planTab
                     op.table_uuid = boss_table.uuid;
                     op.table_name = boss_table.name;
                     op.new_key = boss_table.key;
+                    op.new_version = boss_table.version;
+                    op.new_last_modified = boss_table.last_modified;
                     op.old_key = cached_table_key;
                     op.table_ptr = &boss_table;
                     op.sql = downloadTableSQL(boss_table.key);
@@ -123,6 +127,8 @@ std::vector<UpdateOperationExecutor::Operation> UpdateOperationExecutor::planTab
                 op.table_uuid = boss_table.uuid;
                 op.table_name = boss_table.name;
                 op.new_key = boss_table.key;
+                op.new_version = boss_table.version;
+                op.new_last_modified = boss_table.last_modified;
                 op.table_ptr = &boss_table;
                 op.sql = downloadTableSQL(boss_table.key);
                 create_table_ops.push_back(op);
@@ -342,17 +348,31 @@ void UpdateOperationExecutor::applyCacheUpdates(const std::vector<Result> & resu
                 db.uuid = op.database_uuid;
                 db.key = op.new_key;
                 db.name = op.database_name;
-                manager->getManifestCache()->updateDatabase(db);
+                db.version = op.new_version;
+                db.last_modified = op.new_last_modified;
+                manager->getManifestCache()->updateDatabase(db, true);
                 break;
             }
 
-            case OperationType::UPDATE_TABLE:
+            case OperationType::UPDATE_TABLE: {
+                Table table;
+                table.uuid = op.table_uuid;
+                table.key = op.new_key;
+                table.version = op.new_version;
+                table.last_modified = op.new_last_modified;
+                table.name = op.table_name;
+                manager->getManifestCache()->updateTable(table);
+                break;
+            }
+
             case OperationType::CREATE_TABLE: {
                 Table table;
                 table.uuid = op.table_uuid;
                 table.key = op.new_key;
+                table.version = op.new_version;
+                table.last_modified = op.new_last_modified;
                 table.name = op.table_name;
-                manager->getManifestCache()->updateTable(table);
+                manager->getManifestCache()->updateTable(table, true);
                 break;
             }
 

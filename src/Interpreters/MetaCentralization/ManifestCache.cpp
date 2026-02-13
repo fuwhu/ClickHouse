@@ -22,18 +22,32 @@ void ManifestCache::load(const ManifestPtr & new_manifest)
     LOG_DEBUG(log, "Manifest loaded, etag: {}", manifest->etag);
 }
 
-void ManifestCache::updateDatabase(const Database & db)
+void ManifestCache::updateDatabase(const Database & db, bool is_create)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    if (is_create)
+        manifest->addDatabase(db);
+    else
+        manifest->updateDatabase(db.uuid, db);
 
     database_key_map[db.uuid] = db.key;
     database_name_map[db.uuid] = db.name;
     LOG_DEBUG(log, "Updated database cache: {} ({})", db.name, db.uuid);
 }
 
-void ManifestCache::updateTable(const Table & table)
+void ManifestCache::updateTable(const Table & table, bool is_create)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    String db_uuid = table.key.substr(0, table.key.find('/'));
+
+    if (is_create)
+        manifest->findDatabase(db_uuid)->get().addTable(table);
+    else 
+        manifest->findDatabase(db_uuid)->get().updateTable(table.uuid, table);
+
+    manifest->findDatabase(db_uuid)->get().updateTable(table.uuid, table);
 
     table_key_map[table.uuid] = table.key;
     table_name_map[table.uuid] = table.name;
@@ -43,6 +57,8 @@ void ManifestCache::updateTable(const Table & table)
 void ManifestCache::removeDatabase(const String & uuid)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    manifest->removeDatabase(uuid);
 
     /// Remove all tables belonging to this database from cache
     /// Table keys are in format: {db_uuid}/{table_name}_{version}.sql
@@ -71,6 +87,10 @@ void ManifestCache::removeDatabase(const String & uuid)
 void ManifestCache::removeTable(const String & uuid)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    auto table_key = table_key_map.find(uuid)->second;
+    String db_uuid = table_key.substr(0, table_key.find('/'));
+    manifest->findDatabase(db_uuid)->get().removeTable(uuid);
 
     table_key_map.erase(uuid);
     table_name_map.erase(uuid);
@@ -103,15 +123,31 @@ std::unordered_map<String, String> ManifestCache::getAllDatabases() const
     return database_key_map;
 }
 
-void ManifestCache::updateManifestWithEtag(const ManifestPtr & new_manifest, const String & etag)
+void ManifestCache::updateEtag(const String & etag)
 {
     std::unique_lock<std::shared_mutex> lock(cache_mutex);
 
-    new_manifest->etag = etag;
-    manifest = new_manifest;
-    is_loaded = true;
+    manifest->etag = etag;
 
-    LOG_DEBUG(log, "Atomically updated manifest with etag: {}", etag);
+    LOG_DEBUG(log, "Atomically updated manifest etag: {}", etag);
+}
+
+void ManifestCache::updateVersion(UInt64 version)
+{
+    std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    manifest->version = version;
+
+    LOG_DEBUG(log, "Atomically updated manifest version: {}", version);
+}
+
+void ManifestCache::updateLastModified(const String & last_modified)
+{
+    std::unique_lock<std::shared_mutex> lock(cache_mutex);
+
+    manifest->last_modified = last_modified;
+
+    LOG_DEBUG(log, "Atomically updated manifest last modified: {}", last_modified);
 }
 
 String ManifestCache::getEtag() const
