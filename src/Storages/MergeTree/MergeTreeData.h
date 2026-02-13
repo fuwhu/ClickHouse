@@ -218,14 +218,20 @@ public:
         }
     };
 
-    class UniqueEnginePartitionMutexes: public LRUCache<String, std::mutex>
+    /// Manager for partition-level locks in unique engine
+    /// Creates locks on-demand and automatically cleans up unused mutexes via weak_ptr
+    class UniqueEnginePartitionMutexes
     {
-        private:
-            using Base = LRUCache<String, std::mutex>;
+    private:
+        mutable std::mutex manager_mutex;
+        std::map<String, std::weak_ptr<std::mutex>> partition_mutexes;
+        time_t last_cleanup_time = 0;
+        Poco::Logger * log;
 
-        public:
-            explicit UniqueEnginePartitionMutexes(size_t max_size)
-                : Base(max_size) {}
+    public:
+        explicit UniqueEnginePartitionMutexes(Poco::Logger * log_) : log(log_) {}
+
+        std::shared_ptr<std::mutex> getOrCreate(const String & partition_id);
     };
 
     using DataParts = std::set<DataPartPtr, LessDataPart>;
@@ -237,13 +243,33 @@ public:
     using DataPartsLock = std::unique_lock<std::mutex>;
     using UniqueEngineTableMutexPtr = std::shared_ptr<std::mutex>;
     using UniqueEnginePartitionMutexesPtr = std::shared_ptr<UniqueEnginePartitionMutexes>;
-    using UniqueEngineWriteLock = std::unique_lock<std::mutex>;
+
+    /// RAII wrapper for partition/table lock
+    /// Holds a shared_ptr to keep the mutex alive while locked
+    class UniqueEngineWriteLock
+    {
+    private:
+        std::shared_ptr<std::mutex> mutex_ptr;
+        std::unique_lock<std::mutex> lock;
+
+    public:
+        UniqueEngineWriteLock() = default;
+
+        explicit UniqueEngineWriteLock(std::shared_ptr<std::mutex> mutex)
+            : mutex_ptr(std::move(mutex)), lock(*mutex_ptr) {}
+
+        UniqueEngineWriteLock(UniqueEngineWriteLock &&) = default;
+        UniqueEngineWriteLock & operator=(UniqueEngineWriteLock &&) = default;
+
+        UniqueEngineWriteLock(const UniqueEngineWriteLock &) = delete;
+        UniqueEngineWriteLock & operator=(const UniqueEngineWriteLock &) = delete;
+    };
+
     DataPartsLock lockParts() const { return DataPartsLock(data_parts_mutex); }
 
     /// Lock for writing data to unique engine table, including merged data part.
     UniqueEngineTableMutexPtr unique_engine_table_mutex;
     UniqueEnginePartitionMutexesPtr unique_engine_partition_mutexes;
-    std::function<std::shared_ptr<std::mutex>()> load_partition_mutex_func = []() { return std::make_shared<std::mutex>(); };
     UniqueEngineWriteLock lockUniqueEngineForWrite(const String & partition_id) const;
 
     MergeTreeDataPartType choosePartType(size_t bytes_uncompressed, size_t rows_count) const;
