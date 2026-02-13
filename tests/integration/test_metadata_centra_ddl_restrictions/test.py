@@ -102,7 +102,7 @@ def cluster():
         with_zookeeper=True,
     )
 
-    # node2 use default config (initialize_boss_manifest=false)
+    # node2 use default config (initialize_centralized_metadata=false)
     cluster.add_instance(
         "node2",
         main_configs=[

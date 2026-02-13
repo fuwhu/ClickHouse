@@ -27,6 +27,6 @@
         <access_key_id>minio</access_key_id>
         <secret_access_key>ClickHouse_Minio_P@ssw0rd</secret_access_key>
         <cluster_name>test_meta_cetra</cluster_name>
-        <initialize_boss_manifest>true</initialize_boss_manifest>
+        <initialize_centralized_metadata>true</initialize_centralized_metadata>
     </metadata_centralization>
 </clickhouse>

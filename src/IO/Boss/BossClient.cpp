@@ -330,53 +330,69 @@ size_t BossClient::deleteObjects(const std::vector<String> & keys)
 
     LOG_DEBUG(log, "Deleting {} objects from Boss, bucket: {}", keys.size(), uri->bucket);
 
+    const size_t batch_size = 1000;
+    size_t total_deleted = 0;
+
     try
     {
-        S3::DeleteObjectsRequest request;
-        request.SetBucket(uri->bucket);
-
-        Aws::S3::Model::Delete delete_objects;
-        for (const auto & key : keys)
+        for (size_t i = 0; i < keys.size(); i += batch_size)
         {
-            String full_key = buildFullKey(key);
-            Aws::S3::Model::ObjectIdentifier object;
-            object.SetKey(full_key);
-            delete_objects.AddObjects(object);
-        }
+            // Calculate the end index for this batch
+            size_t batch_end = std::min(i + batch_size, keys.size());
+            
+            S3::DeleteObjectsRequest request;
+            request.SetBucket(uri->bucket);
 
-        request.SetDelete(delete_objects);
-
-        auto outcome = client->DeleteObjects(request);
-
-        if (!outcome.IsSuccess())
-        {
-            const auto & error = outcome.GetError();
-            LOG_ERROR(log, "DeleteObjects failed: {}", error.GetMessage());
-            throw Exception(
-                ErrorCodes::METADATA_CENTRALIZATION_BOSS_ERROR,
-                "Failed to delete objects from Boss (bucket={}): {}",
-                uri->bucket,
-                error.GetMessage());
-        }
-
-        const auto & result = outcome.GetResult();
-        const auto & deleted = result.GetDeleted();
-        const auto & errors = result.GetErrors();
-
-        size_t deleted_count = deleted.size();
-
-        if (!errors.empty())
-        {
-            LOG_WARNING(log, "Some objects failed to delete: {}/{}", errors.size(), keys.size());
-            for (const auto & error : errors)
+            Aws::S3::Model::Delete delete_objects;
+            for (size_t j = i; j < batch_end; ++j)
             {
-                LOG_WARNING(log, "Failed to delete {}: {}", error.GetKey(), error.GetMessage());
+                const auto & key = keys[j];
+                String full_key = buildFullKey(key);
+                Aws::S3::Model::ObjectIdentifier object;
+                object.SetKey(full_key);
+                delete_objects.AddObjects(object);
             }
+
+            request.SetDelete(delete_objects);
+
+            auto outcome = client->DeleteObjects(request);
+
+            if (!outcome.IsSuccess())
+            {
+                const auto & error = outcome.GetError();
+                LOG_ERROR(log, "DeleteObjects failed: {}", error.GetMessage());
+                throw Exception(
+                    ErrorCodes::METADATA_CENTRALIZATION_BOSS_ERROR,
+                    "Failed to delete objects from Boss (bucket={}): {}",
+                    uri->bucket,
+                    error.GetMessage());
+            }
+
+            const auto & result = outcome.GetResult();
+            const auto & deleted = result.GetDeleted();
+            const auto & errors = result.GetErrors();
+
+            size_t batch_deleted = deleted.size();
+            total_deleted += batch_deleted;
+
+            if (!errors.empty())
+            {
+                LOG_WARNING(log, "Some objects failed to delete in batch {}/{}: {}/{}", 
+                           i/batch_size + 1, (keys.size() + batch_size - 1)/batch_size, errors.size(), (batch_end - i));
+                for (const auto & error : errors)
+                {
+                    LOG_WARNING(log, "Failed to delete {}: {}", error.GetKey(), error.GetMessage());
+                }
+            }
+
+            LOG_DEBUG(log, "Successfully deleted {}/{} objects in batch {}/{} from bucket {}", 
+                     batch_deleted, (batch_end - i), i/batch_size + 1, (keys.size() + batch_size - 1)/batch_size, uri->bucket);
         }
 
-        LOG_DEBUG(log, "Successfully deleted {}/{} objects from bucket {}", 
-                 deleted_count, keys.size(), uri->bucket);
-        return deleted_count;
+        LOG_DEBUG(log, "Successfully deleted {}/{} objects from bucket {} across {} batch(es)", 
+                 total_deleted, keys.size(), uri->bucket, (keys.size() + batch_size - 1)/batch_size);
+        
+        return total_deleted;
     }
     catch (const Exception &)
     {

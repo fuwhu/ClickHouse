@@ -340,7 +340,7 @@ def cluster():
         with_zookeeper=True,
     )
 
-    # Other nodes use default config (initialize_boss_manifest=false)
+    # Other nodes use default config (initialize_centralized_metadata=false)
     node_configs = [
         ("node2", "replica2", "shard1"),
         ("node3", "replica1", "shard2"),

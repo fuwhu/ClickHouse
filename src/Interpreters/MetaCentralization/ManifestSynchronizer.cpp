@@ -13,6 +13,7 @@ namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
     extern const int METADATA_CENTRALIZATION_BOSS_ERROR;
+    extern const int METADATA_CENTRALIZATION_SERVER_ERROR;
 }
 
 ManifestSynchronizer::ManifestSynchronizer(MetadataCentralizationManager * manager_, ContextPtr context_)
@@ -117,10 +118,7 @@ ManifestPtr ManifestSynchronizer::loadFromLocal() const
     auto db_disk = getContext()->getDatabaseDisk();
 
     if (!db_disk->existsFile(local_path))
-    {
-        LOG_WARNING(log, "Local manifest not found at {}, treating as empty", local_path);
-        return std::make_shared<Manifest>();
-    }
+        throw Exception(ErrorCodes::METADATA_CENTRALIZATION_SERVER_ERROR, "local manifest does not exist at path: {}.", local_path);
 
     try
     {

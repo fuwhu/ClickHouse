@@ -1869,13 +1869,11 @@
         <!-- Maximum number of retries for Boss service (default 3) -->
         <boss_retry_attempts>3</boss_retry_attempts>
 
-        <!-- Allow initialization of boss manifest if it doesn't exist (default false) -->
-        <initialize_boss_manifest>false</initialize_boss_manifest>
+        <!-- Generate local manifest from local metadata if doesn't exists (default false) -->
+        <generate_local_manifest_from_local_metadata>false</generate_local_manifest_from_local_metadata>
 
-        <!-- Allow initialization of boss manifest from local metadata (default false) -->
-        <!-- Only effective when initialize_boss_manifest is also true -->
-        <!-- If true, will use local non-system databases and tables to initialize boss manifest -->
-        <initialize_boss_manifest_by_local_metadata>false</initialize_boss_manifest_by_local_metadata>
+        <!-- Allow initialization of centralized manifest (default false) -->
+        <initialize_centralized_metadata>false</initialize_centralized_metadata>
 
     </metadata_centralization>
     -->
