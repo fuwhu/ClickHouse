@@ -7750,10 +7750,13 @@ void MergeTreeData::Transaction::prepareForUniqueEngineWrite()
         const auto & uniq_engine_data_writer = pair.second;
         const auto & uniq_engine_write_part = uniq_engine_data_writer->getDataPart();
 
-        auto parts_lock = DataPartsLock();
         DataPartPtr covering_part;
-        DataPartsVector covered_parts
-            = data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, parts_lock);
+        
+        {
+            auto parts_lock = data.lockParts();
+            data.getActivePartsToReplace(uniq_engine_write_part->info, uniq_engine_write_part->name, covering_part, parts_lock);
+        }
+        
         if (covering_part)
             continue;
         else
