@@ -1032,6 +1032,9 @@ The server successfully detected this situation and will download merged part fr
     \
     M(UniqueKeyIndexMetaCacheHit, "Number of times a read from a unique key index was done using the meta cache", ValueType::Number) \
     M(UniqueKeyIndexMetaCacheMiss, "Number of times a read from a unique key index was not cached and had to be loaded completely", ValueType::Number) \
+    M(UniqueMergeTreeDedupComparedParts, "Number of parts compared during UniqueMergeTree deduplication", ValueType::Number) \
+    M(UniqueMergeTreeDedupPartsWithDuplicates, "Number of parts that actually have duplicate data during UniqueMergeTree deduplication", ValueType::Number) \
+    M(UniqueMergeTreeDedupElapsedMilliseconds, "Total time spent on deduplication with active parts in UniqueMergeTree", ValueType::Milliseconds) \
     \
     M(HDFSReadElapsedMicroseconds, "Total time spent waiting for reading/seeking from HDFS (ClickHouse on Iceberg)", ValueType::Microseconds) \
     M(HDFSReadBytes, "Total number of bytes received from HDFS (ClickHouse on Iceberg)", ValueType::Bytes) \

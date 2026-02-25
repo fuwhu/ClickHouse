@@ -21,6 +21,9 @@ SELECT * FROM test_unique_engine ORDER BY id ASC;
 
 INSERT INTO test_unique_engine VALUES ('3', 'Rachel', '2023-08-21 10:00:00'), ('1', 'Jack', '2023-08-21 09:00:00');
 
+SYSTEM FLUSH LOGS query_log;
+SELECT ProfileEvents['UniqueMergeTreeDedupComparedParts'], ProfileEvents['UniqueMergeTreeDedupPartsWithDuplicates'] FROM system.query_log WHERE event_date = today() and type != 1 and query_kind = 'Insert' and query like '%test_unique_engine%' order by event_time_microseconds DESC;
+
 SELECT * FROM test_unique_engine ORDER BY id ASC;
 
 DROP TABLE IF EXISTS test_unique_engine;
