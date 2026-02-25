@@ -44,10 +44,8 @@ void ManifestCache::updateTable(const Table & table, bool is_create)
 
     if (is_create)
         manifest->findDatabase(db_uuid)->get().addTable(table);
-    else 
+    else
         manifest->findDatabase(db_uuid)->get().updateTable(table.uuid, table);
-
-    manifest->findDatabase(db_uuid)->get().updateTable(table.uuid, table);
 
     table_key_map[table.uuid] = table.key;
     table_name_map[table.uuid] = table.name;
