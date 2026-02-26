@@ -2341,7 +2341,7 @@ std::shared_ptr<std::mutex> MergeTreeData::UniqueEnginePartitionMutexes::getOrCr
 
     // If the number of partition mutexes has reached the limit and the requested partition_id does not exist,
     // attempt an emergency cleanup to remove expired entries before deciding to throw an exception.
-    if (partition_mutexes.size() >= partition_mutexes_limit && !partition_mutexes.count(partition_id))
+    if (partition_mutexes.size() >= partition_mutexes_limit && !partition_mutexes.contains(partition_id))
     {
         LOG_WARNING(
             log,
