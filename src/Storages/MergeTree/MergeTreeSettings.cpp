@@ -1875,13 +1875,13 @@ namespace ErrorCodes
     The parallelism of loading unique key buckets for single unique engine table,
     this should not be bigger than 'background_unique_engine_load_pool_size'.
     )", 0) \
-    DECLARE(Bool, eanble_unique_key_partition_lock, 1, R"(
+    DECLARE(Bool, enable_unique_key_partition_lock, 1, R"(
     Enable the unique key partition lock, if this value is set to 0,
     even if the table is deduplicated at the partition level, the lock granularity will be at the table level.
     )", 0) \
-    DECLARE(UInt64, unique_key_partition_lock_lru_size, 1000, R"(
-    Maximum number of partition lock lru size, this value is only to prevent the number of partition locks in memory from growing infinitely,
-    and does not affect the normal acquisition of locks.
+    DECLARE(UInt64, unique_key_partition_lock_limit, 10000, R"(
+    Maximum number of partition-level locks maintained for unique engine tables. When the limit is reached and a new partition is written, an exception is thrown. 
+    Existing partitions are not affected. This setting is meaningful only when enable_unique_key_partition_lock is set to 1.
     )", 0) \
 
 #define MAKE_OBSOLETE_MERGE_TREE_SETTING(M, TYPE, NAME, DEFAULT) \
