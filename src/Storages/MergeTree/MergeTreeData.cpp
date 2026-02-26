@@ -150,6 +150,7 @@ namespace ErrorCodes
     extern const int TOO_MANY_SIMULTANEOUS_QUERIES;
     extern const int INCORRECT_QUERY;
     extern const int TOO_MANY_IMPLICIT_COLUMNS;
+    extern const int LIMIT_EXCEEDED;
 }
 
 static void checkSampleExpression(const StorageInMemoryMetadata & metadata, bool allow_sampling_expression_not_in_primary_key, bool check_sample_column_is_correct)
@@ -365,7 +366,7 @@ MergeTreeData::MergeTreeData(
         if (settings->unique_key_deduplicate_level == UniqueEngineDataWriter::DedupType::PARTITION)
         {
             if (settings->enable_unique_key_partition_lock)
-                unique_engine_partition_mutexes = std::make_shared<UniqueEnginePartitionMutexes>(log);
+                unique_engine_partition_mutexes = std::make_shared<UniqueEnginePartitionMutexes>(log, settings->unique_key_partition_lock_limit);
             else
                 unique_engine_table_mutex = std::make_shared<std::mutex>();
         }
@@ -2328,15 +2329,34 @@ std::shared_ptr<std::mutex> MergeTreeData::UniqueEnginePartitionMutexes::getOrCr
     std::lock_guard<std::mutex> lock(manager_mutex);
 
     // Periodically clean up expired weak_ptrs to avoid memory bloat
-    // Clean up every 30 minutes if partition_mutexes exceeds 10000
+    // Clean up every 5 minutes
     time_t now = std::time(nullptr);
-    time_t elapsed = now - last_cleanup_time;
-
-    if (elapsed >= 1800 && partition_mutexes.size() > 10000)
+    if (now - last_cleanup_time >= 300)
     {
-        LOG_WARNING(log, "Cleaning expired partition mutexes, current size: {}, elapsed seconds: {}", partition_mutexes.size(), elapsed);
+        LOG_DEBUG(log, "Periodic cleanup of expired partition mutexes: before={}", partition_mutexes.size());
         std::erase_if(partition_mutexes, [](const auto & pair) { return pair.second.expired(); });
+        LOG_DEBUG(log, "Periodic cleanup of expired partition mutexes: after={}", partition_mutexes.size());
         last_cleanup_time = now;
+    }
+
+    // If the number of partition mutexes has reached the limit and the requested partition_id does not exist,
+    // attempt an emergency cleanup to remove expired entries before deciding to throw an exception.
+    if (partition_mutexes.size() >= partition_mutexes_limit && !partition_mutexes.count(partition_id))
+    {
+        LOG_WARNING(
+            log,
+            "Number of active partition locks reached limit ({}), attempting emergency cleanup. Current size: {}",
+            partition_mutexes_limit,
+            partition_mutexes.size());
+        std::erase_if(partition_mutexes, [](const auto & pair) { return pair.second.expired(); });
+        LOG_DEBUG(log, "After emergency cleanup: size={}", partition_mutexes.size());
+
+        if (partition_mutexes.size() >= partition_mutexes_limit)
+            throw Exception(
+                ErrorCodes::LIMIT_EXCEEDED,
+                "Too many partition locks (limit {}), cannot acquire lock for partition '{}'",
+                partition_mutexes_limit,
+                partition_id);
     }
 
     // Get or create the mutex for this partition

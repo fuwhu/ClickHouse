@@ -36,6 +36,7 @@ struct Settings;
     M(UInt64, unique_key_bucket_size, 131072, "The number of unique keys that each bucket can store at most for unique engine.", 0) \
     M(UInt64, unique_key_bucket_load_parallelism, 8, "The parallelism of loading unique key buckets for single unique engine table, this should not be bigger than 'background_unique_engine_load_pool_size'.", 0) \
     M(Bool, enable_unique_key_partition_lock, 1, "Enable the unique key partition lock, if this value is set to 0, even if the table is deduplicated at the partition level, the lock granularity will be at the table level.", 0) \
+    M(UInt64, unique_key_partition_lock_limit, 10000, "Maximum number of partition-level locks maintained for unique engine tables. When the limit is reached and a new partition is written, an exception is thrown. Existing partitions are not affected. This setting is meaningful only when enable_unique_key_partition_lock is set to 1.", 0) \
     \
     /** Data storing format settings. */ \
     M(UInt64, min_bytes_for_wide_part, 10485760, "Minimal uncompressed size in bytes to create part in wide format instead of compact", 0) \
