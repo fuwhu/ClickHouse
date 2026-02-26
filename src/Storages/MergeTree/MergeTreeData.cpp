@@ -254,7 +254,8 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsUInt64 unique_delete_bitmap_type;
     extern const MergeTreeSettingsUInt64 unique_key_index_type;
     extern const MergeTreeSettingsUInt64 unique_key_partition_lock_lru_size;
-    extern const MergeTreeSettingsBool eanble_unique_key_partition_lock;
+    extern const MergeTreeSettingsBool enable_unique_key_partition_lock;
+    extern const MergeTreeSettingsUInt64 unique_key_partition_lock_limit;
 }
 
 namespace ServerSetting
@@ -604,9 +605,8 @@ MergeTreeData::MergeTreeData(
         /// init unique engine locks
         if ((*settings)[MergeTreeSetting::unique_key_deduplicate_level] == UniqueEngineDataWriter::DedupType::PARTITION)
         {
-            if ((*settings)[MergeTreeSetting::eanble_unique_key_partition_lock])
-                unique_engine_partition_mutexes
-                    = std::make_shared<UniqueEnginePartitionMutexes>((*settings)[MergeTreeSetting::unique_key_partition_lock_lru_size]);
+            if ((*settings)[MergeTreeSetting::enable_unique_key_partition_lock])
+                unique_engine_partition_mutexes = std::make_shared<UniqueEnginePartitionMutexes>(log.load(), (*settings)[MergeTreeSetting::unique_key_partition_lock_limit]);
             else
                 unique_engine_table_mutex = std::make_shared<std::mutex>();
         }
@@ -4340,15 +4340,60 @@ bool MergeTreeData::changePartMergeUpdateStatus(
     return false;
 }
 
+std::shared_ptr<std::mutex> MergeTreeData::UniqueEnginePartitionMutexes::getOrCreate(const String & partition_id)
+{
+    std::lock_guard<std::mutex> lock(manager_mutex);
+
+    // Periodically clean up expired weak_ptrs to avoid memory bloat
+    // Clean up every 5 minutes
+    time_t now = std::time(nullptr);
+    if (now - last_cleanup_time >= 300)
+    {
+        LOG_DEBUG(log, "Periodic cleanup of expired partition mutexes: before={}", partition_mutexes.size());
+        std::erase_if(partition_mutexes, [](const auto & pair) { return pair.second.expired(); });
+        LOG_DEBUG(log, "Periodic cleanup of expired partition mutexes: after={}", partition_mutexes.size());
+        last_cleanup_time = now;
+    }
+
+    // If the number of partition mutexes has reached the limit and the requested partition_id does not exist,
+    // attempt an emergency cleanup to remove expired entries before deciding to throw an exception.
+    if (partition_mutexes.size() >= partition_mutexes_limit && !partition_mutexes.contains(partition_id))
+    {
+        LOG_WARNING(
+            log,
+            "Number of active partition locks reached limit ({}), attempting emergency cleanup. Current size: {}",
+            partition_mutexes_limit,
+            partition_mutexes.size());
+        std::erase_if(partition_mutexes, [](const auto & pair) { return pair.second.expired(); });
+        LOG_DEBUG(log, "After emergency cleanup: size={}", partition_mutexes.size());
+
+        if (partition_mutexes.size() >= partition_mutexes_limit)
+            throw Exception(
+                ErrorCodes::LIMIT_EXCEEDED,
+                "Too many partition locks (limit {}), cannot acquire lock for partition '{}'",
+                partition_mutexes_limit,
+                partition_id);
+    }
+
+    // Get or create the mutex for this partition
+    // weak_ptr.lock() automatically handles expired entries by returning nullptr
+    auto & weak_mutex = partition_mutexes[partition_id];
+    auto mutex = weak_mutex.lock();
+    if (!mutex)
+    {
+        mutex = std::make_shared<std::mutex>();
+        weak_mutex = mutex;
+    }
+
+    return mutex;
+}
+
 MergeTreeData::UniqueEngineWriteLock MergeTreeData::lockUniqueEngineForWrite(const String & partition_id) const
 {
     if (unique_engine_partition_mutexes)
-    {
-        auto mutex_ptr = unique_engine_partition_mutexes->getOrSet(partition_id, load_partition_mutex_func).first;
-        return UniqueEngineWriteLock(*mutex_ptr);
-    }
+        return UniqueEngineWriteLock(unique_engine_partition_mutexes->getOrCreate(partition_id));
     else
-        return UniqueEngineWriteLock(*unique_engine_table_mutex);
+        return UniqueEngineWriteLock(unique_engine_table_mutex);
 }
 
 void MergeTreeData::changeSettings(
