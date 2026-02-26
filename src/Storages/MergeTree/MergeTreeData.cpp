@@ -7690,6 +7690,8 @@ MergeTreeData::DataPartsVector MergeTreeData::Transaction::commit(DataPartsLock 
 
                     part->remove_time.store(0, std::memory_order_relaxed); /// The part will be removed without waiting for old_parts_lifetime seconds.
                     data.modifyPartState(part, DataPartState::Outdated);
+
+                    MergeTreeTransaction::removeOldPart(data.shared_from_this(), part, NO_TRANSACTION_RAW);
                 }
                 else
                 {
