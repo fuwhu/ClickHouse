@@ -227,9 +227,10 @@ public:
         std::map<String, std::weak_ptr<std::mutex>> partition_mutexes;
         time_t last_cleanup_time = 0;
         Poco::Logger * log;
+        size_t partition_mutexes_limit;
 
     public:
-        explicit UniqueEnginePartitionMutexes(Poco::Logger * log_) : log(log_) {}
+        explicit UniqueEnginePartitionMutexes(Poco::Logger * log_, size_t partition_mutexes_limit_) : log(log_), partition_mutexes_limit(partition_mutexes_limit_) {}
 
         std::shared_ptr<std::mutex> getOrCreate(const String & partition_id);
     };
