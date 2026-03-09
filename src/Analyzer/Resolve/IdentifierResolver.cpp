@@ -483,6 +483,31 @@ bool IdentifierResolver::tryBindIdentifierToArrayJoinExpressions(const Identifie
     return result;
 }
 
+IdentifierResolveResult IdentifierResolver::tryResolveImplicitColumnIdentifierFromStorage(
+    const std::optional<std::pair<String, String>>& implicit_column,
+    const QueryTreeNodePtr & table_expression_node,
+    const AnalysisTableExpressionData &table_expression_data,
+    IdentifierResolveScope & scope)
+{
+    Identifier map_v2_identifier(implicit_column->first);
+    const auto & map_v2_path_start = map_v2_identifier.getParts().front();
+    if (table_expression_data.hasFullIdentifierName(IdentifierView(map_v2_identifier)))
+        return tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 0);
+    if (table_expression_data.canBindIdentifier(IdentifierView(map_v2_identifier)))
+    {
+        auto lookup_result = tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 0 /*identifier_column_qualifier_parts*/, true /*can_be_not_found*/);
+        if (lookup_result.resolved_identifier)
+            return lookup_result;
+    }
+    if((!table_expression_data.table_name.empty() && map_v2_path_start == table_expression_data.table_name) || (table_expression_node->hasAlias() && map_v2_path_start == table_expression_node->getAlias()))
+        return tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 1 /*identifier_column_qualifier_parts*/);
+    if (map_v2_identifier.getPartsSize() == 2)
+        return {};
+    if (!table_expression_data.database_name.empty() && map_v2_path_start == table_expression_data.database_name && map_v2_identifier[1] == table_expression_data.table_name)
+        return tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 2 /*identifier_column_qualifier_parts*/);
+    return {};
+}
+
 IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromStorage(
     const Identifier & identifier,
     const QueryTreeNodePtr & table_expression_node,
@@ -735,16 +760,14 @@ IdentifierResolveResult IdentifierResolver::tryResolveIdentifierFromTableExpress
     auto col_name = identifier.getFullName();
     if (auto implicit_column = extractImplicitColumn(col_name))
     {
-        Identifier map_v2_identifier(implicit_column->first);
-        auto map_v2_identifier_resolve_result
-            = tryResolveIdentifierFromStorage(map_v2_identifier, table_expression_node, table_expression_data, scope, 0);
-
+        auto map_v2_identifier_resolve_result = tryResolveImplicitColumnIdentifierFromStorage(implicit_column, table_expression_node, table_expression_data, scope);
         const auto & map_v2_column_node = map_v2_identifier_resolve_result.resolved_identifier->as<ColumnNode &>();
         const auto & map_v2_column = map_v2_column_node.getColumn();
         if (isMapV2(map_v2_column.type))
         {
             const auto * mapv2_type = typeid_cast<const DataTypeMapV2 *>(map_v2_column.type.get());
             NameAndTypePair col_with_type;
+            col_name = col_name.substr(col_name.find(map_v2_column.name));
             if (isImplicitSubColumn(col_name))
             {
                 WhichDataType which(mapv2_type->getValueType());

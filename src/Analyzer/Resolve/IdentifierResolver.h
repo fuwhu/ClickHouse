@@ -103,6 +103,12 @@ public:
 private:
     QueryTreeNodePtr tryResolveIdentifierFromTableColumns(const IdentifierLookup & identifier_lookup, IdentifierResolveScope & scope);
 
+    IdentifierResolveResult tryResolveImplicitColumnIdentifierFromStorage(
+        const std::optional<std::pair<String, String>>& implicit_column,
+        const QueryTreeNodePtr & table_expression_node,
+        const AnalysisTableExpressionData &table_expression_data,
+        IdentifierResolveScope & scope);
+
     IdentifierResolveResult tryResolveIdentifierFromStorage(
         const Identifier & identifier,
         const QueryTreeNodePtr & table_expression_node,
