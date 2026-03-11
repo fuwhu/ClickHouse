@@ -426,7 +426,7 @@ bool IcebergFileSource::prepareReader()
 {
     if (file_iterator == iceberg_files->end())
     {
-        LOG_DEBUG(log, "[WWG_DEBUG] it cost {} us to remove constant stripe columns, and costs {} us to add constant columns.", remove_constantness_time_cost, add_constant_columns_time_cost);
+        LOG_DEBUG(log, "it cost {} us to remove constant stripe columns, and costs {} us to add constant columns.", remove_constantness_time_cost, add_constant_columns_time_cost);
         return false;
     }
 
