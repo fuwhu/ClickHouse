@@ -144,8 +144,31 @@ void BlockNumberCleaner::checkAndCleanZnodes(StorageReplicatedMergeTree * replic
         }
     };
 
+    /// Collect partition IDs that currently have entries in the replication queue.
+    /// These partitions may be in the middle of a sync (GET_PART, MERGE_PARTS, etc.),
+    /// so we must not delete their block_numbers znodes.
+    std::unordered_set<String> partitions_in_queue;
+    {
+        ReplicatedMergeTreeQueue::LogEntriesData entries;
+        replicated_table->queue.getEntries(entries);
+        for (const auto & entry : entries)
+        {
+            if (!entry.new_part_name.empty())
+            {
+                auto part_info = MergeTreePartInfo::tryParsePartName(entry.new_part_name, replicated_table->format_version);
+                if (part_info)
+                    partitions_in_queue.insert(part_info->partition_id);
+            }
+        }
+    }
+
     for (auto it = partitions.begin(); it != partitions.end(); it++)
     {
+        /// Skip partitions that have pending entries in the replication queue to avoid
+        /// deleting block_numbers znodes that are still needed for in-progress syncs.
+        if (partitions_in_queue.contains(*it))
+            continue;
+
         auto data_parts = replicated_table->getDataPartsVectorInPartition(MergeTreeDataPartState::Active, *it);
         
         /// delete the znode that is created one month ago
