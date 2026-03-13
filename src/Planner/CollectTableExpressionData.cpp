@@ -446,4 +446,170 @@ void collectSourceColumns(QueryTreeNodePtr & expression_node, PlannerContextPtr 
     collect_source_columns_visitor.visit(expression_node);
 }
 
+class CollectWhereAndGroupByColumnsVisitor : public InDepthQueryTreeVisitorWithContext<CollectWhereAndGroupByColumnsVisitor>
+{
+public:
+    explicit CollectWhereAndGroupByColumnsVisitor(
+        PlannerContextPtr & planner_context_, bool is_where_clause_ = false, bool is_group_by_clause_ = false)
+        : InDepthQueryTreeVisitorWithContext(planner_context_->getQueryContext())
+        , planner_context(planner_context_)
+        , is_where_clause(is_where_clause_)
+        , is_group_by_clause(is_group_by_clause_)
+    {
+    }
+
+    void enterImpl(QueryTreeNodePtr & node)
+    {
+        if (is_group_by_clause)
+        {
+            if (auto * col_node = node->as<ColumnNode>())
+                collectColumnUsage(col_node, "", true);
+            return;
+        }
+
+        if (is_where_clause)
+        {
+            if (auto * function_node = node->as<FunctionNode>())
+            {
+                const auto & func_name = function_node->getFunctionName();
+                if (func_name == "and" || func_name == "or")
+                    return;
+
+                String condition_type = getConditionType(func_name);
+
+                const auto & args = function_node->getArguments().getNodes();
+                if (args.size() == 2)
+                {
+                    if (auto * col_node = args[0]->as<ColumnNode>())
+                        collectColumnUsage(col_node, condition_type, false);
+                }
+            }
+        }
+    }
+
+    bool needChildVisit(const QueryTreeNodePtr &, const QueryTreeNodePtr & child_node)
+    {
+        auto child_type = child_node->getNodeType();
+
+        if (child_type == QueryTreeNodeType::QUERY)
+            return false;
+
+        if (auto * child_function = child_node->as<FunctionNode>())
+        {
+            if (child_function->isAggregateFunction())
+                return false;
+        }
+
+        return true;
+    }
+
+private:
+    PlannerContextPtr & planner_context;
+    bool is_where_clause;
+    bool is_group_by_clause;
+
+    static String getConditionType(const String & function_name)
+    {
+        if (function_name == "equals" || function_name == "notEquals" || function_name == "in" || function_name == "notIn"
+            || function_name == "globalIn" || function_name == "globalNotIn")
+            return "equality";
+
+        if (function_name == "greater" || function_name == "greaterOrEquals" || function_name == "less" || function_name == "lessOrEquals")
+            return "range";
+
+        return "other";
+    }
+
+    void collectColumnUsage(const ColumnNode * column_node, const String & condition_type, bool is_group_by)
+    {
+        auto source = column_node->getColumnSourceOrNull();
+        if (!source)
+            return;
+
+        resolveToStorage(source, column_node->getColumn().name, condition_type, is_group_by);
+    }
+
+    void resolveToStorage(const QueryTreeNodePtr & source, const String & column_name, const String & condition_type, bool is_group_by)
+    {
+        if (!source || column_name.empty())
+            return;
+
+        const auto node_type = source->getNodeType();
+
+        if (node_type == QueryTreeNodeType::TABLE)
+        {
+            const auto * table_node = source->as<TableNode>();
+            StorageID storage_id = table_node->getStorageID();
+
+            auto & columns_info = planner_context->getGlobalPlannerContext()->storage_to_columns_info[storage_id];
+            if (!condition_type.empty())
+                columns_info.where_columns[condition_type].insert(column_name);
+            if (is_group_by)
+                columns_info.group_by_columns.insert(column_name);
+
+            return;
+        }
+
+        if (const auto * query_node = source->as<QueryNode>())
+        {
+            resolveThrough(*query_node, column_name, condition_type, is_group_by);
+            return;
+        }
+    }
+
+    void resolveThrough(const QueryNode & query_node, const String & output_name, const String & condition_type, bool is_group_by)
+    {
+        const auto & projection = query_node.getProjection();
+        const auto & projection_columns = query_node.getProjectionColumns();
+
+        for (size_t i = 0; i < projection.getNodes().size(); ++i)
+        {
+            if (i >= projection_columns.size() || projection_columns[i].name != output_name)
+                continue;
+
+            const auto * proj_col = projection.getNodes()[i]->as<ColumnNode>();
+            if (!proj_col)
+                continue;
+
+            if (proj_col->hasExpression() && !proj_col->getExpression()->as<ColumnNode>())
+                continue;
+
+            resolveToStorage(proj_col->getColumnSourceOrNull(), proj_col->getColumnName(), condition_type, is_group_by);
+            return;
+        }
+    }
+};
+
+void collectWhereAndGroupByColumns(QueryTreeNodePtr & query_node, PlannerContextPtr & planner_context)
+{
+    auto * query_node_typed = query_node->as<QueryNode>();
+    if (!query_node_typed)
+        return;
+
+    if (query_node_typed->hasWhere())
+    {
+        CollectWhereAndGroupByColumnsVisitor visitor(planner_context, true, false);
+        visitor.visit(query_node_typed->getWhere());
+    }
+
+    if (query_node_typed->hasPrewhere())
+    {
+        CollectWhereAndGroupByColumnsVisitor visitor(planner_context, true, false);
+        visitor.visit(query_node_typed->getPrewhere());
+    }
+
+    if (query_node_typed->hasHaving())
+    {
+        CollectWhereAndGroupByColumnsVisitor visitor(planner_context, true, false);
+        visitor.visit(query_node_typed->getHaving());
+    }
+
+    if (query_node_typed->hasGroupBy())
+    {
+        CollectWhereAndGroupByColumnsVisitor visitor(planner_context, false, true);
+        auto & group_by_list = query_node_typed->getGroupBy();
+        for (auto & group_by_node : group_by_list.getNodes())
+            visitor.visit(group_by_node);
+    }
+}
 }
