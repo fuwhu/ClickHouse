@@ -77,6 +77,17 @@ public:
 
     const FiltersForTableExpressionMap filters_for_table_expressions;
 
+    /// Collected WHERE/GROUP BY columns grouped by source storage.
+    /// Stored in GlobalPlannerContext to be shared across all subqueries.
+    struct StorageColumnsInfo
+    {
+        std::map<String, std::set<String>> where_columns;
+        NameSet group_by_columns;
+    };
+
+    std::unordered_map<StorageID, StorageColumnsInfo, StorageID::DatabaseAndTableNameHash, StorageID::DatabaseAndTableNameEqual>
+        storage_to_columns_info;
+
 private:
     std::unordered_set<ColumnIdentifier> column_identifiers;
 
