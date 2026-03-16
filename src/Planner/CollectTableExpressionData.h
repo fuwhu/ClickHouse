@@ -21,4 +21,10 @@ void collectTableExpressionData(QueryTreeNodePtr & query_node, PlannerContextPtr
   */
 void collectSourceColumns(QueryTreeNodePtr & expression_node, PlannerContextPtr & planner_context, bool keep_alias_columns = true);
 
+/** Collect WHERE and GROUP BY columns for query node.
+  * Collected column information is registered in global planner context's storage_to_columns_info.
+  * This mapping tracks columns used in WHERE/PREWHERE/HAVING/GROUP BY clauses per source storage.
+  */
+void collectWhereAndGroupByColumns(QueryTreeNodePtr & query_node, PlannerContextPtr & planner_context);
+
 }
