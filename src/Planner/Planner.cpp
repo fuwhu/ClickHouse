@@ -1529,6 +1529,7 @@ void Planner::buildPlanForQueryNode()
     }
 
     collectTableExpressionData(query_tree, planner_context);
+    collectWhereAndGroupByColumns(query_tree, planner_context);
     checkStoragesSupportTransactions(planner_context);
 
     const auto & table_filters = planner_context->getGlobalPlannerContext()->filters_for_table_expressions;

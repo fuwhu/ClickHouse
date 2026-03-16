@@ -119,6 +119,7 @@ namespace Setting
     extern const SettingsBool use_concurrency_control;
     extern const SettingsBoolAuto query_plan_join_swap_table;
     extern const SettingsUInt64 min_joined_block_size_bytes;
+    extern const SettingsBool prefer_localhost_replica;
 }
 
 namespace ErrorCodes
@@ -1197,10 +1198,59 @@ JoinTreeQueryPlan buildQueryPlanForTableExpression(QueryTreeNodePtr table_expres
                 if (query_context->hasQueryContext() && !select_query_options.is_internal)
                 {
                     auto local_storage_id = storage->getStorageID();
-                    query_context->getQueryContext()->addQueryAccessInfo(
-                        backQuoteIfNeed(local_storage_id.getDatabaseName()),
-                        local_storage_id.getFullTableName(),
-                        columns_names, /*where_column_names=*/ {}, /*group_by_column_names=*/{});
+
+                    std::map<String, std::set<String>> where_columns_result;
+                    NameSet group_by_columns_result;
+
+                    NameSet real_column_names;
+                    for (const auto & column : storage_snapshot->metadata->getColumns().getAll())
+                        real_column_names.insert(column.name);
+
+                    auto & storage_to_columns_info = planner_context->getGlobalPlannerContext()->storage_to_columns_info;
+                    const auto * distributed_storage = dynamic_cast<const StorageDistributed *>(storage.get());
+                    const bool is_distributed_table = distributed_storage != nullptr;
+                    const std::optional<StorageID> distributed_underlying_storage_id = distributed_storage
+                        ? std::make_optional(
+                              StorageID(distributed_storage->getRemoteDatabaseName(), distributed_storage->getRemoteTableName()))
+                        : std::nullopt;
+
+                    auto merge_columns = [&](const GlobalPlannerContext::StorageColumnsInfo & columns_info)
+                    {
+                        for (const auto & [condition_type, columns] : columns_info.where_columns)
+                        {
+                            for (const auto & col_name : columns)
+                            {
+                                if (real_column_names.contains(col_name))
+                                    where_columns_result[condition_type].insert(col_name);
+                            }
+                        }
+
+                        for (const auto & col_name : columns_info.group_by_columns)
+                        {
+                            if (real_column_names.contains(col_name))
+                                group_by_columns_result.insert(col_name);
+                        }
+                    };
+
+                    auto local_it = storage_to_columns_info.find(local_storage_id);
+                    if (local_it != storage_to_columns_info.end())
+                        merge_columns(local_it->second);
+
+                    Names group_by_column_names_result(group_by_columns_result.begin(), group_by_columns_result.end());
+
+                    auto add_query_access_info = [&](const StorageID & storage_id_to_add)
+                    {
+                        query_context->getQueryContext()->addQueryAccessInfo(
+                            backQuoteIfNeed(storage_id_to_add.getDatabaseName()),
+                            storage_id_to_add.getFullTableName(),
+                            columns_names,
+                            where_columns_result,
+                            group_by_column_names_result);
+                    };
+
+                    add_query_access_info(local_storage_id);
+                    if (is_distributed_table && distributed_underlying_storage_id && settings[Setting::prefer_localhost_replica])
+                        add_query_access_info(*distributed_underlying_storage_id);
                 }
             }
 
