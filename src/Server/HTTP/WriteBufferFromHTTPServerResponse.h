@@ -91,6 +91,9 @@ private:
     /// Send remote query timeout information
     void setRemoteQueryTimeoutInfo();
 
+    /// Send skipped unavailable shards information
+    void setSkippedShardsInfo();
+
     /// This method finish headers with \r\n, allowing to start to send body.
     void finishSendHeaders();
 

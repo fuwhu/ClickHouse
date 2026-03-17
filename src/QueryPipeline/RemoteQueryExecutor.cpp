@@ -203,9 +203,11 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     const Tables & external_tables_,
     QueryProcessingStage::Enum stage_,
     std::shared_ptr<const QueryPlan> query_plan_,
-    std::optional<Extension> extension_)
+    std::optional<Extension> extension_,
+    std::optional<ShardContext> shard_context_)
     : RemoteQueryExecutor(query_, header_, context_, scalars_, external_tables_, stage_, std::move(query_plan_), extension_)
 {
+    shard_context = std::move(shard_context_);
     connection_pool = pool;
     create_connections = [this, pool, connections_, throttler, extension_](AsyncCallback) mutable
     {
@@ -228,9 +230,11 @@ RemoteQueryExecutor::RemoteQueryExecutor(
     QueryProcessingStage::Enum stage_,
     std::shared_ptr<const QueryPlan> query_plan_,
     std::optional<Extension> extension_,
+    std::optional<ShardContext> shard_context_,
     GetPriorityForLoadBalancing::Func priority_func_)
     : RemoteQueryExecutor(query_, header_, context_, scalars_, external_tables_, stage_, std::move(query_plan_), extension_, priority_func_)
 {
+    shard_context = std::move(shard_context_);
     connection_pool = pool;
     create_connections = [this, pool, throttler](AsyncCallback async_callback)->std::unique_ptr<IConnections>
     {
@@ -402,6 +406,8 @@ void RemoteQueryExecutor::sendQueryUnlocked(ClientInfo::QueryKind query_kind, As
     const auto & settings = context->getSettingsRef();
     if (isReplicaUnavailable() || needToSkipUnavailableShard())
     {
+        recordSkippedShardIfNeeded();
+
         /// To avoid sending the query again in the read(), we need to update the following flags:
         was_cancelled = true;
         finished = true;
@@ -1031,6 +1037,21 @@ void RemoteQueryExecutor::setProfileInfoCallback(ProfileInfoCallback callback)
 {
     LockAndBlocker guard(was_cancelled_mutex);
     profile_info_callback = std::move(callback);
+}
+
+void RemoteQueryExecutor::recordSkippedShardIfNeeded()
+{
+    if (skip_unavailable_shard_recorded)
+        return;
+
+    if (!shard_context)
+        return;
+
+    if (!context->getSettingsRef()[Setting::skip_unavailable_shards])
+        return;
+
+    context->getQueryContext()->addSkippedUnavailableShard(shard_context->cluster_name, shard_context->shard_name, shard_context->shard_num);
+    skip_unavailable_shard_recorded = true;
 }
 
 bool RemoteQueryExecutor::needToSkipUnavailableShard() const

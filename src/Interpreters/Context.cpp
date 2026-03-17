@@ -4890,6 +4890,18 @@ std::shared_ptr<QueryViewsLog> Context::getQueryViewsLog() const
     return shared->system_logs->query_views_log;
 }
 
+void Context::addSkippedUnavailableShard(const String & cluster_name, const String & shard_name, UInt32 shard_num) const
+{
+    std::lock_guard lock(skipped_unavailable_shards_mutex);
+    skipped_unavailable_shards.push_back(fmt::format("{}:{}:{}", cluster_name, shard_name, shard_num));
+}
+
+std::vector<String> Context::getSkippedUnavailableShards() const
+{
+    std::lock_guard lock(skipped_unavailable_shards_mutex);
+    return skipped_unavailable_shards;
+}
+
 std::shared_ptr<PartLog> Context::getPartLog(const String & part_database) const
 {
     SharedLockGuard lock(shared->mutex);

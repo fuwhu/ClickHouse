@@ -14,11 +14,11 @@
 #include <Poco/Net/HTTPResponse.h>
 
 #include <fmt/core.h>
-#include <iterator>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <Common/CurrentThread.h>
+#include <Interpreters/Context.h>
 
 namespace ProfileEvents
 {
@@ -60,6 +60,28 @@ void WriteBufferFromHTTPServerResponse::setRemoteQueryTimeoutInfo()
     }
 }
 
+/// Send skipped unavailable shards information
+void WriteBufferFromHTTPServerResponse::setSkippedShardsInfo()
+{
+    auto query_context = CurrentThread::getQueryContext();
+    if (!query_context)
+        return;
+
+    auto skipped_shards = query_context->getSkippedUnavailableShards();
+    if (skipped_shards.empty())
+        return;
+
+    String shards_info;
+    for (const auto & shard : skipped_shards)
+    {
+        if (!shards_info.empty())
+            shards_info += ',';
+        shards_info += shard;
+    }
+    response.add("X-ClickHouse-Skipped-Unavailable-Shards", shards_info);
+    response.add("X-ClickHouse-Has-Skiped-Unavailable-Shard", "1");
+}
+
 void WriteBufferFromHTTPServerResponse::startSendHeaders()
 {
     if (headers_started_sending)
@@ -81,6 +103,8 @@ void WriteBufferFromHTTPServerResponse::startSendHeaders()
     setResponseDefaultHeaders(response);
 
     setRemoteQueryTimeoutInfo();
+
+    setSkippedShardsInfo();
 
     std::stringstream header; //STYLE_CHECK_ALLOW_STD_STRING_STREAM
     response.beginWrite(header);
