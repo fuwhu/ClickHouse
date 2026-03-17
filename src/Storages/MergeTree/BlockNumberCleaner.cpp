@@ -90,14 +90,29 @@ void BlockNumberCleaner::backGroundCleanFunc()
                         continue;
 
                     StorageReplicatedMergeTree * replicated_table = dynamic_cast<StorageReplicatedMergeTree *>(table.get());
-                    if (replicated_table && replicated_table->is_leader)
+                    try
                     {
-                        checkAndCleanZnodes(replicated_table);
-                        to_sleep_number++;
-                        to_sleep_number %= getContext()->getSettingsRef().block_number_cleanup_batch_size;
+                        if (replicated_table && replicated_table->is_leader)
+                        {
+                            checkAndCleanZnodes(replicated_table);
+                            to_sleep_number++;
+                            to_sleep_number %= getContext()->getSettingsRef().block_number_cleanup_batch_size;
 
-                        if (!to_sleep_number)
-                            sleep(getContext()->getSettingsRef().block_number_cleanup_batch_interval.value.seconds());
+                            if (!to_sleep_number)
+                                sleep(getContext()->getSettingsRef().block_number_cleanup_batch_interval.value.seconds());
+                        }
+                    }
+                    catch (const Coordination::Exception & e)
+                    {
+                        if (Coordination::isHardwareError(e.code))
+                            throw;
+                        auto storage_id = replicated_table->getStorageID();
+                        tryLogCurrentException(log, "While cleaning the nodes of " + storage_id.getDatabaseName() + "." + storage_id.getTableName() + " has error ");
+                    }
+                    catch (...)
+                    {
+                        auto storage_id = replicated_table->getStorageID();
+                        tryLogCurrentException(log, "While cleaning the nodes of " + storage_id.getDatabaseName() + "." + storage_id.getTableName() + " has error ");   
                     }
                 }
             }
