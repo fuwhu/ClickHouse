@@ -663,6 +663,10 @@ protected:
     mutable std::mutex mutex_shared_context;    /// mutex to avoid accessing destroyed shared context pointer
                                                 /// some Context methods can be called after the shared context is destroyed
                                                 /// example, Context::handleCrash() method - called from signal handler
+
+    /// Skipped unavailable shards info (populated when skip_unavailable_shards=1 and a shard is skipped)
+    mutable std::mutex skipped_unavailable_shards_mutex;
+    mutable std::vector<String> skipped_unavailable_shards;
 };
 
 /** A set of known objects that can be used in the query.
@@ -1385,6 +1389,10 @@ public:
     std::shared_ptr<QueryLog> getQueryLog() const;
     std::shared_ptr<QueryThreadLog> getQueryThreadLog() const;
     std::shared_ptr<QueryViewsLog> getQueryViewsLog() const;
+    /// Record a skipped unavailable shard for this query (thread-safe).
+    void addSkippedUnavailableShard(const String & cluster_name, const String & shard_name, UInt32 shard_num) const;
+    /// Get all skipped unavailable shards recorded for this query.
+    std::vector<String> getSkippedUnavailableShards() const;
     std::shared_ptr<TraceLog> getTraceLog() const;
     std::shared_ptr<TextLog> getTextLog() const;
     std::shared_ptr<MetricLog> getMetricLog() const;

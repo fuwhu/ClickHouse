@@ -41,6 +41,13 @@ public:
     /// To avoid deadlock in case of OOM and timeout in CancellationChecker
     using LockAndBlocker = LockAndOverCommitTrackerBlocker<std::lock_guard, std::mutex>;
 
+    struct ShardContext
+    {
+        String cluster_name;
+        UInt32 shard_num = 0;
+        String shard_name;
+    };
+
     /// We can provide additional logic for RemoteQueryExecutor
     /// For example for s3Cluster table function we provide an Iterator over tasks to do.
     /// Nodes involved into the query send request for a new task and we answer them using this object.
@@ -104,7 +111,8 @@ public:
         const Tables & external_tables_ = Tables(),
         QueryProcessingStage::Enum stage_ = QueryProcessingStage::Complete,
         std::shared_ptr<const QueryPlan> query_plan_ = nullptr,
-        std::optional<Extension> extension_ = std::nullopt);
+        std::optional<Extension> extension_ = std::nullopt,
+        std::optional<ShardContext> shard_context_ = std::nullopt);
 
     /// Takes a pool and gets one or several connections from it.
     RemoteQueryExecutor(
@@ -118,6 +126,7 @@ public:
         QueryProcessingStage::Enum stage_ = QueryProcessingStage::Complete,
         std::shared_ptr<const QueryPlan> query_plan_ = nullptr,
         std::optional<Extension> extension_ = std::nullopt,
+        std::optional<ShardContext> shard_context_ = std::nullopt,
         GetPriorityForLoadBalancing::Func priority_func = {});
 
     ~RemoteQueryExecutor();
@@ -259,6 +268,7 @@ private:
 
     const String query;
     std::shared_ptr<const QueryPlan> query_plan;
+    std::optional<ShardContext> shard_context;
     String query_id;
     ContextPtr context;
 
@@ -285,6 +295,7 @@ private:
 
     /// Query is sent (used before getting first block)
     bool sent_query { false };
+    bool skip_unavailable_shard_recorded { false };
 
     /** All data from all replicas are received, before EndOfStream packet.
       * To prevent desynchronization, if not all data is read before object
@@ -362,6 +373,8 @@ private:
 
     /// Process packet for read and return data block if possible.
     ReadResult processPacket(Packet packet);
+
+    void recordSkippedShardIfNeeded();
 
     std::vector<int> buildReplicaIndexesInPool(
         const ConnectionPoolWithFailoverPtr & pool, const std::vector<IConnectionPool::Entry> & entries);

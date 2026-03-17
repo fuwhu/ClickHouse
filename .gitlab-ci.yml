@@ -124,7 +124,7 @@ integration_test_group_b:
     - when: never
   script:
     - echo "integration_tests begin"
-    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config/inter_test -n 20 --docker-image-version v25 test_rename_column test_ttl_move test_repliacted_storage_unique_engine test_replicated_bsi test_cluster_replica_is_enable test_replicated_merge_tree_config test_hedged_requests test_slowdowns_count test_remote_error_count
+    - ./tests/integration/runner --binary $BUILD_PATH/programs/clickhouse --base-configs-dir bili_ci/config/inter_test -n 20 --docker-image-version v25 test_rename_column test_ttl_move test_repliacted_storage_unique_engine test_replicated_bsi test_cluster_replica_is_enable test_replicated_merge_tree_config test_hedged_requests test_slowdowns_count test_remote_error_count test_skipped_unavailable_shards_header
     - echo "integration_tests end"
   dependencies:
     - build
